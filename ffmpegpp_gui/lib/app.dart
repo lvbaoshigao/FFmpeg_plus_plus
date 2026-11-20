@@ -20,6 +20,7 @@ import 'services/android_platform.dart';
 import 'services/update_service.dart' as updater;
 import 'theme/app_neutral_surface.dart';
 import 'theme/app_page_transitions.dart';
+import 'theme/app_press_feedback.dart';
 import 'theme/app_semantic_colors.dart';
 import 'theme/app_strings.dart';
 import 'theme/app_text_scale.dart';
@@ -340,7 +341,9 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
                   appScale: appScale,
                   child: MediaQuery(
                     data: mq.copyWith(textScaler: TextScaler.linear(scale)),
-                    child: ColoredBox(color: baseSurface, child: child!),
+                    child: AppPressTheme(
+                      child: ColoredBox(color: baseSurface, child: child!),
+                    ),
                   ),
                 ),
               ),

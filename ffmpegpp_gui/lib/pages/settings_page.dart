@@ -48,6 +48,7 @@ import '../widgets/mobile_nav_scope.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
 import '../widgets/option_menu_bar.dart';
+import '../widgets/selection_highlight.dart';
 import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
 // Linux CSD（自绘窗口修饰）：二级 / 三级全屏路由页统一套 WindowChrome，
@@ -776,6 +777,29 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
           build: _buildSurfaceStyleCard,
         ),
+        const _CardDef(
+          id: 'selectionIndicatorStyle',
+          title: _selectionIndicatorTitle,
+          icon: Icons.highlight_alt_outlined,
+          keywords: [
+            '选中高亮',
+            '选中指示器',
+            '选中框',
+            '导航遮罩',
+            '主题色',
+            '液态玻璃',
+            '毛玻璃',
+            '描边',
+            'selection mask',
+            'selection indicator',
+            'navigation highlight',
+            'theme accent',
+            'liquid glass',
+            'frosted glass',
+            'outline',
+          ],
+          build: _buildSelectionIndicatorStyle,
+        ),
         // 玻璃细节：桌面端独立成卡（右侧面板没有三级页机制，一屏平铺得下）。
         // 移动端已下沉为「外观 → 样式 → 玻璃细节」三级页 —— 用户要求
         // 「玻璃细节放到样式里面（就是玻璃细节成三级菜单）」。
@@ -1264,6 +1288,7 @@ class _SettingsPageState extends State<SettingsPage> {
         state.config.cardStyle,
         state.config.menuStyle,
         state.config.navStyle,
+        state.config.selectionIndicatorStyle,
         state.config.pillStyle,
         state.config.fontSize,
         state.config.fontWeightIndex,
@@ -1545,86 +1570,94 @@ class _SettingsPageState extends State<SettingsPage> {
           final collapsed = constraints.maxWidth < 150;
           return Padding(
             padding: const EdgeInsets.fromLTRB(10, 12, 6, 16),
-            child: GlassPanel(
-              radius: 20,
-              blur: 12,
-              style: state.config.menuStyle,
-              child: Material(
-                color: Colors.transparent,
-                child: ListView(
-                  addRepaintBoundaries: false,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: collapsed ? 4 : 6,
-                    vertical: 6,
-                  ),
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Tooltip(
-                        message: _sectionNavCollapsed
-                            ? (s.isZh ? '展开设置导航' : 'Expand settings navigation')
-                            : (s.isZh
-                                  ? '收起设置导航'
-                                  : 'Collapse settings navigation'),
-                        child: InkWell(
-                          key: const ValueKey('settings_section_nav_toggle'),
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: () => setState(
-                            () => _sectionNavCollapsed = !_sectionNavCollapsed,
-                          ),
-                          child: Container(
-                            height: _sectionNavRowHeight,
-                            padding: EdgeInsets.symmetric(
-                              horizontal: collapsed ? 6 : 12,
+            // The panel may cache its surface. Keep the moving backdrop
+            // sampler outside that cache, beneath the interactive rows.
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                GlassPanel(
+                  radius: 20,
+                  blur: 12,
+                  style: state.config.menuStyle,
+                  child: const SizedBox.expand(),
+                ),
+                Material(
+                  color: Colors.transparent,
+                  child: ListView(
+                    addRepaintBoundaries: false,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: collapsed ? 4 : 6,
+                      vertical: 6,
+                    ),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Tooltip(
+                          message: _sectionNavCollapsed
+                              ? (s.isZh ? '展开设置导航' : 'Expand settings navigation')
+                              : (s.isZh
+                                    ? '收起设置导航'
+                                    : 'Collapse settings navigation'),
+                          child: InkWell(
+                            key: const ValueKey('settings_section_nav_toggle'),
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: () => setState(
+                              () => _sectionNavCollapsed = !_sectionNavCollapsed,
                             ),
-                            decoration: BoxDecoration(
-                              color: scheme.surfaceContainerHighest.withAlpha(
-                                45,
+                            child: Container(
+                              height: _sectionNavRowHeight,
+                              padding: EdgeInsets.symmetric(
+                                horizontal: collapsed ? 6 : 12,
                               ),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: collapsed
-                                  ? MainAxisAlignment.center
-                                  : MainAxisAlignment.start,
-                              children: [
-                                Icon(
-                                  _sectionNavCollapsed
-                                      ? Icons.chevron_right
-                                      : Icons.chevron_left,
-                                  size: 17,
-                                  color: scheme.onSurfaceVariant,
+                              decoration: BoxDecoration(
+                                color: scheme.surfaceContainerHighest.withAlpha(
+                                  45,
                                 ),
-                                if (!collapsed) ...[
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Text(
-                                      s.isZh ? '收起导航' : 'Collapse navigation',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        height: 1.4,
-                                        color: scheme.onSurfaceVariant,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: collapsed
+                                    ? MainAxisAlignment.center
+                                    : MainAxisAlignment.start,
+                                children: [
+                                  Icon(
+                                    _sectionNavCollapsed
+                                        ? Icons.chevron_right
+                                        : Icons.chevron_left,
+                                    size: 17,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                  if (!collapsed) ...[
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        s.isZh ? '收起导航' : 'Collapse navigation',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          height: 1.4,
+                                          color: scheme.onSurfaceVariant,
+                                        ),
                                       ),
                                     ),
-                                  ),
+                                  ],
                                 ],
-                              ],
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                    _buildSectionNavItems(
-                      hitsBySection,
-                      searching,
-                      scheme,
-                      collapsed: collapsed,
-                    ),
-                  ],
+                      _buildSectionNavItems(
+                        hitsBySection,
+                        searching,
+                        scheme,
+                        collapsed: collapsed,
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+              ],
             ),
           );
         },
@@ -1678,13 +1711,9 @@ class _SettingsPageState extends State<SettingsPage> {
           end: vertical ? 0 : null,
           width: vertical ? null : 112,
           height: rowHeight,
-          child: IgnorePointer(
-            child: DecoratedBox(
-              key: const ValueKey('settings_section_selection'),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                color: scheme.secondaryContainer.withAlpha(200),
-              ),
+          child: const IgnorePointer(
+            child: SelectionHighlight(
+              key: ValueKey('settings_section_selection'),
             ),
           ),
         ),
@@ -4460,6 +4489,64 @@ Widget _fontWeightPicker(
       ),
     ],
   );
+}
+
+String _selectionIndicatorTitle(AppStrings strings) =>
+    strings.isZh ? '选中遮罩' : 'Selection highlight';
+
+Widget _buildSelectionIndicatorStyle(BuildContext context, AppState state) {
+  final strings = AppStrings.of(state.config.language);
+  final title = _selectionIndicatorTitle(strings);
+  final scheme = Theme.of(context).colorScheme;
+  return _glass(context, state, title, [
+    Text(
+      strings.isZh
+          ? '适用范围：主导航、设置导航和分段选项；与菜单本身的材质分别设置。'
+          : 'Applies to navigation and segmented options, independently of the menu surface.',
+      style: SettingsTypography.description.copyWith(
+        color: scheme.onSurfaceVariant,
+      ),
+    ),
+    const SizedBox(height: 8),
+    ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 320),
+      child: Semantics(
+        label: title,
+        child: OptionMenuBar<String>(
+          key: const ValueKey('settings_selection_indicator_style'),
+          value: state.config.selectionIndicatorStyle,
+          triggerHeight: 44,
+          triggerMaxLines: 2,
+          itemLabelMaxLines: null,
+          items: [
+            OptionItem(
+              'theme',
+              strings.isZh ? '主题色' : 'Theme accent',
+              icon: Icons.palette_outlined,
+            ),
+            OptionItem(
+              'liquid',
+              strings.isZh ? '液态玻璃' : 'Liquid glass',
+              icon: Icons.water_drop_outlined,
+            ),
+            OptionItem(
+              'blur',
+              strings.isZh ? '毛玻璃' : 'Frosted glass',
+              icon: Icons.blur_on_outlined,
+            ),
+            OptionItem(
+              'outline',
+              strings.isZh ? '描边' : 'Outline',
+              icon: Icons.crop_square,
+            ),
+          ],
+          onChanged: (style) => state.updateConfig(
+            (config) => config..selectionIndicatorStyle = style,
+          ),
+        ),
+      ),
+    ),
+  ]);
 }
 
 /// 表面样式设置行：左 = 图标 + 文字（可选作用范围说明），右 = 四值

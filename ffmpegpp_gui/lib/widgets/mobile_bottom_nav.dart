@@ -7,6 +7,7 @@ import '../theme/app_neutral_surface.dart';
 import '../theme/app_strings.dart';
 import 'app_card.dart' show SurfaceStyle;
 import 'liquid_glass_fallback.dart';
+import 'selection_highlight.dart';
 import 'tabler_icon.dart';
 
 // ═══════════════════════════════════════════════════════════════
@@ -159,10 +160,8 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
           )
         : Colors.white.withValues(alpha: edgeWhite.alpha),
     borderWidth: style == SurfaceStyle.blur ? edgeBlur.width : edgeWhite.width,
-    // 遮罩已改为「完全透明 + 中性描边」（见 navMaskPill），选中态由图标/文字
-    // 颜色表达：blur/liquid/gray 用主题色或 onSurface（透明底上需要足够的
-    // 图标对比度，onPrimary 白在无实心底时会看不清）；theme 底栏本身即主题色，
-    // 选中项继续用 onPrimary 反白。
+    // Shell colors stay independent of SelectionHighlight; callers adjust the
+    // selected foreground for its theme surface and high-contrast mode.
     selectedColor: style == SurfaceStyle.theme
         ? scheme.onPrimary
         : style == SurfaceStyle.gray
@@ -172,14 +171,7 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
   );
 }
 
-/// 遮罩胶囊外观（用户反馈定稿）：**完全透明**填充 + 中性描边，不引入任何主题色。
-///
-/// 旧实现按样式分化：blur=实心主题色、theme=白色高亮、gray=中性高亮、
-/// liquid=白→主题色渐变 —— 用户反馈「难看、受主题色干扰」；且各样式都带
-/// offset(0,2) 的投影，视觉上胶囊「往下坠」，对称性差。
-/// 现在统一改为：透明填充 + 一条中性（暗色白 / 亮色黑）发丝描边 + 无阴影，
-/// 选中态完全交给图标/文字颜色（[NavGlassLook.selectedColor]）表达。
-/// [style] 参数保留在签名里（调用方语义不变、未来若要按样式微调描边不用改调用点）。
+/// Moving indicator geometry is independent of the configured surface style.
 /// 选中态遮罩在主轴上两端各让出的内缩量（px）。
 ///
 /// 遮罩宽度原本等于整个药丸槽宽，两端各只剩 [pillGap]（4px）与相邻项分隔，
@@ -199,20 +191,9 @@ double mobileNavMaskExtent(double itemExtent) {
   return v < 8 ? 8 : v;
 }
 
-Widget navMaskPill(ColorScheme scheme, bool isDark, String style) {
-  return Container(
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(22),
-      color: Colors.transparent,
-      border: Border.all(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.30)
-            : Colors.black.withValues(alpha: 0.14),
-        width: 1.0,
-      ),
-    ),
-  );
-}
+/// Keeps the legacy shell arguments while the indicator follows its own setting.
+Widget navMaskPill(ColorScheme scheme, bool isDark, String style) =>
+    const SelectionHighlight(radius: 22);
 
 /// OCLiquidGlass 静态 settings：dark/light 差异化由 tint/shadow 承担，
 /// 这样所有 build 都使用同一份 const 实例，避免每次新建 settings 触发
@@ -244,6 +225,9 @@ class NavGlassShell extends StatelessWidget {
   /// 菜单栏摆放位置：决定外壳四周「让出哪一边的安全区」。子页面切换栏
   /// （MobileNavStyleTabBar）恒在底部，故默认值即其原有行为。
   final MobileNavPlacement placement;
+
+  /// Optional exact margins for hosted tab-bar layouts.
+  final EdgeInsets? padding;
   final Widget child;
 
   const NavGlassShell({
@@ -252,6 +236,7 @@ class NavGlassShell extends StatelessWidget {
     required this.radius,
     required this.keyPrefix,
     this.placement = MobileNavPlacement.bottom,
+    this.padding,
     required this.child,
   });
 
@@ -288,10 +273,8 @@ class NavGlassShell extends StatelessWidget {
     // gpuGlassEnabledOf 统一判定（PC 端默认关闭）。
     final GlassTuning tuning = pal.tuning;
     final double shellSigma = effectiveGlassSigma(tuning.blur);
-    final EdgeInsets shellPad = shellPadding(
-      MediaQuery.of(context).padding,
-      placement,
-    );
+    final EdgeInsets shellPad =
+        padding ?? shellPadding(MediaQuery.of(context).padding, placement);
     final op = pal.op.clamp(0.0, 1.0);
     // 「样式 → 添加边框」：给导航/切换栏胶囊叠一条同圆角描边。
     // 只包 child 而不是整个 build：外壳外面还有一层「栏内边距」（底部形态是
@@ -365,25 +348,23 @@ class NavGlassShell extends StatelessWidget {
     //    build 新建 settings 触发 shader uniform 重置；
     // 2) OCLiquidGlassGroup 用 ValueKey(NavGlassPal)，仅玻璃配置变化才重建节点；
     // 3) OCLiquidGlass 独立 key（带 keyPrefix 防多实例冲突）；
-    // 4) RepaintBoundary 放在 OCLiquidGlassGroup 外部隔离重绘。
-    return RepaintBoundary(
-      child: OCLiquidGlassGroup(
-        key: ValueKey<NavGlassPal>(pal),
-        // 参数化 settings（带实例缓存，参数不变即复用同一实例，避免 uniform 重置）
-        settings: liquidGlassSettingsFor(tuning),
-        child: Padding(
-          padding: shellPad,
-          child: OCLiquidGlass(
-            key: ValueKey<String>('${pal.hashCode}_${keyPrefix}_inner'),
-            borderRadius: radius,
-            color: look.tint,
-            shadow: BoxShadow(
-              color: Colors.black.withAlpha(isDark ? 70 : 26),
-              blurRadius: 22,
-              offset: const Offset(0, 6),
-            ),
-            child: borderedChild,
+    // Keep the live backdrop in the parent scene instead of a cached boundary.
+    return OCLiquidGlassGroup(
+      key: ValueKey<NavGlassPal>(pal),
+      // 参数化 settings（带实例缓存，参数不变即复用同一实例，避免 uniform 重置）
+      settings: liquidGlassSettingsFor(tuning),
+      child: Padding(
+        padding: shellPad,
+        child: OCLiquidGlass(
+          key: ValueKey<String>('${pal.hashCode}_${keyPrefix}_inner'),
+          borderRadius: radius,
+          color: look.tint,
+          shadow: BoxShadow(
+            color: Colors.black.withAlpha(isDark ? 70 : 26),
+            blurRadius: 22,
+            offset: const Offset(0, 6),
           ),
+          child: borderedChild,
         ),
       ),
     );
@@ -528,7 +509,14 @@ class _MobileNavRailState extends State<MobileNavRail> {
 
     const barHeight = 60.0;
     const radius = barHeight / 2;
-    final selectedColor = look.selectedColor;
+    final indicatorStyle = context.select<AppState, String>(
+      (state) => state.config.selectionIndicatorStyle,
+    );
+    final selectedColor = MediaQuery.highContrastOf(context)
+        ? scheme.onSurface
+        : indicatorStyle == 'theme'
+        ? scheme.onSecondaryContainer
+        : look.selectedColor;
     final unselectedColor = look.unselectedColor;
 
     // 药丸间距：每个药丸之间留 4px 间隔
@@ -932,12 +920,15 @@ class _MobileNavRailState extends State<MobileNavRail> {
     required String style,
   }) {
     final dragging = dragX != null;
+    final reducedMotion = MediaQuery.disableAnimationsOf(context);
     final mask = AnimatedScale(
       // Deliberate tactile feedback while the user presses or drags the mask.
-      scale: dragging ? 1.25 : 1.0,
-      duration: const Duration(milliseconds: 150),
+      scale: dragging && !reducedMotion ? 1.25 : 1.0,
+      duration: reducedMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 150),
       curve: Curves.easeOutBack,
-      child: RepaintBoundary(child: navMaskPill(scheme, isDark, style)),
+      child: navMaskPill(scheme, isDark, style),
     );
 
     // 退出「拖菜单栏松手后的吸附窗口」的条件：PageView 已停稳且停在选中项上
@@ -970,7 +961,7 @@ class _MobileNavRailState extends State<MobileNavRail> {
     // 对 0 时长直接赋值（_animateToInternal 的 simulationDuration == Duration.zero
     // 分支），因此就是逐帧 1:1 跟随，不会引入一帧延迟。
     return AnimatedPositioned(
-      duration: followLeft != null
+      duration: reducedMotion || followLeft != null
           ? Duration.zero
           : const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
@@ -1006,7 +997,7 @@ class _MobileNavRailState extends State<MobileNavRail> {
   ///
   /// 直接复用 [_dragX] / [_pageTick] / [_releasedFromDrag] / [_pageIsScrolling]：
   /// 任一时刻树上只有一个形态，两套定位不会互相干扰；遮罩本身也仍是同一个
-  /// [navMaskPill]（glass 样式差异自动跟随 navStyle）。
+  /// [navMaskPill]（材质跟随独立的 selectionIndicatorStyle）。
   Widget _buildRailMask(
     int itemIdx,
     double itemExtent,
@@ -1029,7 +1020,7 @@ class _MobileNavRailState extends State<MobileNavRail> {
                 ? Duration.zero
                 : const Duration(milliseconds: 150),
             curve: Curves.easeOutBack,
-            child: RepaintBoundary(child: navMaskPill(scheme, isDark, style)),
+            child: navMaskPill(scheme, isDark, style),
           );
 
           // 退出「拖菜单栏松手后的吸附窗口」的判定与横排一致：页面已停稳且

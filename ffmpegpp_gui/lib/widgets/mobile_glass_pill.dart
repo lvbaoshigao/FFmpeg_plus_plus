@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/physics.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_neutral_surface.dart';
+import '../theme/app_press_feedback.dart';
 import '../theme/mobile_ui.dart';
 import 'app_card.dart' show SurfaceStyle;
 import 'liquid_glass_fallback.dart';
@@ -20,7 +20,7 @@ import 'liquid_glass_fallback.dart';
 /// 供顶栏标题药丸、顶栏操作长药丸、搜索框药丸等复用。
 ///
 /// [pressable] 为 true 时（用于「内部无可点击元素」的药丸，如左上角标题药丸），
-/// 按下轻微压缩，拖动时限幅形变，松手用弹簧回弹；不改变布局尺寸。
+/// 按下显示轻薄的轮廓内高光，松手柔和消退；玻璃与内容都不变形。
 class MobileGlassPill extends StatefulWidget {
   final Widget child;
   final double radius;
@@ -60,7 +60,7 @@ class MobileGlassPill extends StatefulWidget {
 /// 且自带 48×48 最小尺寸约束，会把药丸撑得比标题药丸更高。
 /// 这里手写一个透明 InkWell 的紧凑按钮：
 /// - 默认无背景；[bg] 传入后变成实心主题色圆形（用于"+"加号 CTA）
-/// - splash/highlight 都透明，避免蓝色涟漪
+/// - 使用全局轮廓内按压反馈，避免向外扩散的涟漪
 /// - 尺寸/图标/内边距统一取自 [MobileUi]（34/19/h1|h2）
 ///
 /// 移动端横向内边距取 1（比桌面 2 更紧凑），与主界面一致。
@@ -102,8 +102,6 @@ class MobileGlassPillAction extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(size / 2),
-        splashColor: Colors.transparent,
-        highlightColor: Colors.transparent,
         child: Padding(
           padding: pad,
           child: Container(
@@ -118,7 +116,45 @@ class MobileGlassPillAction extends StatelessWidget {
   }
 }
 
-/// 药丸样式渲染相关的"配置指纹"。只有它变化时玻璃节点才该重建。
+/// Paints feedback above the stable glass without creating an opacity layer.
+class _PillPressPainter extends CustomPainter {
+  const _PillPressPainter({
+    required this.amount,
+    required this.radius,
+    required this.color,
+  });
+
+  final double amount;
+  final double radius;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (amount <= 0 || size.isEmpty) return;
+    final shape = RRect.fromRectAndRadius(
+      (Offset.zero & size).deflate(0.5),
+      Radius.circular(radius),
+    );
+    canvas.drawRRect(
+      shape,
+      Paint()..color = color.withValues(alpha: color.a * amount),
+    );
+    canvas.drawRRect(
+      shape,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = color.withValues(alpha: color.a * amount * 0.8),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_PillPressPainter oldDelegate) =>
+      oldDelegate.amount != amount || oldDelegate.color != color ||
+      oldDelegate.radius != radius;
+}
+
+/// 药丸样式渲染相关的配置指纹，只有它变化时玻璃节点才重建。
 @immutable
 class _PillGlassKey {
   /// 顶部药丸样式（pillStyle 四值：theme/liquid/blur/gray）
@@ -173,127 +209,59 @@ class _PillGlassKey {
   );
 }
 
-class _MobileGlassPillState extends State<MobileGlassPill>
-    with TickerProviderStateMixin {
-  late final AnimationController _pressController;
-  late final AnimationController _returnController;
+class _MobileGlassPillState extends State<MobileGlassPill> {
   int? _pointer;
   Offset? _origin;
-  final ValueNotifier<Offset> _drag = ValueNotifier(Offset.zero);
+  bool _pressed = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _pressController = AnimationController.unbounded(
-      vsync: this,
-      duration: const Duration(milliseconds: 150),
-    );
-    _returnController = AnimationController.unbounded(vsync: this)
-      ..addStatusListener((status) {
-        if (status == AnimationStatus.completed) {
-          _drag.value = Offset.zero;
-        }
-      });
-  }
-
-  @override
-  void dispose() {
-    _pressController.dispose();
-    _returnController.dispose();
-    _drag.dispose();
-    super.dispose();
-  }
-
-  void _setPressed(bool pressed) {
-    if (MediaQuery.disableAnimationsOf(context)) {
-      _pressController.value = 0;
-      return;
-    }
-    if (pressed) {
-      // Keep the response immediate, while the release below uses a real
-      // under-damped spring instead of a linear/timed snap-back.
-      _pressController.animateTo(
-        1,
-        duration: const Duration(milliseconds: 150),
-        curve: Curves.easeOutCubic,
-      );
-      return;
-    }
-
-    final simulation = SpringSimulation(
-      const SpringDescription(mass: 1, stiffness: 420, damping: 28),
-      _pressController.value,
-      0,
-      _pressController.velocity,
-    );
-    _pressController.animateWith(simulation);
+  void _setPressed(bool value) {
+    if (_pressed == value) return;
+    setState(() => _pressed = value);
   }
 
   void _pointerDown(PointerDownEvent event) {
-    if (_pointer != null) return;
+    if (_pointer != null || event.buttons != 1) return;
     _pointer = event.pointer;
     _origin = event.position;
-    _returnController
-      ..stop()
-      ..value = 0;
-    _drag.value = Offset.zero;
     _setPressed(true);
   }
 
   void _pointerMove(PointerMoveEvent event) {
-    if (event.pointer != _pointer || _origin == null) return;
-    if (MediaQuery.disableAnimationsOf(context)) return;
-    final delta = event.position - _origin!;
-    final target = Offset(
-      (delta.dx * 0.12).clamp(-10.0, 10.0),
-      (delta.dy * 0.12).clamp(-6.0, 6.0),
-    );
-    _drag.value = Offset.lerp(_drag.value, target, 0.38)!;
+    if (event.pointer != _pointer) return;
+    if (_origin != null && (event.position - _origin!).distance > 12) {
+      // A scroll/drag keeps its original gesture arena; only release the light.
+      _setPressed(false);
+    }
   }
 
   void _pointerEnd(PointerEvent event) {
     if (event.pointer != _pointer) return;
     _pointer = null;
     _origin = null;
-    if (MediaQuery.disableAnimationsOf(context)) {
-      _drag.value = Offset.zero;
-    } else {
-      _returnController.animateWith(
-        SpringSimulation(
-          const SpringDescription(mass: 1, stiffness: 420, damping: 28),
-          _returnController.value,
-          1,
-          _returnController.velocity,
-        ),
-      );
-    }
     _setPressed(false);
   }
 
-  Widget _pressedTransform(Widget child) {
-    return AnimatedBuilder(
-      animation: Listenable.merge([_pressController, _returnController, _drag]),
+  Widget _pressSurface(Widget child) {
+    final reduced = MediaQuery.disableAnimationsOf(context);
+    final scheme = Theme.of(context).colorScheme;
+    return TweenAnimationBuilder<double>(
+      key: const ValueKey('pill_press_feedback'),
+      tween: Tween(end: _pressed ? 1 : 0),
+      duration: reduced
+          ? Duration.zero
+          : Duration(milliseconds: _pressed ? 75 : 165),
+      curve: Curves.easeOutCubic,
       child: child,
-      builder: (context, child) {
-        final amount = _pressController.value.clamp(-0.2, 1.0);
-        final scale = 1 - (amount * 0.025);
-        final horizontal = scale * (1 + (amount * 0.012));
-        final vertical = scale * (1 - (amount * 0.012));
-        final drag = _drag.value * (1 - _returnController.value);
-        final dx = drag.dx;
-        final dy = drag.dy;
-        return Transform.translate(
-          offset: Offset(dx, dy),
-          child: Transform.rotate(
-            angle: (-dx * 0.0025).clamp(-0.03, 0.03),
-            child: Transform(
-              alignment: Alignment.center,
-              transform: Matrix4.diagonal3Values(horizontal, vertical, 1),
-              child: child,
-            ),
-          ),
-        );
-      },
+      builder: (context, amount, child) => CustomPaint(
+        foregroundPainter: _PillPressPainter(
+          amount: amount,
+          radius: widget.radius,
+          color: MediaQuery.highContrastOf(context)
+              ? scheme.onSurface.withValues(alpha: 0.16)
+              : AppPressFeedback.softOverlay(scheme, true),
+        ),
+        child: child,
+      ),
     );
   }
 
@@ -493,7 +461,7 @@ class _MobileGlassPillState extends State<MobileGlassPill>
 
     // 「样式 → 添加边框」：开启时在药丸表面之上叠一层同圆角描边（关闭时原样
     // 返回 pill，零额外层级）。放在点击/外边距包装之内：描边严格贴合药丸本体
-    //（而不是含 margin 的外框），并随按压缩放一起动画。
+    //（而不是含 margin 的外框），按压仅影响前景光层。
     Widget result = withConfigurableBorder(
       context,
       pill,
@@ -511,7 +479,7 @@ class _MobileGlassPillState extends State<MobileGlassPill>
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
-          child: _pressedTransform(result),
+          child: _pressSurface(result),
         ),
       );
     }

@@ -11,11 +11,11 @@ import '../providers/app_state.dart';
 import '../theme/app_text_scale.dart';
 import '../theme/mobile_visual_theme.dart';
 import 'liquid_glass_fallback.dart';
+import 'selection_highlight.dart';
 
 /// 统一的「菜单栏选项」控件 —— 融合两处参考样式：
 /// * 触发按钮：设置→任务卡片下拉菜单的外观（圆角描边、紧凑高度、展开/收起动画）；
-/// * 选项条目：设置页左侧主菜单条目（图标+文字，选中为主题色药丸，
-///   选中和键盘焦点使用轻底色与尾部对勾）。
+/// * 行内选中段：使用全局选中材质；浮层列表保留轻底色与尾部对勾。
 ///
 /// 两种形态（同一组件，按 [expandable] 切换）：
 /// * expandable: false —— 行内分段药丸（替代 SegmentedButton），适合 2~4 个短选项；
@@ -1000,7 +1000,7 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
     );
 
     if (!widget.expandable) {
-      // ── 行内分段药丸：同一套选中动画，2~4 个短选项 ──
+      // ── 行内分段药丸：共享选中材质，2~4 个短选项 ──
       return Container(
         decoration: trigger.copyWith(borderRadius: BorderRadius.circular(12)),
         padding: const EdgeInsets.all(3),
@@ -1034,10 +1034,7 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
               color: Colors.transparent,
               child: InkWell(
                 borderRadius: BorderRadius.circular(12),
-                // 触发框底色只有 surface@60，水波纹会明显透出来（全应用其它按钮
-                // 都已显式关掉：mobile_glass_pill / mobile_top_bar / sidebar）。
-                splashColor: Colors.transparent,
-                highlightColor: Colors.transparent,
+                // Inherit the bounded soft press and keyboard focus from AppTheme.
                 onTap: _toggle,
                 child: Container(
                   constraints: BoxConstraints(minHeight: widget.triggerHeight),
@@ -1361,62 +1358,72 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
     return Semantics(
       selected: sel,
       button: true,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: () => _pick(it),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-          padding: EdgeInsets.symmetric(
-            horizontal: compact ? 6 : 10,
-            vertical: compact ? 5 : 7,
+      child: Stack(
+        fit: StackFit.passthrough,
+        children: [
+          Positioned.fill(
+            child: sel
+                ? const SelectionHighlight(radius: 10)
+                : const SizedBox.shrink(),
           ),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            color: sel ? scheme.primary.withAlpha(34) : Colors.transparent,
-            border: Border.all(
-              color: sel ? scheme.primary.withAlpha(90) : Colors.transparent,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (it.leading != null) ...[
-                it.leading!,
-                const SizedBox(width: 4),
-              ] else
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
-                  transitionBuilder: (child, anim) =>
-                      FadeTransition(opacity: anim, child: child),
-                  child: it.icon == null
-                      ? const SizedBox.shrink()
-                      : Icon(
-                          it.icon,
-                          key: ValueKey(it.value.toString() + sel.toString()),
-                          size: 14,
+          Material(
+            type: MaterialType.transparency,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: () => _pick(it),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: compact ? 6 : 10,
+                  vertical: compact ? 5 : 7,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (it.leading != null) ...[
+                      it.leading!,
+                      const SizedBox(width: 4),
+                    ] else
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 180),
+                        transitionBuilder: (child, anim) =>
+                            FadeTransition(opacity: anim, child: child),
+                        child: it.icon == null
+                            ? const SizedBox.shrink()
+                            : Icon(
+                                it.icon,
+                                key: ValueKey(
+                                  it.value.toString() + sel.toString(),
+                                ),
+                                size: 14,
+                                color: sel
+                                    ? scheme.primary
+                                    : scheme.onSurfaceVariant,
+                              ),
+                      ),
+                    if (it.icon != null) const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        it.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: sel
+                              ? FontWeight.values[
+                                  (weight.value ~/ 100).clamp(0, 8)
+                                ]
+                              : weight,
                           color: sel ? scheme.primary : scheme.onSurfaceVariant,
                         ),
-                ),
-              if (it.icon != null) const SizedBox(width: 4),
-              Flexible(
-                child: Text(
-                  it.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: sel
-                        ? FontWeight.values[(weight.value ~/ 100).clamp(0, 8)]
-                        : weight,
-                    color: sel ? scheme.primary : scheme.onSurfaceVariant,
-                  ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import 'glass_panel.dart';
+import 'selection_highlight.dart';
 import 'tabler_icon.dart';
 
 class Sidebar extends StatefulWidget {
@@ -52,6 +53,15 @@ class _SidebarState extends State<Sidebar> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final duration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : _anim;
+    final selectionStyle = context.select<AppState, String>(
+      (state) => state.config.selectionIndicatorStyle,
+    );
+    final themedSelection =
+        !const {'liquid', 'blur', 'outline'}.contains(selectionStyle) &&
+        !MediaQuery.highContrastOf(context);
     final lang = context.select<AppState, String>((s) => s.config.language);
     final s = AppStrings.of(lang);
     // 菜单样式（跟随主题 / 液态玻璃 / 模糊 / 灰色）——设置→外观→菜单样式
@@ -78,118 +88,128 @@ class _SidebarState extends State<Sidebar> {
     }
 
     return AnimatedContainer(
-      duration: _anim,
+      duration: duration,
       curve: _curve,
       width: _collapsed ? _collapsedWidth : _expandedWidth,
-      child: GlassPanel(
-        radius: 20,
-        style: menuStyle,
-        // 侧边栏是全窗口最高的玻璃面板，模糊半径对内存影响最大；
-        // 12 与 18 的视觉差异很小，但离屏纹理面积明显更小
-        blur: 12,
-        child: Material(
-          color: Colors.transparent,
-          child: DefaultTextStyle(
-            style: TextStyle(
-              color: clr,
-              fontFamily: theme.textTheme.bodyMedium?.fontFamily,
-            ),
-            // 宽度是动画过渡的，中途会短暂窄于展开态内容的理想宽度；
-            // ClipRect + 下面各处的 Flexible/ellipsis 保证这期间不会抛 overflow。
-            child: ClipRect(
-              child: Column(
-                children: [
-                  _header(scheme, s),
-                  Divider(
-                    color: scheme.outlineVariant.withAlpha(80),
-                    height: 1,
-                  ),
-                  const SizedBox(height: 8),
-                  // 导航项：底部滑动遮罩按像素精确定位（从选中项滑到新选中项）
-                  Stack(
-                    children: [
-                      // 滑动遮罩：默认随选中项动画滑动；按住可拖动，松开吸附到最近项并跳转。
-                      // 仅此子树订阅 _maskDragTop，拖动时不重建整个 GlassPanel。
-                      ValueListenableBuilder<double?>(
-                        valueListenable: _maskDragTop,
-                        builder: (context, maskDragTop, _) =>
-                            AnimatedPositioned(
-                              duration: maskDragTop == null
-                                  ? _anim
-                                  : Duration.zero,
-                              curve: _curve,
-                              top:
-                                  (maskDragTop ??
-                                          (widget.selectedIndex.clamp(
-                                                0,
-                                                items.length - 1,
-                                              )).toDouble() *
-                                              _itemH)
-                                      .clamp(
-                                        0.0,
-                                        ((items.length - 1) * _itemH)
-                                            .toDouble(),
-                                      ),
-                              left: 0,
-                              right: 0,
-                              height: _itemH,
-                              // 遮罩保留边距：与侧边栏左右边缘留 8px 缝隙（不贴合），
-                              // 同时比 150 内容区宽，图标/文字四周各留 ~12px 间距
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                ),
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: scheme.secondaryContainer.withAlpha(
-                                      200,
-                                    ),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                              ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Solid menu surfaces may cache their background. Keep the live
+          // selection backdrop outside that boundary so it samples fresh pixels.
+          GlassPanel(
+            radius: 20,
+            style: menuStyle,
+            blur: 12,
+            child: const SizedBox.expand(),
+          ),
+          Material(
+            color: Colors.transparent,
+            child: DefaultTextStyle(
+              style: TextStyle(
+                color: clr,
+                fontFamily: theme.textTheme.bodyMedium?.fontFamily,
+              ),
+              // 宽度是动画过渡的，中途会短暂窄于展开态内容的理想宽度；
+              // ClipRect + 下面各处的 Flexible/ellipsis 保证这期间不会抛 overflow。
+              child: ClipRect(
+                child: Column(
+                  children: [
+                    _header(scheme, s),
+                    Divider(
+                      color: scheme.outlineVariant.withAlpha(80),
+                      height: 1,
+                    ),
+                    const SizedBox(height: 8),
+                    // 导航项：底部滑动遮罩按像素精确定位（从选中项滑到新选中项）
+                    Stack(
+                      children: [
+                        // 滑动遮罩：默认随选中项动画滑动；按住可拖动，松开吸附到最近项并跳转。
+                        // 仅此子树订阅 _maskDragTop，拖动时不重建整个 GlassPanel。
+                        ValueListenableBuilder<double?>(
+                          valueListenable: _maskDragTop,
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 8),
+                            child: SelectionHighlight(
+                              key: ValueKey('sidebar_selection'),
                             ),
-                      ),
-                      Column(
-                        children: [
-                          for (var i = 0; i < items.length; i++)
-                            _navItem(scheme, clr, items[i], i),
-                        ],
-                      ),
-                      // 拖动层：覆盖整个导航区域，捕获垂直拖动（遮罩跟随鼠标）；
-                      // 点击仍由下方 nav item 的 InkWell 处理（手势竞技场自动区分 tap/drag）。
-                      Positioned.fill(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.translucent,
-                          onVerticalDragStart: (d) {
-                            _maskDragTop.value =
-                                (widget.selectedIndex.clamp(
-                                      0,
-                                      items.length - 1,
-                                    )).toDouble() *
-                                    _itemH +
-                                d.localPosition.dy.clamp(0.0, _itemH);
-                          },
-                          onVerticalDragUpdate: (d) {
-                            _maskDragTop.value =
-                                (_maskDragTop.value ?? 0) + d.delta.dy;
-                          },
-                          onVerticalDragEnd: (_) {
-                            final t = _maskDragTop.value;
-                            if (t != null) _endMaskDrag(items.length, t);
-                          },
-                          onVerticalDragCancel: () => _maskDragTop.value = null,
+                          ),
+                          builder: (context, maskDragTop, highlight) =>
+                              AnimatedPositioned(
+                                key: const ValueKey(
+                                  'sidebar_selection_position',
+                                ),
+                                duration: maskDragTop == null
+                                    ? duration
+                                    : Duration.zero,
+                                curve: _curve,
+                                top:
+                                    (maskDragTop ??
+                                            (widget.selectedIndex.clamp(
+                                                  0,
+                                                  items.length - 1,
+                                                )).toDouble() *
+                                                _itemH)
+                                        .clamp(
+                                          0.0,
+                                          ((items.length - 1) * _itemH)
+                                              .toDouble(),
+                                        ),
+                                left: 0,
+                                right: 0,
+                                height: _itemH,
+                                // 遮罩保留边距：与侧边栏左右边缘留 8px 缝隙（不贴合），
+                                // 同时比 150 内容区宽，图标/文字四周各留 ~12px 间距
+                                child: highlight!,
+                              ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const Spacer(),
-                  _status(scheme, clr, s, lang),
-                ],
+                        Column(
+                          children: [
+                            for (var i = 0; i < items.length; i++)
+                              _navItem(
+                                scheme,
+                                clr,
+                                items[i],
+                                i,
+                                themedSelection: themedSelection,
+                              ),
+                          ],
+                        ),
+                        // 拖动层：覆盖整个导航区域，捕获垂直拖动（遮罩跟随鼠标）；
+                        // 点击仍由下方 nav item 的 InkWell 处理（手势竞技场自动区分 tap/drag）。
+                        Positioned.fill(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.translucent,
+                            onVerticalDragStart: (d) {
+                              _maskDragTop.value =
+                                  (widget.selectedIndex.clamp(
+                                        0,
+                                        items.length - 1,
+                                      )).toDouble() *
+                                      _itemH +
+                                  d.localPosition.dy.clamp(0.0, _itemH);
+                            },
+                            onVerticalDragUpdate: (d) {
+                              _maskDragTop.value =
+                                  (_maskDragTop.value ?? 0) + d.delta.dy;
+                            },
+                            onVerticalDragEnd: (_) {
+                              final t = _maskDragTop.value;
+                              if (t != null) _endMaskDrag(items.length, t);
+                            },
+                            onVerticalDragCancel: () =>
+                                _maskDragTop.value = null,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    _status(scheme, clr, s, lang),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -263,72 +283,82 @@ class _SidebarState extends State<Sidebar> {
     ColorScheme scheme,
     Color clr,
     (TablerGlyph, String) item,
-    int i,
-  ) {
+    int i, {
+    required bool themedSelection,
+  }) {
     final sel = i == widget.selectedIndex;
-    final icon = TablerIcon(item.$1, size: 20, color: sel ? scheme.primary : clr);
+    final icon = TablerIcon(
+      item.$1,
+      size: 20,
+      color: sel ? (themedSelection ? scheme.primary : scheme.onSurface) : clr,
+    );
     // 选中态只由滑动遮罩表达；图标/文字瞬时变色（无多余动画，避免卡顿与尺寸不一致）
     // 固定宽度内容（图标 + 固定间距 + 文字），所有项图标/文字首字对齐，
     // 整个单元在导航项内水平居中，遮罩固定宽度与其一致。
     // LayoutBuilder 依据动画实际宽度显示文字，避免过渡期固定宽内容溢出
-    return SizedBox(
-      height: _itemH,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          splashColor: Colors.transparent,
-          highlightColor: Colors.transparent,
-          hoverColor: Colors.transparent,
-          onTap: () => widget.onSelected(i),
-          child: LayoutBuilder(
-            builder: (ctx, cons) {
-              final showText = cons.maxWidth > 90;
-              // 首字对齐优先：固定内容宽 150，图标固定在最左侧起点，
-              // 文字用 Expanded 强制撑满剩余（无论文字长短，图标/文字首字恒对齐）
-              final contentW = showText ? 150.0 : 48.0;
-              final row = Center(
-                child: SizedBox(
-                  width: contentW.clamp(0.0, cons.maxWidth),
-                  height: _itemH,
-                  child: showText
-                      ? Row(
-                          mainAxisAlignment: MainAxisAlignment.start,
-                          children: [
-                            icon,
-                            const SizedBox(width: 12),
-                            // Expanded 撑满：文字长短不影响图标起点
-                            Expanded(
-                              child: Text(
-                                item.$2,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: sel
-                                      ? FontWeight.w600
-                                      : FontWeight.w400,
-                                  color: sel
-                                      ? scheme.onSecondaryContainer
-                                      : clr,
+    return Semantics(
+      key: ValueKey('sidebar_nav_$i'),
+      selected: sel,
+      button: true,
+      child: SizedBox(
+        height: _itemH,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            hoverColor: Colors.transparent,
+            onTap: () => widget.onSelected(i),
+            child: LayoutBuilder(
+              builder: (ctx, cons) {
+                final showText = cons.maxWidth > 90;
+                // 首字对齐优先：固定内容宽 150，图标固定在最左侧起点，
+                // 文字用 Expanded 强制撑满剩余（无论文字长短，图标/文字首字恒对齐）
+                final contentW = showText ? 150.0 : 48.0;
+                final row = Center(
+                  child: SizedBox(
+                    width: contentW.clamp(0.0, cons.maxWidth),
+                    height: _itemH,
+                    child: showText
+                        ? Row(
+                            mainAxisAlignment: MainAxisAlignment.start,
+                            children: [
+                              icon,
+                              const SizedBox(width: 12),
+                              // Expanded 撑满：文字长短不影响图标起点
+                              Expanded(
+                                child: Text(
+                                  item.$2,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: sel
+                                        ? FontWeight.w600
+                                        : FontWeight.w400,
+                                    color: sel
+                                        ? (themedSelection
+                                              ? scheme.onSecondaryContainer
+                                              : scheme.onSurface)
+                                        : clr,
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
-                        )
-                      // 收起态：仅图标，水平居中
-                      : Center(child: icon),
-                ),
-              );
-              // 收起（无文字）时用 tooltip 补上名称
-              return !showText
-                  ? Tooltip(
-                      message: item.$2,
-                      waitDuration: const Duration(milliseconds: 200),
-                      child: row,
-                    )
-                  : row;
-            },
+                            ],
+                          )
+                        // 收起态：仅图标，水平居中
+                        : Center(child: icon),
+                  ),
+                );
+                // 收起（无文字）时用 tooltip 补上名称
+                return !showText
+                    ? Tooltip(
+                        message: item.$2,
+                        waitDuration: const Duration(milliseconds: 200),
+                        child: row,
+                      )
+                    : row;
+              },
+            ),
           ),
         ),
       ),

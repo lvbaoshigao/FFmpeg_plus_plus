@@ -2518,6 +2518,9 @@ class AppConfig {
   // 仅桌面端生效；移动端没有侧边栏/玻璃顶栏。
   String menuStyle;
 
+  /// Selection appearance independent of the menu and navigation surfaces.
+  String selectionIndicatorStyle;
+
   /// 下拉菜单外观：'theme' 保留原有主题表面，'liquid' 液态玻璃，
   /// 'frosted' 主题色毛玻璃，'highlight' 高光玻璃，'gray' 不透明中性灰。
   String dropdownAppearance;
@@ -2781,6 +2784,7 @@ class AppConfig {
     this.navAutoHide = false,
     this.pillStyle = 'liquid',
     this.menuStyle = 'liquid',
+    this.selectionIndicatorStyle = 'theme',
     this.dropdownAppearance = 'theme',
     this.mobileTheme = 'follow',
     this.glassAutoTuned = false,
@@ -2884,6 +2888,12 @@ class AppConfig {
     _ => 'liquid',
   };
 
+  static String _normalizeSelectionIndicatorStyle(Object? value) =>
+      switch (value) {
+        'liquid' || 'blur' || 'outline' => value as String,
+        _ => 'theme',
+      };
+
   static Map<String, int> _safeIntMap(dynamic v) {
     if (v is! Map) return {};
     final out = <String, int>{};
@@ -2967,6 +2977,9 @@ class AppConfig {
     navAutoHide: json['nav_auto_hide'] as bool? ?? false,
     pillStyle: _migrateSurfaceStyle(json['pill_style'] as String?),
     menuStyle: _migrateSurfaceStyle(json['menu_style'] as String? ?? 'liquid'),
+    selectionIndicatorStyle: _normalizeSelectionIndicatorStyle(
+      json['selection_indicator_style'],
+    ),
     mobileTheme: json['mobile_theme'] == 'miuix' ? 'miuix' : 'follow',
     dropdownAppearance: () {
       final value = json['dropdown_appearance'];
@@ -3133,6 +3146,9 @@ class AppConfig {
     'card_style': cardStyle, 'nav_style': navStyle, 'pill_style': pillStyle,
     'nav_auto_hide': navAutoHide,
     'menu_style': menuStyle,
+    'selection_indicator_style': _normalizeSelectionIndicatorStyle(
+      selectionIndicatorStyle,
+    ),
     'dropdown_appearance': dropdownAppearance,
     'mobile_theme': mobileTheme,
     'glass_auto_tuned': glassAutoTuned,

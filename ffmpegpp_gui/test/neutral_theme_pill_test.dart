@@ -33,63 +33,63 @@ void main() {
     expect(AppConfig.fromJson({}).useThemeColor, isTrue);
   });
 
-  testWidgets('liquid pill follows drag, springs home and preserves taps', (
-    tester,
-  ) async {
-    final state = AppState();
-    state.config.pillStyle = 'liquid';
-    var taps = 0;
-    await tester.pumpWidget(
-      ChangeNotifierProvider.value(
-        value: state,
-        child: MaterialApp(
-          theme: AppTheme.dark(),
-          home: Scaffold(
-            body: Center(
-              child: MobileGlassPill(
-                pressable: true,
-                onTap: () => taps++,
-                height: 48,
-                child: const Text('Project'),
+  testWidgets(
+    'liquid pill lights on press without moving glass or stealing drags',
+    (tester) async {
+      final state = AppState()..config.pillStyle = 'liquid';
+      addTearDown(state.dispose);
+      var taps = 0;
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: state,
+          child: MaterialApp(
+            theme: AppTheme.dark(),
+            home: Scaffold(
+              body: Center(
+                child: MobileGlassPill(
+                  pressable: true,
+                  onTap: () => taps++,
+                  height: 48,
+                  child: const Text('Project'),
+                ),
               ),
             ),
           ),
         ),
-      ),
-    );
-    final pill = find.byType(MobileGlassPill);
-    final size = tester.getSize(pill);
-    final gesture = await tester.startGesture(tester.getCenter(pill));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 160));
-    await gesture.moveBy(const Offset(60, 15));
-    await tester.pump(const Duration(milliseconds: 16));
-    final transform = tester.widget<Transform>(
-      find.descendant(of: pill, matching: find.byType(Transform)).first,
-    );
-    expect(transform.transform.entry(0, 3), greaterThan(0));
-    expect(tester.getSize(pill), size);
-    await gesture.moveBy(const Offset(-120, 0));
-    await tester.pump(const Duration(milliseconds: 140));
-    final reversedTransform = tester.widget<Transform>(
-      find.descendant(of: pill, matching: find.byType(Transform)).first,
-    );
-    expect(reversedTransform.transform.entry(0, 3), lessThan(0));
-    await gesture.up();
-    await tester.pumpAndSettle();
-    expect(taps, 0);
-    final settled = tester
-        .widget<Transform>(
-          find.descendant(of: pill, matching: find.byType(Transform)).first,
-        )
-        .transform;
-    expect(settled.entry(0, 3), closeTo(0, 0.01));
-    expect(settled.entry(0, 0), closeTo(1, 0.001));
-    await tester.tap(pill);
-    await tester.pumpAndSettle();
-    expect(taps, 1);
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox());
-    state.dispose();
-  });
+      );
+      final pill = find.byType(MobileGlassPill);
+      final bounds = tester.getRect(pill);
+      final paint = find
+          .descendant(of: pill, matching: find.byType(CustomPaint))
+          .first;
+      final element = tester.element(paint);
+      final gesture = await tester.startGesture(tester.getCenter(pill));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+      final pressedPainter = tester
+          .widget<CustomPaint>(paint)
+          .foregroundPainter;
+      expect(pressedPainter, isNotNull);
+      expect((pressedPainter as dynamic).amount, 1);
+      expect(tester.getRect(pill), bounds);
+      expect(
+        find.descendant(of: pill, matching: find.byType(Transform)),
+        findsNothing,
+      );
+      await gesture.moveBy(const Offset(70, 20));
+      await tester.pump(const Duration(milliseconds: 180));
+      expect(tester.getRect(pill), bounds);
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(taps, 0);
+      expect(tester.element(paint), same(element));
+      expect((tester.widget<CustomPaint>(paint).foregroundPainter as dynamic).amount, 0);
+      await tester.tap(pill);
+      await tester.pumpAndSettle();
+      expect(taps, 1);
+      expect(tester.binding.transientCallbackCount, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 }

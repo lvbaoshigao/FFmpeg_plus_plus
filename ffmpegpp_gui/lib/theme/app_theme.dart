@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../widgets/app_slider.dart' show appSliderThemeFor;
 import 'app_neutral_surface.dart';
 import 'app_page_transitions.dart';
+import 'app_press_feedback.dart';
 import 'app_semantic_colors.dart';
 
 class AppTheme {
@@ -139,6 +140,13 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
+      // The context-aware AppPressTheme wrapper adds reduced-motion/high-contrast
+      // variants; this OS-aware base also covers isolated widgets and previews.
+      splashFactory: AppPressFeedback.splashFactory,
+      splashColor: AppPressFeedback.splashColor(scheme),
+      highlightColor: Colors.transparent,
+      hoverColor: scheme.onSurface.withValues(alpha: 0.045),
+      focusColor: scheme.primary.withValues(alpha: 0.14),
       // 转场：Android 用自写的位移式转场（见 theme/app_page_transitions.dart）。
       //
       // 之前用 framework 的 PredictiveBackPageTransitionsBuilder，它非手势时委托
@@ -193,6 +201,7 @@ class AppTheme {
       ),
       segmentedButtonTheme: SegmentedButtonThemeData(
         style: ButtonStyle(
+          overlayColor: AppPressFeedback.overlayColor(scheme),
           padding: const WidgetStatePropertyAll(
             EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           ),
@@ -259,18 +268,24 @@ class AppTheme {
         ),
         isDense: true,
       ),
+      textButtonTheme: TextButtonThemeData(
+        style: ButtonStyle(overlayColor: AppPressFeedback.overlayColor(scheme)),
+      ),
+      iconButtonTheme: IconButtonThemeData(
+        style: ButtonStyle(overlayColor: AppPressFeedback.overlayColor(scheme)),
+      ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
+        ).copyWith(overlayColor: AppPressFeedback.overlayColor(scheme)),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
+        ).copyWith(overlayColor: AppPressFeedback.overlayColor(scheme)),
       ),
       // 必须和 filledButtonTheme 保持同样的圆角/内边距：否则 OutlinedButton 会退回
       // Material 3 默认值（胶囊形 + 更小的内边距），和旁边的 FilledButton 并排时
@@ -280,7 +295,7 @@ class AppTheme {
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           side: BorderSide(color: scheme.outlineVariant.withAlpha(160)),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
+        ).copyWith(overlayColor: AppPressFeedback.overlayColor(scheme)),
       ),
       // ── 统一的滑动条 / 进度条样式 ──
       // 用户要求：所有进度条（滑动条）样式统一 —— 两边大圆角的矩形轨道、内部可滑动、

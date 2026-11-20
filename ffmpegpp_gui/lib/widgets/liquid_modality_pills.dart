@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/app_state.dart';
 import 'liquid_glass_fallback.dart';
+import 'selection_highlight.dart';
 
 /// 模型模态（输入 / 输出）。
 abstract final class LiquidModalities {
@@ -25,8 +26,8 @@ abstract final class LiquidModalities {
 ///   （未选中）分别插值宽度，所以整行像液体一样重新分配宽度，而不是瞬切。
 /// * **拖动排序**：长按药丸拖到另一颗上即可换位；松手后顺序写回模型条目
 ///   （选中模态的 JSON 数组顺序也随之更新）。
-/// * **液态玻璃质感**：选中药丸用主题色渐变 + 顶部高光 + 细描边，
-///   未选中药丸用 surfaceContainerHighest；颜色全部来自 ColorScheme。
+/// * **选中材质**：共享 SelectionHighlight，跟随全局选中指示器设置；
+///   基础表面沿用中性玻璃，拖动占位使用静态淡色，避免透明层截断 backdrop。
 /// * **无障碍**：每颗药丸都是 [Semantics] 按钮（toggled 表达多选状态），
 ///   并额外提供「左移 / 右移」自定义语义动作，读屏用户不依赖拖拽也能排序。
 ///
@@ -277,14 +278,29 @@ class _LiquidModalityPillsState extends State<LiquidModalityPills>
                 ),
               ),
             ),
-            childWhenDragging: Opacity(opacity: 0.35, child: surface),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(radius),
-              splashColor: Colors.transparent,
-              highlightColor: Colors.transparent,
-              excludeFromSemantics: true,
-              onTap: widget.enabled ? () => widget.onToggle(value) : null,
-              child: surface,
+            childWhenDragging: _ModalityPillSurface(
+              selected: selected,
+              hovering: false,
+              icon: icon,
+              label: label,
+              scheme: scheme,
+              isDark: isDark,
+              radius: radius,
+              dragPlaceholder: true,
+            ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                surface,
+                Material(
+                  type: MaterialType.transparency,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(radius),
+                    excludeFromSemantics: true,
+                    onTap: widget.enabled ? () => widget.onToggle(value) : null,
+                  ),
+                ),
+              ],
             ),
           );
         },
@@ -295,8 +311,7 @@ class _LiquidModalityPillsState extends State<LiquidModalityPills>
 
 /// 单颗模态药丸的视觉表面。
 ///
-/// 选中：淡化主题色实底 + 主题色描边 + 柔和投影；
-/// 未选中：surfaceContainerHighest 实底 + outlineVariant 细边。
+/// 中性基础表面承载共享选中材质，拖动占位不绘制活玻璃。
 class _ModalityPillSurface extends StatelessWidget {
   final bool selected;
   final bool hovering;
@@ -305,6 +320,7 @@ class _ModalityPillSurface extends StatelessWidget {
   final ColorScheme scheme;
   final bool isDark;
   final double radius;
+  final bool dragPlaceholder;
 
   const _ModalityPillSurface({
     required this.selected,
@@ -314,78 +330,77 @@ class _ModalityPillSurface extends StatelessWidget {
     required this.scheme,
     required this.isDark,
     required this.radius,
+    this.dragPlaceholder = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final Color contentColor = selected
+    final Color contentColor = dragPlaceholder
+        ? scheme.onSurfaceVariant.withValues(alpha: 0.35)
+        : selected
         ? scheme.primary
         : scheme.onSurfaceVariant;
     final liquid = context.select<AppState?, bool>(
       (s) => s?.config.glassEffect == 'liquid',
     );
     final tuning = glassTuningOf(context);
-    final fill = selected
-        ? scheme.primary.withValues(alpha: isDark ? 0.24 : 0.12)
-        : scheme.surfaceContainerHighest.withValues(
-            alpha: isDark ? 0.55 : 0.80,
-          );
+    final fill = scheme.surfaceContainerHighest.withValues(
+      alpha: dragPlaceholder ? 0.20 : (isDark ? 0.55 : 0.80),
+    );
     final border = hovering
         ? scheme.primary
-        : selected
-        ? scheme.primary.withValues(alpha: 0.44)
-        : scheme.outlineVariant.withValues(alpha: 0.60);
+        : scheme.outlineVariant.withValues(alpha: dragPlaceholder ? 0.25 : 0.60);
     final edge = edgeBorder(border.a, hovering ? 1.4 : 0.7, tuning.edge);
     Widget surface = DecoratedBox(
       decoration: BoxDecoration(
-        color: liquid
+        color: liquid && !dragPlaceholder
             ? fill.withAlpha(tunedGlassAlpha((fill.a * 255).round(), tuning))
             : fill,
         borderRadius: BorderRadius.circular(radius),
-        border: liquid && tuning.edge <= 0
+        border: liquid && !dragPlaceholder && tuning.edge <= 0
             ? null
             : Border.all(
-                color: liquid ? border.withValues(alpha: edge.alpha) : border,
-                width: liquid
+                color: liquid && !dragPlaceholder
+                    ? border.withValues(alpha: edge.alpha)
+                    : border,
+                width: liquid && !dragPlaceholder
                     ? edge.width
                     : hovering
                     ? 1.4
                     : 0.7,
               ),
-        boxShadow: selected
-            ? [
-                BoxShadow(
-                  color: scheme.primary.withValues(alpha: isDark ? 0.20 : 0.14),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ]
-            : null,
       ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 15, color: contentColor),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: selected ? 12 : 11.5,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                  color: contentColor,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (selected && !dragPlaceholder)
+            Positioned.fill(child: SelectionHighlight(radius: radius)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 15, color: contentColor),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: selected ? 12 : 11.5,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                      color: contentColor,
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
-    if (liquid) {
+    if (liquid && !dragPlaceholder) {
       surface = LiquidGlassBackdrop(
         borderRadius: BorderRadius.circular(radius),
         sigma: tunedGlassSigma(16, tuning),

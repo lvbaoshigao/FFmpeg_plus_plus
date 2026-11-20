@@ -13,6 +13,7 @@ import '../models/models.dart';
 import '../models/node_picker_options.dart';
 import '../providers/app_state.dart';
 import '../services/multi_window.dart';
+import '../theme/app_press_feedback.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_text_scale.dart';
 import '../theme/app_theme.dart';
@@ -542,7 +543,7 @@ class _DetachedPanelAppState extends State<DetachedPanelApp>
                 data: mq.copyWith(textScaler: TextScaler.linear(scale)),
                 child: ChangeNotifierProvider<AppState>.value(
                   value: _store.app,
-                  child: child!,
+                  child: AppPressTheme(child: child!),
                 ),
               ),
             ),

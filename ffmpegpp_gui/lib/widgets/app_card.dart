@@ -127,8 +127,6 @@ class AppCard extends StatefulWidget {
 }
 
 class _AppCardState extends State<AppCard> {
-  bool _pressed = false;
-
   /// 无壁纸作用域时的占位 notifier（恒 null → 玻璃走原 BackdropFilter 路径）。
   static final ValueNotifier<WallpaperWindow?> _noWindow = ValueNotifier(null);
 
@@ -155,11 +153,6 @@ class _AppCardState extends State<AppCard> {
       ),
       tone: c.themeTone,
     );
-  }
-
-  void _setPressed(bool v) {
-    if (_pressed == v) return;
-    setState(() => _pressed = v);
   }
 
   @override
@@ -240,7 +233,16 @@ class _AppCardState extends State<AppCard> {
     // Flutter「ListTile background may be invisible」错误）。
     final inner = Material(
       type: MaterialType.transparency,
-      child: widget.child,
+      child: widget.onTap == null
+          ? widget.child
+          : InkWell(
+              onTap: widget.onTap,
+              borderRadius: br,
+              child: Padding(
+                padding: widget.padding ?? EdgeInsets.zero,
+                child: widget.child,
+              ),
+            ),
     );
 
     Widget core;
@@ -251,7 +253,7 @@ class _AppCardState extends State<AppCard> {
       const int alpha = 255;
       core = RepaintBoundary(
         child: Container(
-          padding: widget.padding,
+          padding: widget.onTap == null ? widget.padding : null,
           decoration: BoxDecoration(
             color: grad == null ? base.withAlpha(alpha) : null,
             gradient: grad != null
@@ -392,7 +394,7 @@ class _AppCardState extends State<AppCard> {
                           edge: tuning.edge,
                         ),
                   child: Container(
-                    padding: widget.padding,
+                    padding: widget.onTap == null ? widget.padding : null,
                     decoration: BoxDecoration(
                       borderRadius: br,
                       color: tint,
@@ -439,7 +441,7 @@ class _AppCardState extends State<AppCard> {
                   enabled: !resizing && sigma > 0,
                   filter: cachedGlassBlur(sigma),
                   child: Container(
-                    padding: widget.padding,
+                    padding: widget.onTap == null ? widget.padding : null,
                     decoration: BoxDecoration(
                       borderRadius: br,
                       color: glassBase.withAlpha(alpha),
@@ -485,7 +487,7 @@ class _AppCardState extends State<AppCard> {
                     offset: const Offset(0, 8),
                   ),
                   child: Container(
-                    padding: widget.padding,
+                    padding: widget.onTap == null ? widget.padding : null,
                     decoration: BoxDecoration(
                       color: Colors.transparent,
                       borderRadius: br,
@@ -516,7 +518,7 @@ class _AppCardState extends State<AppCard> {
                 offset: const Offset(0, 8),
               ),
               child: Container(
-                padding: widget.padding,
+                padding: widget.onTap == null ? widget.padding : null,
                 decoration: BoxDecoration(
                   borderRadius: br,
                   color: op <= 0.001 ? Colors.transparent : null,
@@ -556,28 +558,11 @@ class _AppCardState extends State<AppCard> {
 
     // 「样式 → 添加边框」：开启时在卡片表面之上叠一层同圆角描边。
     // 位置在 margin / 点击包装之内：描边严格贴合卡片本体（而非含外边距的外框），
-    // 并随按压缩放一起动画；关闭时 withConfigurableBorder 原样返回 core，
+    // 按压由表面上的 ink 绘制；关闭时 withConfigurableBorder 原样返回 core，
     // 零额外层级（不改变布局与像素）。
     Widget result = withConfigurableBorder(context, core, radius: br);
     if (widget.margin != null) {
       result = Padding(padding: widget.margin!, child: result);
-    }
-    if (widget.onTap != null) {
-      result = GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown: (_) => _setPressed(true),
-        onTapUp: (_) {
-          _setPressed(false);
-          widget.onTap!();
-        },
-        onTapCancel: () => _setPressed(false),
-        child: AnimatedScale(
-          scale: _pressed ? 0.985 : 1.0,
-          duration: const Duration(milliseconds: 110),
-          curve: Curves.easeOut,
-          child: result,
-        ),
-      );
     }
     return result;
   }

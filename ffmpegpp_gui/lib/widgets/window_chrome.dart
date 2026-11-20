@@ -410,27 +410,24 @@ class _WindowChromeButtonState extends State<WindowChromeButton> {
   bool _hovering = false;
 
   @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: Container(
-          width: 46,
-          height: kWindowChromeHeight,
-          color: _hovering
-              ? (widget.hoverColor ?? widget.color.withAlpha(30))
-              : Colors.transparent,
-          child: Icon(
-            widget.icon,
-            size: 16,
-            color: _hovering && widget.hoverColor != null
-                ? Colors.white
-                : widget.color,
-          ),
+  Widget build(BuildContext context) => Material(
+    color: _hovering
+        ? widget.hoverColor ?? widget.color.withAlpha(30)
+        : Colors.transparent,
+    child: InkWell(
+      onTap: widget.onTap,
+      onHover: (hovering) => setState(() => _hovering = hovering),
+      child: SizedBox(
+        width: 46,
+        height: kWindowChromeHeight,
+        child: Icon(
+          widget.icon,
+          size: 16,
+          color: _hovering && widget.hoverColor != null
+              ? Colors.white
+              : widget.color,
         ),
       ),
-    );
-  }
+    ),
+  );
 }

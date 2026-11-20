@@ -334,7 +334,7 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
   /// 溢出触发药丸：收起时是「…」，展开后变「→」（同一颗药丸，位置固定不动）。
   ///
   /// 为什么不复用 [MobileGlassPillAction]：它内部写死一颗 [Icon]，装不下
-  /// 「… ⇄ →」的切换动画；这里按它的同一规格手写按钮（34×34 圆形、透明涟漪），
+  /// 「… ⇄ →」的切换动画；这里按它的同一规格手写按钮（34×34 圆形、共享按压反馈），
   /// 只在图标位放 AnimatedSwitcher，观感与其它操作按钮一致。
   ///
   /// 尺寸：药丸**必须是正圆**（用户反馈「你这个更多选项药丸不是圆的」）。
@@ -353,27 +353,28 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
         message: _expanded
             ? (zh ? '收起' : 'Collapse')
             : (zh ? '更多操作' : 'More actions'),
-        child: InkWell(
-          onTap: _toggle,
-          borderRadius: BorderRadius.circular(MobileUi.actionButtonSize / 2),
-          splashColor: Colors.transparent,
-          highlightColor: Colors.transparent,
-          child: SizedBox(
-            width: MobileUi.actionButtonSize,
-            height: MobileUi.actionButtonSize,
-            child: AnimatedSwitcher(
-              duration: _overflowDuration,
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeOutCubic,
-              transitionBuilder: (child, anim) => ScaleTransition(
-                scale: anim,
-                child: FadeTransition(opacity: anim, child: child),
-              ),
-              child: Icon(
-                _expanded ? Icons.arrow_forward : Icons.more_horiz,
-                key: ValueKey<bool>(_expanded),
-                size: MobileUi.actionIconSize,
-                color: scheme.onSurface,
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            onTap: _toggle,
+            borderRadius: BorderRadius.circular(MobileUi.actionButtonSize / 2),
+            child: SizedBox(
+              width: MobileUi.actionButtonSize,
+              height: MobileUi.actionButtonSize,
+              child: AnimatedSwitcher(
+                duration: _overflowDuration,
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeOutCubic,
+                transitionBuilder: (child, anim) => ScaleTransition(
+                  scale: anim,
+                  child: FadeTransition(opacity: anim, child: child),
+                ),
+                child: Icon(
+                  _expanded ? Icons.arrow_forward : Icons.more_horiz,
+                  key: ValueKey<bool>(_expanded),
+                  size: MobileUi.actionIconSize,
+                  color: scheme.onSurface,
+                ),
               ),
             ),
           ),

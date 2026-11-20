@@ -1685,34 +1685,35 @@ class _SearchActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Tooltip(
       message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        splashColor: Colors.transparent,
-        highlightColor: Colors.transparent,
-        child: SizedBox(
-          // 44×44：与移动端最小点按目标一致，而不是把 19px 图标
-          // 塞进一个 34/40 的窄盒子里。
-          width: 44,
-          height: 44,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Icon(icon, size: 19, color: color),
-              if (active)
-                Positioned(
-                  right: 9,
-                  top: 9,
-                  child: Container(
-                    width: 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: scheme.primary,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: SizedBox(
+            // 44×44：与移动端最小点按目标一致，而不是把 19px 图标
+            // 塞进一个 34/40 的窄盒子里。
+            width: 44,
+            height: 44,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(icon, size: 19, color: color),
+                if (active)
+                  Positioned(
+                    right: 9,
+                    top: 9,
+                    child: Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: scheme.primary,
+                      ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -1750,8 +1751,6 @@ class _AiFilterPill extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(999),
           onTap: onTap,
-          splashColor: Colors.transparent,
-          highlightColor: Colors.transparent,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
             curve: Curves.easeOut,
@@ -2151,8 +2150,6 @@ class _AiToggleChip extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(9),
         onTap: onTap,
-        splashColor: Colors.transparent,
-        highlightColor: Colors.transparent,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
           curve: Curves.easeOut,
