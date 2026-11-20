@@ -170,3 +170,8 @@ try {
         Remove-Item -LiteralPath $script:FixtureRoot -Recurse -Force
     } else { throw "Refusing unexpected test cleanup directory: $script:FixtureRoot" }
 }
+
+# Expected native failure tests leave LASTEXITCODE nonzero. GitHub Actions
+# appends "exit $LASTEXITCODE" to pwsh steps, so publish success explicitly
+# only after all assertions AND cleanup succeed. Throws above still fail the step.
+exit 0
