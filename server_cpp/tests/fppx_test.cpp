@@ -361,6 +361,64 @@ int main() {
         CHECK(findTypeById(makeTypeId(19243)) == nullptr, "未知 ID 查无此项");
     }
 
+    // ── 新媒体节点：固定 ID、参数白名单与二进制往返 ──
+    {
+        const struct {
+            uint64_t id;
+            const char* name;
+            MediaKind input;
+            MediaKind output;
+            json params;
+        } cases[] = {
+            {0x2D, "audioSpectrum", MK_AUDIO, MK_IMAGE,
+             {{"width", 1280}, {"height", 720}, {"output_format", "webp"}}},
+            {0x2E, "audioWaveform", MK_AUDIO, MK_IMAGE,
+             {{"width", 640}, {"height", 360}, {"output_format", "jpg"}}},
+            {0x2F, "audioReverse", MK_AUDIO, MK_AUDIO,
+             {{"node_name", "Reverse audio"}}},
+            {0x30, "videoReverse", MK_VIDEO, MK_VIDEO,
+             {{"node_name", "Reverse video"}}},
+            {0x31, "audioEqualizer", MK_AUDIO, MK_AUDIO,
+             {{"bass_db", -3.5}, {"mid_db", 0}, {"treble_db", 5}}},
+            {0x32, "videoFade", MK_VIDEO, MK_VIDEO,
+             {{"fade_in", 1.5}, {"fade_out", 3}, {"fade_out_start", 7.5}}},
+        };
+        for (const auto& node : cases) {
+            const std::string name = node.name;
+            const auto* spec = findTypeByName(name);
+            CHECK(spec != nullptr && spec == findTypeById(makeTypeId(node.id)),
+                  (name + " ID/name mapping").c_str());
+            if (!spec) continue;
+            CHECK(spec->mediaIn == node.input && spec->mediaOut == node.output,
+                  (name + " media ports").c_str());
+            for (auto param = node.params.begin(); param != node.params.end(); ++param) {
+                CHECK(classifyParamKey(param.key(), spec, nullptr) == PKC_OK,
+                      (name + " allows " + param.key()).c_str());
+            }
+
+            json graph = sampleGraph();
+            graph["nodes"][0]["params"]["file_media_type"] =
+                node.input == MK_AUDIO ? "audio" : "video";
+            graph["nodes"][1]["type"] = name;
+            graph["nodes"][1]["params"] = node.params;
+            const fs::path file = tmpFile(name + ".fppx");
+            const auto exported = exportGraph(graph, file.string());
+            CHECK(exported.success, (name + " exports").c_str());
+            if (!exported.success) continue;
+            const auto imported = fppx2Import(file.string(), false);
+            CHECK(imported.success && imported.unknownTypeIds.empty(),
+                  (name + " imports as a known node").c_str());
+            if (!imported.success) continue;
+            bool found = false;
+            for (const auto& back : imported.graph["nodes"]) {
+                if (back["id"] != "uuid-b") continue;
+                found = back["type"] == name && back["params"] == node.params;
+                break;
+            }
+            CHECK(found, (name + " preserves type and params").c_str());
+        }
+    }
+
     // ── 10. 逻辑块往返 ──
     {
         json g = sampleGraph();

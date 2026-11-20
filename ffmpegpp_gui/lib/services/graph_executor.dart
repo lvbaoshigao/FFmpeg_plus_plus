@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:uuid/uuid.dart';
 
 import '../models/models.dart';
+import 'audio_visualization.dart';
 
 class ExecutionStep {
   final String action;
@@ -86,6 +87,15 @@ class ExecutionPlan {
 }
 
 class GraphExecutor {
+  static const _newMediaNodes = {
+    PipelineStepType.audioSpectrum,
+    PipelineStepType.audioWaveform,
+    PipelineStepType.audioReverse,
+    PipelineStepType.videoReverse,
+    PipelineStepType.audioEqualizer,
+    PipelineStepType.videoFade,
+  };
+
 
   // ── 验证 ──
 
@@ -293,6 +303,7 @@ class GraphExecutor {
             || types.contains(PipelineStepType.videoFilter)
             || types.contains(PipelineStepType.videoGeometry)
             || types.contains(PipelineStepType.videoOverlay)
+            || types.any(_newMediaNodes.contains)
             || types.contains(PipelineStepType.audioFade)
             || types.contains(PipelineStepType.imageAdjust)
             || types.any((t) => PipelineNode.genericMediaTypes.contains(t));
@@ -376,6 +387,11 @@ class GraphExecutor {
         }
         if (types.contains(PipelineStepType.audioFade) && types.length > 1) {
           errors.add('音频淡入淡出 不能与其他操作并行');
+        }
+        for (final node in step.nodes.where((n) => _newMediaNodes.contains(n.type))) {
+          if (step.nodes.length > 1) {
+            errors.add('${node.label} 不能与其他操作并行');
+          }
         }
         if (types.contains(PipelineStepType.imageAdjust) && types.length > 1) {
           errors.add('图片调整 不能与其他操作并行');
@@ -516,6 +532,12 @@ class GraphExecutor {
             PipelineStepType.videoGeometry => 'video_geometry',
             PipelineStepType.videoOverlay => 'video_overlay',
             PipelineStepType.audioFade => 'audio_fade',
+            PipelineStepType.audioSpectrum => 'audio_spectrum',
+            PipelineStepType.audioWaveform => 'audio_waveform',
+            PipelineStepType.audioReverse => 'audio_reverse',
+            PipelineStepType.videoReverse => 'video_reverse',
+            PipelineStepType.audioEqualizer => 'audio_equalizer',
+            PipelineStepType.videoFade => 'video_fade',
             PipelineStepType.imageCompress => 'image_compress',
             PipelineStepType.audioNormalize => 'audio_normalize',
             PipelineStepType.audioNoiseGate => 'audio_noise_gate',
@@ -900,6 +922,9 @@ class GraphExecutor {
 
     for (var i = 0; i < plan.steps.length; i++) {
       final step = plan.steps[i];
+      if (step.nodes.length > 1 && step.nodes.any((node) => _newMediaNodes.contains(node.type))) {
+        return fail('新增媒体节点不能与其他操作并行');
+      }
       final isLast = i == plan.steps.length - 1;
 
       // [FIX A1] 使能端：逻辑门判为 0 的步骤整步跳过（见 _stepEnable）。
@@ -961,7 +986,6 @@ class GraphExecutor {
       }
       final inputExt = currentInput.split('.').last;
       var currentOutput = isLast ? outputPath : _tempPath(inputPath, i, inputExt, tmpSalt);
-      if (!isLast) tempFiles.add(currentOutput);
 
       final callsBeforeStep = calls.length;
 
@@ -1112,6 +1136,70 @@ class GraphExecutor {
             // 否则下游会把「预期存在的中间文件」当作已生成继续执行（H-2）。
             return fail('遇到未知/不支持的节点类型，无法构建执行计划');
           }
+          break;
+
+        case 'audio_spectrum':
+        case 'audio_waveform':
+          final node = step.nodes.first;
+          final visualization = AudioVisualization.fromParams(node.params);
+          final outPath = isLast
+              ? AudioVisualization.withExtension(outputPath, visualization.format)
+              : _tempPath(inputPath, i, visualization.format, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(action: step.action, params: {
+            'input': currentInput,
+            'output': outPath,
+            'width': visualization.width,
+            'height': visualization.height,
+            'output_format': visualization.format,
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'audio_reverse':
+        case 'audio_equalizer':
+          final ext = (isLast ? outputPath : currentInput).split('.').last.toLowerCase();
+          final outPath = isLast ? outputPath : _tempPath(inputPath, i, ext, tmpSalt);
+          if (!isLast) tempFiles.add(outPath);
+          calls.add(BackendCall(action: 'transcode', params: {
+            'input': currentInput,
+            'output': outPath,
+            'options': {
+              'video_codec': 'none',
+              'audio_codec': _codecForFormat[ext] ?? 'aac',
+              'af_filters': step.action == 'audio_reverse'
+                  ? ['areverse', 'asetpts=PTS-STARTPTS']
+                  : _audioEqualizerFilters(step.nodes.first.params),
+              'overwrite': true,
+            },
+          }));
+          stepCallRanges.add((callsBeforeStep, calls.length, step));
+          currentInput = outPath;
+          continue;
+
+        case 'video_reverse':
+          calls.add(BackendCall(action: 'video_reverse', params: {
+            'input': currentInput,
+            'output': currentOutput,
+            'options': videoOptionsForPath(currentOutput)
+              ..['vf_filters'] = ['reverse', 'setpts=PTS-STARTPTS']
+              ..['af_filters'] = ['areverse', 'asetpts=PTS-STARTPTS'],
+          }));
+          break;
+
+        case 'video_fade':
+          final p = step.nodes.first.params;
+          // The current intermediate may have been clipped or retimed. Resolve
+          // the automatic fade-out position from that file at execution time.
+          calls.add(BackendCall(action: 'video_fade', params: {
+            'input': currentInput,
+            'output': currentOutput,
+            'fade_in': AudioVisualization.number(p['fade_in'], 0, 60, 2),
+            'fade_out': AudioVisualization.number(p['fade_out'], 0, 60, 2),
+            'fade_out_start': AudioVisualization.number(p['fade_out_start'], 0, 86400, 0),
+            'options': videoOptionsForPath(currentOutput),
+          }));
           break;
 
         case 'image_convert':
@@ -1900,6 +1988,7 @@ class GraphExecutor {
           return fail('无法识别的步骤动作「${step.action}」，请检查该节点类型');
       }
 
+      if (!isLast) tempFiles.add(currentOutput);
       // Record the range of calls generated by this step
       stepCallRanges.add((callsBeforeStep, calls.length, step));
 
@@ -1943,40 +2032,38 @@ class GraphExecutor {
 
     // Determine extension: check if any processing step overrides the format
     String ext;
-    if (format != 'keep') {
+    final visualizers = plan.steps.where((step) =>
+        step.action == 'audio_spectrum' || step.action == 'audio_waveform');
+    final hasVisualization = visualizers.isNotEmpty;
+    final finalMedia = plan.steps.isEmpty ? null : plan.steps.last.nodes.last.outputType;
+    if (format != 'keep' && !(hasVisualization && finalMedia == MediaType.image)) {
       ext = format;
-    } else if (plan.steps.isNotEmpty) {
-      // Walk steps to find format-changing nodes (only audioConvert and imageConvert)
-      String? overrideExt;
-      for (final step in plan.steps) {
-        if (step.action == 'audio_convert') {
-          final n = step.nodes.first;
-          overrideExt = n.params['output_format'] as String? ?? 'm4a';
-        } else if (step.action == 'extract_audio') {
-          final n = step.nodes.first;
-          overrideExt = n.params['output_format'] as String? ?? 'm4a';
-        } else if (step.action == 'image_convert') {
-          final n = step.nodes.first;
-          overrideExt = n.params['output_format'] as String? ?? 'png';
-        } else if (step.action == 'image_compress') {
-          // format=keep 时沿用源扩展名（不覆盖），显式格式才改后缀
-          final n = step.nodes.first;
-          final fmt = (n.params['output_format'] as String? ?? 'keep').toLowerCase();
-          if (fmt != 'keep') overrideExt = fmt == 'jpeg' ? 'jpg' : fmt;
-        } else if (step.action == 'image_adjust') {
-          // 图片调整保持输入格式（不改变容器），extension 沿用源文件
-        }
-      }
-      ext = overrideExt ?? video.filename.split('.').last;
     } else {
       ext = video.filename.split('.').last;
+      for (final step in plan.steps) {
+        ext = switch (step.action) {
+          'audio_convert' || 'extract_audio' => step.nodes.first.params['output_format'] as String? ?? 'm4a',
+          'audio_spectrum' || 'audio_waveform' => AudioVisualization.fromParams(step.nodes.first.params).format,
+          'image_sequence' => step.nodes.first.params['output_format'] as String? ?? 'mp4',
+          'image_convert' => step.nodes.first.params['output_format'] as String? ?? 'png',
+          'image_compress' when step.nodes.first.params['output_format'] != null &&
+              step.nodes.first.params['output_format'] != 'keep' =>
+            AudioVisualization.normalizeFormat(step.nodes.first.params['output_format']),
+          _ => ext,
+        };
+      }
     }
 
     final base = video.filename.replaceAll(RegExp(r'\.[^.]+$'), '');
-    // custom 命名为空时回退到原文件名，避免生成 ".mp4" 这类隐藏文件
-    final fn = namingMode == 'keep' ? '$base.$ext'
+    final typeSuffix = hasVisualization
+        ? (visualizers.last.action == 'audio_spectrum' ? '_spectrum' : '_waveform') : '';
+    final defaultBase = hasVisualization ? '$base$typeSuffix' : base;
+    final custom = namingValue.trim();
+    final fn = namingMode == 'keep' ? '$defaultBase.$ext'
         : namingMode == 'suffix' ? '$base$namingValue.$ext'
-        : (namingValue.trim().isEmpty ? '$base.$ext' : '$namingValue.$ext');
+        : custom.isEmpty ? '$defaultBase.$ext'
+        : hasVisualization ? AudioVisualization.withExtension(custom, ext)
+        : '$namingValue.$ext';
 
     var dir = (outputDir != null && outputDir.isNotEmpty) ? outputDir
         : config.defaultOutputDir.isNotEmpty ? config.defaultOutputDir
@@ -1988,7 +2075,7 @@ class GraphExecutor {
 
     var out = '$dir$fn';
     if (out == video.filepath) out = '$dir${base}_processed.$ext';
-    return out;
+    return hasVisualization ? AudioVisualization.uniqueOutput(out, const []) : out;
   }
 
   // ── 调试描述 ──
@@ -2165,6 +2252,21 @@ class GraphExecutor {
             case PipelineStepType.videoOverlay:
               descs.add('画面叠加(${n.params['position'] ?? 'bottom-right'}, α=${n.params['opacity'] ?? 1.0})');
               break;
+            case PipelineStepType.audioSpectrum:
+            case PipelineStepType.audioWaveform:
+              final visualization = AudioVisualization.fromParams(n.params);
+              descs.add('${n.label}(${visualization.width}×${visualization.height} →${visualization.format})');
+              break;
+            case PipelineStepType.audioReverse:
+            case PipelineStepType.videoReverse:
+              descs.add(n.label);
+              break;
+            case PipelineStepType.audioEqualizer:
+              descs.add('音频均衡器(${n.params['bass_db'] ?? 0}/${n.params['mid_db'] ?? 0}/${n.params['treble_db'] ?? 0} dB)');
+              break;
+            case PipelineStepType.videoFade:
+              descs.add('视频淡入淡出(in=${n.params['fade_in'] ?? 2}s, out=${n.params['fade_out'] ?? 2}s)');
+              break;
             case PipelineStepType.audioFade:
               descs.add('淡入淡出(in=${n.params['fade_in'] ?? 0}s, out=${n.params['fade_out'] ?? 0}s)');
               break;
@@ -2251,6 +2353,7 @@ class GraphExecutor {
   static const _codecForFormat = {
     'mp3': 'libmp3lame', 'ogg': 'libvorbis', 'flac': 'flac',
     'wav': 'pcm_s16le', 'aac': 'aac', 'm4a': 'aac', 'opus': 'libopus',
+    'ac3': 'ac3', 'wma': 'wmav2',
   };
 
 
@@ -2300,6 +2403,15 @@ class GraphExecutor {
     if (pf != 'auto' && pf.isNotEmpty) opts['pix_fmt'] = pf;
     return opts;
   }
+
+  static Map<String, dynamic> videoOptionsForPath(String output) => {
+    if (output.toLowerCase().endsWith('.webm')) ...{
+      'video_codec': 'libvpx-vp9', 'audio_codec': 'libopus',
+    } else ...{
+      'video_codec': 'h264', 'audio_codec': 'aac', 'preset': 'medium',
+    },
+    'gpu': 'CPU', 'overwrite': true,
+  };
 
   static Map<String, dynamic> _defaultAvOptions() => {
     'video_codec': 'h264', 'gpu': 'CPU', 'preset': 'medium',
@@ -2424,6 +2536,43 @@ class GraphExecutor {
     return '[1:v]${filters.join(',')}[ovr];[0:v][ovr]overlay=$offset[v]';
   }
 
+  static List<String> _audioEqualizerFilters(Map<String, dynamic> params) => [
+    for (final (key, frequency) in const [
+      ('bass_db', 100), ('mid_db', 1000), ('treble_db', 8000),
+    ])
+      'equalizer=f=$frequency:t=o:w=1:g=${AudioVisualization.number(params[key], -12, 12, 0).toStringAsFixed(2)}',
+  ];
+
+  /// Resolves fade-out against the actual input after upstream processing.
+  static List<String> videoFadeFilters(
+    Map<String, dynamic> params, {
+    double? duration,
+    double startTime = 0,
+  }) {
+    var fadeIn = AudioVisualization.number(params['fade_in'], 0, 60, 2);
+    var fadeOut = AudioVisualization.number(params['fade_out'], 0, 60, 2);
+    var start = AudioVisualization.number(params['fade_out_start'], 0, 86400, 0);
+    final knownDuration = duration != null && duration.isFinite && duration > 0;
+    if (knownDuration) {
+      fadeIn = math.min(fadeIn, duration);
+      fadeOut = math.min(fadeOut, duration);
+    }
+    if (fadeOut > 0 && start == 0) {
+      if (!knownDuration) {
+        throw const FormatException('无法读取当前视频时长，请指定淡出开始时间');
+      }
+      start = math.max(0.0, duration - fadeOut);
+    }
+    final filterStart = startTime.isFinite ? math.max(0.0, startTime) : 0.0;
+    final inStart = filterStart == 0 ? '0' : filterStart.toStringAsFixed(3);
+    start += filterStart;
+    return [
+      if (fadeIn > 0) 'fade=t=in:st=$inStart:d=${fadeIn.toStringAsFixed(3)}',
+      if (fadeOut > 0)
+        'fade=t=out:st=${start.toStringAsFixed(3)}:d=${fadeOut.toStringAsFixed(3)}',
+    ];
+  }
+
   /// 音频淡入/淡出滤镜串（afade）。
   static List<String> _audioFadeFilters(PipelineNode node) {
     final p = node.params;
@@ -2448,7 +2597,7 @@ class GraphExecutor {
 
   /// 数值钳制：非法值（null / NaN / Infinity）回退 fallback。
   static double _clampD(dynamic raw, double lo, double hi, double fallback) {
-    final v = (raw as num?)?.toDouble();
+    final v = raw is num ? raw.toDouble() : null;
     if (v == null || !v.isFinite) return fallback;
     return v.clamp(lo, hi).toDouble();
   }

@@ -55,6 +55,12 @@ TablerGlyph stepIconFor(PipelineStepType type) => switch (type) {
   PipelineStepType.audioSilenceTrim => TablerGlyph.volume3,
   PipelineStepType.videoDeinterlace => TablerGlyph.lineHeight,
   PipelineStepType.unknown => TablerGlyph.helpCircle,
+  PipelineStepType.audioSpectrum => TablerGlyph.chartLine,
+  PipelineStepType.audioWaveform => TablerGlyph.waveSine,
+  PipelineStepType.audioReverse => TablerGlyph.rotateClockwise,
+  PipelineStepType.videoReverse => TablerGlyph.rotateClockwise,
+  PipelineStepType.audioEqualizer => TablerGlyph.equalizer,
+  PipelineStepType.videoFade => TablerGlyph.chartLine,
 };
 
 /// 节点强调底色（工具栏芯片 / 节点卡片用）。

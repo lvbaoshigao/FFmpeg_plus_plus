@@ -105,8 +105,65 @@ void main() {
       expect(meta.mediaKind, MediaType.image);
     });
 
-    test('新枚举值追加在 output 之后，未打乱既有索引', () {
-      // 既有节点顺序 = 旧配置文件/后端 node_registry 的索引依据，不能被插入
+    test('新节点的双语名称和媒体端口正确', () {
+      const cases = [
+        (
+          PipelineStepType.audioSpectrum,
+          '音频频谱图',
+          'Audio Spectrum',
+          MediaType.audio,
+          MediaType.image,
+        ),
+        (
+          PipelineStepType.audioWaveform,
+          '音频波形图',
+          'Audio Waveform',
+          MediaType.audio,
+          MediaType.image,
+        ),
+        (
+          PipelineStepType.audioReverse,
+          '音频倒放',
+          'Audio Reverse',
+          MediaType.audio,
+          MediaType.audio,
+        ),
+        (
+          PipelineStepType.videoReverse,
+          '视频倒放',
+          'Video Reverse',
+          MediaType.video,
+          MediaType.video,
+        ),
+        (
+          PipelineStepType.audioEqualizer,
+          '音频均衡器',
+          'Audio Equalizer',
+          MediaType.audio,
+          MediaType.audio,
+        ),
+        (
+          PipelineStepType.videoFade,
+          '视频淡入淡出',
+          'Video Fade',
+          MediaType.video,
+          MediaType.video,
+        ),
+      ];
+      for (final (type, zh, en, input, output) in cases) {
+        final node = _node('node', type);
+        final step = PipelineStep(id: 'step', type: type);
+        expect(node.label, zh, reason: type.name);
+        expect(node.labelEn, en, reason: type.name);
+        expect(step.label, zh, reason: type.name);
+        expect(step.labelEn, en, reason: type.name);
+        expect(node.inputTypes, {input}, reason: type.name);
+        expect(node.outputType, output, reason: type.name);
+      }
+    });
+
+    test('新枚举值追加在 unknown 之后，未打乱既有索引', () {
+      // 旧配置持久化使用枚举索引，FPPX 二进制 ID 由原生注册表单独分配。
       expect(PipelineStepType.start.index, 0);
       expect(PipelineStepType.output.index, 37);
       expect(PipelineStepType.imageCompress.index, 38);
@@ -118,6 +175,12 @@ void main() {
       expect(PipelineStepType.audioSilenceTrim.index, 44);
       expect(PipelineStepType.videoDeinterlace.index, 45);
       expect(PipelineStepType.unknown.index, 46);
+      expect(PipelineStepType.audioSpectrum.index, 47);
+      expect(PipelineStepType.audioWaveform.index, 48);
+      expect(PipelineStepType.audioReverse.index, 49);
+      expect(PipelineStepType.videoReverse.index, 50);
+      expect(PipelineStepType.audioEqualizer.index, 51);
+      expect(PipelineStepType.videoFade.index, 52);
     });
   });
 

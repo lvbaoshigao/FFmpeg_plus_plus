@@ -129,6 +129,14 @@ enum PipelineStepType {
   /// 新版 .fppx 强制导入的未知类型节点：真实类型 ID 存 [PipelineNode.unknownTypeId]，
   /// 仅可编辑/保存/原样导出，不参与转码执行。
   unknown,
+
+  // Append after unknown to preserve all existing serialized indices.
+  audioSpectrum,
+  audioWaveform,
+  audioReverse,
+  videoReverse,
+  audioEqualizer,
+  videoFade,
 }
 
 class PipelineStep {
@@ -239,6 +247,18 @@ class PipelineStep {
         return '静音裁剪';
       case PipelineStepType.videoDeinterlace:
         return '视频去隔行';
+      case PipelineStepType.audioSpectrum:
+        return '音频频谱图';
+      case PipelineStepType.audioWaveform:
+        return '音频波形图';
+      case PipelineStepType.audioReverse:
+        return '音频倒放';
+      case PipelineStepType.videoReverse:
+        return '视频倒放';
+      case PipelineStepType.audioEqualizer:
+        return '音频均衡器';
+      case PipelineStepType.videoFade:
+        return '视频淡入淡出';
       case PipelineStepType.unknown:
         return '未知节点';
     }
@@ -338,6 +358,18 @@ class PipelineStep {
         return 'Silence Trim';
       case PipelineStepType.videoDeinterlace:
         return 'Deinterlace';
+      case PipelineStepType.audioSpectrum:
+        return 'Audio Spectrum';
+      case PipelineStepType.audioWaveform:
+        return 'Audio Waveform';
+      case PipelineStepType.audioReverse:
+        return 'Audio Reverse';
+      case PipelineStepType.videoReverse:
+        return 'Video Reverse';
+      case PipelineStepType.audioEqualizer:
+        return 'Audio Equalizer';
+      case PipelineStepType.videoFade:
+        return 'Video Fade';
       case PipelineStepType.unknown:
         return 'Unknown';
     }
@@ -795,6 +827,18 @@ class PipelineNode {
         return '静音裁剪';
       case PipelineStepType.videoDeinterlace:
         return '视频去隔行';
+      case PipelineStepType.audioSpectrum:
+        return '音频频谱图';
+      case PipelineStepType.audioWaveform:
+        return '音频波形图';
+      case PipelineStepType.audioReverse:
+        return '音频倒放';
+      case PipelineStepType.videoReverse:
+        return '视频倒放';
+      case PipelineStepType.audioEqualizer:
+        return '音频均衡器';
+      case PipelineStepType.videoFade:
+        return '视频淡入淡出';
       case PipelineStepType.unknown:
         return '未知节点${unknownTypeId == null ? '' : ' $unknownTypeId'}';
     }
@@ -894,6 +938,18 @@ class PipelineNode {
         return 'Silence Trim';
       case PipelineStepType.videoDeinterlace:
         return 'Deinterlace';
+      case PipelineStepType.audioSpectrum:
+        return 'Audio Spectrum';
+      case PipelineStepType.audioWaveform:
+        return 'Audio Waveform';
+      case PipelineStepType.audioReverse:
+        return 'Audio Reverse';
+      case PipelineStepType.videoReverse:
+        return 'Video Reverse';
+      case PipelineStepType.audioEqualizer:
+        return 'Audio Equalizer';
+      case PipelineStepType.videoFade:
+        return 'Video Fade';
       case PipelineStepType.unknown:
         return 'Unknown';
     }
@@ -942,9 +998,15 @@ class PipelineNode {
       PipelineStepType.audioNormalize ||
       PipelineStepType.audioNoiseGate ||
       PipelineStepType.audioDenoise ||
-      PipelineStepType.audioSilenceTrim => {MediaType.audio},
+      PipelineStepType.audioSilenceTrim ||
+      PipelineStepType.audioSpectrum ||
+      PipelineStepType.audioWaveform ||
+      PipelineStepType.audioReverse ||
+      PipelineStepType.audioEqualizer => {MediaType.audio},
       PipelineStepType.videoFrameRate ||
-      PipelineStepType.videoDeinterlace => {MediaType.video},
+      PipelineStepType.videoDeinterlace ||
+      PipelineStepType.videoReverse ||
+      PipelineStepType.videoFade => {MediaType.video},
       PipelineStepType.imageAdjust => {MediaType.image},
       PipelineStepType.output => {
         MediaType.video,
@@ -995,7 +1057,9 @@ class PipelineNode {
       PipelineStepType.imageSharpen => MediaType.image,
       PipelineStepType.imageDenoise => MediaType.image,
       PipelineStepType.imageChannelExtract ||
-      PipelineStepType.imageCompress => MediaType.image,
+      PipelineStepType.imageCompress ||
+      PipelineStepType.audioSpectrum ||
+      PipelineStepType.audioWaveform => MediaType.image,
       PipelineStepType.videoCrop => MediaType.video,
       PipelineStepType.videoFilter => MediaType.video,
       PipelineStepType.videoGeometry => MediaType.video,
@@ -1004,9 +1068,13 @@ class PipelineNode {
       PipelineStepType.audioNormalize ||
       PipelineStepType.audioNoiseGate ||
       PipelineStepType.audioDenoise ||
-      PipelineStepType.audioSilenceTrim => MediaType.audio,
+      PipelineStepType.audioSilenceTrim ||
+      PipelineStepType.audioReverse ||
+      PipelineStepType.audioEqualizer => MediaType.audio,
       PipelineStepType.videoFrameRate ||
-      PipelineStepType.videoDeinterlace => MediaType.video,
+      PipelineStepType.videoDeinterlace ||
+      PipelineStepType.videoReverse ||
+      PipelineStepType.videoFade => MediaType.video,
       PipelineStepType.imageAdjust => MediaType.image,
       PipelineStepType.output => null,
       PipelineStepType.unknown => null,
@@ -1964,6 +2032,7 @@ class TaskInfo {
   // [FIX S-3] copyWith 为所有「语义上可清空」的可空字段增加显式清除开关（clearXxx）。
   // 现有调用点全部使用命名参数，且新参数均有默认值，向后兼容、编译不受影响。
   TaskInfo copyWith({
+    String? outputPath,
     TaskStatus? status,
     double? progress,
     String? elapsed,
@@ -1992,7 +2061,7 @@ class TaskInfo {
     videoId: videoId,
     filename: filename,
     inputPath: inputPath,
-    outputPath: outputPath,
+    outputPath: outputPath ?? this.outputPath,
     status: status ?? this.status,
     progress: progress ?? this.progress,
     elapsed: elapsed ?? this.elapsed,

@@ -17,7 +17,7 @@ import '../app_slider.dart';
 /// - [LabeledSlider]：「标签: 值」文本 + 滑杆行
 /// - [editorDenseField]：统一的高密度 InputDecoration
 ///
-/// 迁移原则：行为完全等价 —— 默认值键序、onChanged 触发时机、文本样式、间距均不变。
+/// 默认值键序与 onChanged 触发时机保持不变；共享布局统一标题与帮助层级。
 
 /// 带参数表的步骤编辑器 widget 基类。
 ///
@@ -91,48 +91,75 @@ mixin StepEditorState<W extends ParamsStepEditor> on State<W> {
 
 /// 步骤编辑器统一骨架：外边距 16 + 标题 + 内容 + 底部信息框。
 ///
-/// - [title]：顶部标题（fontSize 14 / w600 / onSurface），可省略（如无标题的裁剪编辑器）
-/// - [infoText]：底部说明文字，非空时在内容后追加 8px 间距 + [EditorInfoBox]
+/// - [title]：顶部语义标题，沿用主题 titleMedium，可省略。
+/// - [description]：可选的简短用途说明，放在参数前。
+/// - [infoText]：底部说明文字，非空时在内容后追加 16px 间距 + [EditorInfoBox]
 /// - [scrollable]：true 时整体包 SingleChildScrollView（extract_audio / subtitle 等长表单）
 class StepEditorScaffold extends StatelessWidget {
   const StepEditorScaffold({
     super.key,
     this.title,
+    this.description,
     required this.children,
     this.infoText,
     this.scrollable = false,
   });
 
   final String? title;
+  final String? description;
   final List<Widget> children;
   final String? infoText;
   final bool scrollable;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final column = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      if (title != null) ...[
-        Text(title!, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        const SizedBox(height: 8),
+    final theme = Theme.of(context);
+    final column = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (title != null) ...[
+          Semantics(
+            header: true,
+            child: Text(
+              title!,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (description != null) ...[
+          Text(
+            description!,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+        ...children,
+        if (infoText != null) ...[
+          const SizedBox(height: 16),
+          EditorInfoBox(infoText!),
+        ],
       ],
-      ...children,
-      if (infoText != null) ...[
-        const SizedBox(height: 8),
-        EditorInfoBox(infoText!),
-      ],
-    ]);
+    );
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: scrollable ? SingleChildScrollView(child: column) : column,
+      child: scrollable
+          ? SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              child: column,
+            )
+          : column,
     );
   }
 }
 
 /// 底部说明信息框（原 19 个编辑器逐字重复的整段 Container widget 树）。
 ///
-/// 默认样式：padding 10、背景 surfaceContainerHighest.withAlpha(60)、圆角 8、
-/// info_outline 图标 14px、间距 8、文字 fontSize 11 / height 1.4，均为 outline 色。
+/// 使用主题次要文字色与 bodySmall，提高帮助文字可读性。
 /// [color]/[background]/[borderColor] 供特殊变体使用（如 logic_block 的红色警示框）。
 class EditorInfoBox extends StatelessWidget {
   const EditorInfoBox(this.text, {super.key, this.color, this.background, this.borderColor});
@@ -145,18 +172,18 @@ class EditorInfoBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final fg = color ?? cs.outline;
+    final fg = color ?? cs.onSurfaceVariant;
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: background ?? cs.surfaceContainerHighest.withAlpha(60),
         borderRadius: BorderRadius.circular(8),
         border: borderColor == null ? null : Border.all(color: borderColor!),
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Icon(Icons.info_outline, size: 14, color: fg),
+        Icon(Icons.info_outline, size: 18, color: fg),
         const SizedBox(width: 8),
-        Expanded(child: Text(text, style: TextStyle(fontSize: 11, color: fg, height: 1.4))),
+        Expanded(child: Text(text, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: fg, height: 1.4))),
       ]),
     );
   }
@@ -257,6 +284,7 @@ class NumberRangeFields extends StatelessWidget {
 /// 左侧文本 fontSize [fontSize]（默认 13）/ onSurface，右侧 Expanded([AppSlider])。
 /// 滑杆一律用 [AppSlider]（全应用统一样式），不要再改回裸 `Slider`。
 /// [text] 为完整文本（含当前值，如 `'亮度: 0.30'`），由调用方拼接。
+/// [adaptive] 仅按需启用窄屏上下排列，默认保留现有节点的单行布局。
 class LabeledSlider extends StatelessWidget {
   const LabeledSlider({
     super.key,
@@ -268,6 +296,7 @@ class LabeledSlider extends StatelessWidget {
     this.divisions,
     this.sliderLabel,
     this.fontSize = 13,
+    this.adaptive = false,
   });
 
   final String text;
@@ -278,17 +307,48 @@ class LabeledSlider extends StatelessWidget {
   final int? divisions;
   final String? sliderLabel;
   final double fontSize;
+  final bool adaptive;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Row(children: [
-      Text(text, style: TextStyle(fontSize: fontSize, color: cs.onSurface)),
-      Expanded(child: AppSlider(
-        value: value, min: min, max: max, divisions: divisions, label: sliderLabel,
+    final style = TextStyle(
+      fontSize: fontSize,
+      color: Theme.of(context).colorScheme.onSurface,
+    );
+    final label = Text(text, style: style);
+    final slider = Semantics(
+      label: text,
+      child: AppSlider(
+        value: value,
+        min: min,
+        max: max,
+        divisions: divisions,
+        label: sliderLabel,
         onChanged: onChanged,
-      )),
-    ]);
+      ),
+    );
+    if (!adaptive) {
+      return Row(children: [label, Expanded(child: slider)]);
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final painter = TextPainter(
+          text: TextSpan(text: text, style: style),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+        )..layout();
+        final stacked = constraints.maxWidth < 360 ||
+            painter.width > constraints.maxWidth * 0.5;
+        painter.dispose();
+        if (stacked) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [label, slider],
+          );
+        }
+        return Row(children: [label, Expanded(child: slider)]);
+      },
+    );
   }
 }
 

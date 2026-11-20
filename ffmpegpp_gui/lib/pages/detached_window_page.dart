@@ -10,12 +10,14 @@ import 'package:uuid/uuid.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../models/models.dart';
+import '../models/node_picker_options.dart';
 import '../providers/app_state.dart';
 import '../services/multi_window.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_text_scale.dart';
 import '../theme/app_theme.dart';
 // 独立窗口里的条件门滑块同样走统一实现（玻璃轨道 + 彗星拖尾）
+import '../widgets/app_dropdown.dart';
 import '../widgets/app_slider.dart';
 import '../widgets/desktop_resize_scope.dart';
 import '../widgets/gate_symbol_painter.dart';
@@ -23,14 +25,18 @@ import '../widgets/node_icons.dart';
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
 import '../widgets/step_editors/audio_convert_step_editor.dart';
 import '../widgets/step_editors/audio_denoise_step_editor.dart';
+import '../widgets/step_editors/audio_equalizer_step_editor.dart';
 import '../widgets/step_editors/audio_fade_step_editor.dart';
 import '../widgets/step_editors/audio_metadata_step_editor.dart';
 import '../widgets/step_editors/audio_noise_gate_step_editor.dart';
 import '../widgets/step_editors/audio_normalize_step_editor.dart';
 import '../widgets/step_editors/audio_quality_step_editor.dart';
+import '../widgets/step_editors/audio_reverse_step_editor.dart';
 import '../widgets/step_editors/audio_silence_trim_step_editor.dart';
+import '../widgets/step_editors/audio_spectrum_step_editor.dart';
 import '../widgets/step_editors/audio_speed_step_editor.dart';
 import '../widgets/step_editors/audio_volume_step_editor.dart';
+import '../widgets/step_editors/audio_waveform_step_editor.dart';
 import '../widgets/step_editors/av_process_step_editor.dart';
 import '../widgets/step_editors/clip_step_editor.dart';
 import '../widgets/step_editors/concat_media_step_editor.dart';
@@ -55,10 +61,12 @@ import '../widgets/step_editors/start_step_editor.dart';
 import '../widgets/step_editors/subtitle_step_editor.dart';
 import '../widgets/step_editors/video_crop_step_editor.dart';
 import '../widgets/step_editors/video_deinterlace_step_editor.dart';
+import '../widgets/step_editors/video_fade_step_editor.dart';
 import '../widgets/step_editors/video_filter_step_editor.dart';
 import '../widgets/step_editors/video_frame_rate_step_editor.dart';
 import '../widgets/step_editors/video_geometry_step_editor.dart';
 import '../widgets/step_editors/video_overlay_step_editor.dart';
+import '../widgets/step_editors/video_reverse_step_editor.dart';
 import '../widgets/tabler_icon.dart';
 import '../widgets/wallpaper_background.dart';
 // Linux CSD：独立面板窗口复用全应用唯一的 WindowChromeBar（见 _PanelActionBar）。
@@ -82,16 +90,15 @@ import 'pipeline_editor_page.dart' show AiPanelApi, AiPanelView;
 
 /// 面板窗口里的数据总线：镜像 AppState + 主窗口推来的快照。
 class PanelWindowStore extends ChangeNotifier {
-  PanelWindowStore(this.args);
+  PanelWindowStore(this.args, {this.send = MultiWindowService.invokeHost});
 
   final DetachedWindowArgs args;
+  final Future<dynamic> Function(String method, [Map<String, dynamic>? args])
+  send;
 
   /// AI 面板内部固定是 `context.read<AppState>()`，所以镜像必须是 AppState
   /// 的子类（见 MirrorAppState 的说明）。
-  late final MirrorAppState app = MirrorAppState(send: _send);
-
-  static Future<dynamic> _send(String method, [Map<String, dynamic>? a]) =>
-      MultiWindowService.invokeHost(method, a);
+  late final MirrorAppState app = MirrorAppState(send: send);
 
   AppConfig get config => app.config;
   bool get isZh => config.language == 'zh';
@@ -138,7 +145,7 @@ class PanelWindowStore extends ChangeNotifier {
 
   /// 向主窗口报到并取首份快照。
   Future<void> bootstrap() async {
-    final snap = await MultiWindowService.invokeHost(
+    final snap = await send(
       PanelMethod.ready,
       <String, dynamic>{'panel': args.panel.id},
     );
@@ -280,14 +287,14 @@ class PanelWindowStore extends ChangeNotifier {
   /// AI 面板的对话必须跟着回去：本窗口一销毁，_AiPanelViewState 里的消息就没了，
   /// 而主窗口的抽屉会重新挂载，只能靠这份消息把对话续上。
   Future<void> dockBack() =>
-      MultiWindowService.invokeHost(PanelMethod.dockBack, <String, dynamic>{
+      send(PanelMethod.dockBack, <String, dynamic>{
         'panel': args.panel.id,
         if (args.panel == DetachedPanel.ai)
           'messages': aiApi?.exportMessages() ?? aiSeed,
       });
 
   /// 某个节点的参数变了（编辑器是**原地改 map** 的，所以直接整份回传）。
-  Future<void> pushParams(PipelineNode node) => MultiWindowService.invokeHost(
+  Future<void> pushParams(PipelineNode node) => send(
     PanelMethod.setParams,
     <String, dynamic>{'nodeId': node.id, 'params': node.params},
   );
@@ -297,11 +304,18 @@ class PanelWindowStore extends ChangeNotifier {
   /// 需要同步拿到 id）。
   Future<void> addNode(String typeId) {
     final id = const Uuid().v4();
-    return MultiWindowService.invokeHost(PanelMethod.addNode, <String, dynamic>{
+    return send(PanelMethod.addNode, <String, dynamic>{
       'typeId': typeId,
       'nodeId': id,
     });
   }
+
+  /// Asks the host to add a logic gate; its connections remain canvas actions.
+  Future<void> addGate(LogicGateType gate) =>
+      send(PanelMethod.graphAddGate, <String, dynamic>{
+        'gate': gate.name,
+        'nodeId': const Uuid().v4(),
+      });
 }
 
 /// 由 main.dart 在检测到「本进程是面板窗口」时调用。
@@ -643,6 +657,321 @@ class _PanelActionBar extends StatelessWidget {
 // 元素 / 属性 面板
 // ══════════════════════════════════════════════════════════════════════════
 
+/// Filters the host's available elements and sends add requests to the canvas.
+class DetachedNodeToolbox extends StatefulWidget {
+  const DetachedNodeToolbox({super.key, required this.store});
+
+  final PanelWindowStore store;
+
+  @override
+  State<DetachedNodeToolbox> createState() => _DetachedNodeToolboxState();
+}
+
+class _DetachedNodeToolboxState extends State<DetachedNodeToolbox> {
+  final _search = TextEditingController();
+  NodePickerCategory? _category;
+  NodePickerSort _sort = NodePickerSort.name;
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: widget.store,
+    builder: (context, _) {
+      final store = widget.store;
+      final s = store.strings;
+      final scheme = Theme.of(context).colorScheme;
+      final categories = [
+        for (final category in NodePickerCategory.values)
+          if (category != NodePickerCategory.container ||
+              store.props['containerName'] != null)
+            category,
+      ];
+      final sourceCategory = switch (store.video['fileMediaType']) {
+        'audio' => NodePickerCategory.audio,
+        'image' => NodePickerCategory.image,
+        _ => NodePickerCategory.video,
+      };
+      final chosenCategory = _category;
+      final category = chosenCategory != null && categories.contains(chosenCategory)
+          ? chosenCategory
+          : sourceCategory;
+      final query = _search.text.trim().toLowerCase();
+      final types = selectNodePickerTypes(
+        [
+          for (final entry in store.toolbox)
+            if (entry['kind'] == null || entry['kind'] == 'node')
+              if (entry['id'] case final String id) stepTypeFromId(id),
+        ],
+        category: category,
+        query: query,
+        sort: _sort,
+        usageCounts: store.config.nodeUsageCount,
+      );
+      final gatesByName = LogicGateType.values.asNameMap();
+      final gates = <LogicGateType>{
+        if (category == NodePickerCategory.control)
+          for (final entry in store.toolbox)
+            if (entry['kind'] == 'gate')
+              if (gatesByName[entry['gateType']] case final gate?)
+                if (query.isEmpty ||
+                    '${gate.name} ${gate.symbol(true)} ${gate.symbol(false)}'
+                        .toLowerCase().contains(query))
+                  gate,
+      }.toList()..sort((a, b) => compareNodePickerEntries(
+        a.name, b.name,
+        keyA: nodePickerGateUsageKey(a.name),
+        keyB: nodePickerGateUsageKey(b.name),
+        sort: _sort,
+        usageCounts: store.config.nodeUsageCount,
+      ));
+      final favourites = store.config.favoriteNodeTypes.toSet();
+      final pinned = types.where((type) => favourites.contains(type.name));
+      final others = types.where((type) => !favourites.contains(type.name));
+      final listLayout = store.config.nodeEditorElementLayout == 'list';
+      final categoryDropdown = AppDropdown<NodePickerCategory>(
+        key: const ValueKey('detached-node-category'),
+        label: s.isZh ? '类型' : 'Category',
+        value: category,
+        items: [
+          for (final option in categories)
+            AppDropdownItem(
+              option,
+              nodePickerCategoryLabel(option, isZh: s.isZh),
+            ),
+        ],
+        onChanged: (value) {
+          if (value == category) return;
+          setState(() {
+            _category = value;
+            _search.clear();
+          });
+        },
+      );
+      final sortDropdown = AppDropdown<NodePickerSort>(
+        key: const ValueKey('detached-node-sort'),
+        label: s.isZh ? '排序' : 'Sort',
+        value: _sort,
+        items: [
+          AppDropdownItem(
+            NodePickerSort.name,
+            s.isZh ? '名称 A–Z（英文名）' : 'Name A–Z',
+          ),
+          AppDropdownItem(
+            NodePickerSort.usage,
+            s.isZh ? '使用频次' : 'Most used',
+          ),
+        ],
+        onChanged: (value) => setState(() => _sort = value),
+      );
+      // The combined properties window can leave this pane as little as 90dp.
+      // Keep the filters and results reachable within the same scroll view.
+      return ListView(
+        primary: false,
+        padding: const EdgeInsets.all(8),
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+              if (constraints.maxWidth < 315 * textScale) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    categoryDropdown,
+                    const SizedBox(height: 8),
+                    sortDropdown,
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: categoryDropdown),
+                  const SizedBox(width: 8),
+                  Expanded(child: sortDropdown),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            key: const ValueKey('detached-node-query'),
+            controller: _search,
+            onChanged: (_) => setState(() {}),
+            style: const TextStyle(fontSize: 12),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: s.isZh ? '在此类型中筛选…' : 'Filter this category…',
+              prefixIcon: Icon(Icons.search, size: 15, color: scheme.outline),
+              prefixIconConstraints: const BoxConstraints(
+                minWidth: 30,
+                minHeight: 30,
+              ),
+              suffixIcon: _search.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: s.isZh ? '清除搜索' : 'Clear search',
+                      onPressed: () => setState(_search.clear),
+                      icon: const Icon(Icons.close, size: 15),
+                    ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 8,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (types.isEmpty && gates.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                s.isZh ? '此类型中没有匹配的元素' : 'No matching elements in this category',
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+              ),
+            ),
+          if (pinned.isNotEmpty) ...[
+            Text(
+              s.isZh ? '收藏' : 'Favourites',
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 4),
+            _arrange([
+              for (final type in pinned) _chip(type, scheme, s, listLayout),
+            ], listLayout),
+            if (others.isNotEmpty || gates.isNotEmpty)
+              const SizedBox(height: 8),
+          ],
+          if (others.isNotEmpty)
+            _arrange([
+              for (final type in others) _chip(type, scheme, s, listLayout),
+            ], listLayout),
+          if (gates.isNotEmpty) ...[
+            if (others.isNotEmpty) const SizedBox(height: 8),
+            Text(
+              s.isZh ? '逻辑门' : 'Logic gates',
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 4),
+            _arrange([
+              for (final gate in gates)
+                _toolboxItem(
+                  key: ValueKey('detached-gate-${gate.name}'),
+                  label: gate.name.toUpperCase(),
+                  tag: gate.symbol(s.isZh),
+                  icon: Icon(Icons.rule, size: 13, color: scheme.tertiary),
+                  accent: scheme.tertiary,
+                  scheme: scheme,
+                  isZh: s.isZh,
+                  listLayout: listLayout,
+                  onTap: () => unawaited(store.addGate(gate)),
+                ),
+            ], listLayout),
+          ],
+        ],
+      );
+    },
+  );
+
+  Widget _arrange(List<Widget> items, bool listLayout) {
+    if (!listLayout) return Wrap(spacing: 4, runSpacing: 4, children: items);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      spacing: 4,
+      children: items,
+    );
+  }
+
+  Widget _chip(
+    PipelineStepType type,
+    ColorScheme scheme,
+    AppStrings s,
+    bool listLayout,
+  ) {
+    final node = PipelineNode(id: '', type: type);
+    final accent = nodeAccentColor(type, scheme);
+    return _toolboxItem(
+      key: ValueKey('detached-node-${type.name}'),
+      label: s.isZh ? node.label : node.labelEn,
+      tag: node.mediaTag,
+      icon: TablerIcon(stepIconFor(type), size: 13, color: accent),
+      accent: accent,
+      scheme: scheme,
+      isZh: s.isZh,
+      listLayout: listLayout,
+      onTap: () => unawaited(widget.store.addNode(type.name)),
+    );
+  }
+
+  Widget _toolboxItem({
+    required Key key,
+    required String label,
+    required String tag,
+    required Widget icon,
+    required Color accent,
+    required ColorScheme scheme,
+    required bool isZh,
+    required bool listLayout,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: isZh ? '$label：点按添加到画布' : 'Add $label to canvas',
+      excludeFromSemantics: true,
+      child: InkWell(
+        key: key,
+        borderRadius: BorderRadius.circular(6),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          decoration: BoxDecoration(
+            color: listLayout
+                ? scheme.surfaceContainerLow.withAlpha(150)
+                : accent.withAlpha(180),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: listLayout
+                  ? accent.withAlpha(150)
+                  : scheme.outlineVariant.withAlpha(60),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: listLayout ? MainAxisSize.max : MainAxisSize.min,
+            children: [
+              icon,
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: scheme.onSurface),
+                ),
+              ),
+              if (tag.isNotEmpty) ...[
+                const SizedBox(width: 4),
+                Text(
+                  tag,
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.outline,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _PropsWindow extends StatefulWidget {
   const _PropsWindow({required this.store});
 
@@ -653,14 +982,7 @@ class _PropsWindow extends StatefulWidget {
 }
 
 class _PropsWindowState extends State<_PropsWindow> {
-  final TextEditingController _search = TextEditingController();
   double _fraction = 0.42;
-
-  @override
-  void dispose() {
-    _search.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -682,7 +1004,7 @@ class _PropsWindowState extends State<_PropsWindow> {
           ),
           Expanded(
             child: elementsOnly
-                ? _toolbox(scheme, s)
+                ? DetachedNodeToolbox(store: store)
                 : propertiesOnly
                 ? _properties(scheme, s)
                 : LayoutBuilder(
@@ -699,7 +1021,7 @@ class _PropsWindowState extends State<_PropsWindow> {
                       );
                       return Column(
                         children: [
-                          SizedBox(height: topH, child: _toolbox(scheme, s)),
+                          SizedBox(height: topH, child: DetachedNodeToolbox(store: store)),
                           MouseRegion(
                             cursor: SystemMouseCursors.resizeRow,
                             child: GestureDetector(
@@ -735,195 +1057,6 @@ class _PropsWindowState extends State<_PropsWindow> {
                   ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _toolbox(ColorScheme scheme, AppStrings s) {
-    final store = widget.store;
-    final query = _search.text.trim().toLowerCase();
-    final all = store.toolbox;
-    final items = query.isEmpty
-        ? all
-        : all.where((e) {
-            final label = (e['label'] as String? ?? '').toLowerCase();
-            final labelEn = (e['labelEn'] as String? ?? '').toLowerCase();
-            final id = (e['id'] as String? ?? '').toLowerCase();
-            return label.contains(query) ||
-                labelEn.contains(query) ||
-                id.contains(query);
-          }).toList();
-
-    // 分组：保持主窗口给出的顺序，仅在相邻同组之间插一次标题。
-    final children = <Widget>[];
-    String? lastGroup;
-    for (final e in items) {
-      final group = e['group'] as String? ?? 'video';
-      if (group != lastGroup) {
-        children.add(_groupLabel(scheme, group, s));
-        lastGroup = group;
-      }
-      children.add(_chip(scheme, s, e));
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
-          child: TextField(
-            controller: _search,
-            onChanged: (_) => setState(() {}),
-            style: const TextStyle(fontSize: 12),
-            decoration: InputDecoration(
-              isDense: true,
-              hintText: s.isZh ? '搜索元素' : 'Search elements',
-              hintStyle: TextStyle(fontSize: 12, color: scheme.outline),
-              prefixIcon: Icon(Icons.search, size: 15, color: scheme.outline),
-              prefixIconConstraints: const BoxConstraints(
-                minWidth: 30,
-                minHeight: 30,
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: 8,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide(color: scheme.outlineVariant),
-              ),
-            ),
-          ),
-        ),
-        Expanded(
-          child: items.isEmpty
-              ? Center(
-                  child: Text(
-                    s.isZh ? '没有匹配的元素' : 'No matching element',
-                    style: TextStyle(fontSize: 11, color: scheme.outline),
-                  ),
-                )
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-                  child: store.config.nodeEditorElementLayout == 'list'
-                      ? Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            for (var i = 0; i < children.length; i++)
-                              Padding(
-                                padding: EdgeInsets.only(
-                                  bottom: i == children.length - 1 ? 0 : 4,
-                                ),
-                                child: children[i],
-                              ),
-                          ],
-                        )
-                      : Wrap(spacing: 4, runSpacing: 4, children: children),
-                ),
-        ),
-      ],
-    );
-  }
-
-  Widget _groupLabel(ColorScheme scheme, String group, AppStrings s) {
-    final (IconData icon, String label) = switch (group) {
-      'fav' => (Icons.star, s.isZh ? '收藏' : 'Favourites'),
-      'recent' => (Icons.history, s.isZh ? '最近使用' : 'Recent'),
-      'io' => (Icons.import_export, s.isZh ? '输入 / 输出' : 'Input / Output'),
-      'generic' => (Icons.category_outlined, s.isZh ? '通用' : 'General'),
-      'audio' => (Icons.audiotrack_outlined, s.isZh ? '音频' : 'Audio'),
-      'image' => (Icons.image_outlined, s.isZh ? '图片' : 'Image'),
-      'container' => (
-        Icons.folder_special_outlined,
-        s.isZh ? '容器' : 'Container',
-      ),
-      _ => (Icons.videocam_outlined, s.isZh ? '视频' : 'Video'),
-    };
-    return SizedBox(
-      width: double.infinity,
-      child: Padding(
-        padding: const EdgeInsets.only(top: 4, bottom: 2),
-        child: Row(
-          children: [
-            Icon(icon, size: 12, color: scheme.outline),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                color: scheme.outline,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _chip(ColorScheme scheme, AppStrings s, Map<String, dynamic> e) {
-    final type = stepTypeFromId(e['id'] as String? ?? '');
-    final tag = e['tag'] as String? ?? '';
-    final listLayout = widget.store.config.nodeEditorElementLayout == 'list';
-    final label = s.isZh
-        ? (e['label'] as String? ?? type.name)
-        : (e['labelEn'] as String? ?? type.name);
-    return Tooltip(
-      message: s.isZh ? '点按添加到画布' : 'Click to add to canvas',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: () => unawaited(widget.store.addNode(type.name)),
-        child: Container(
-          width: listLayout ? double.infinity : null,
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-          decoration: BoxDecoration(
-            color: listLayout
-                ? scheme.surfaceContainerLow.withAlpha(150)
-                : nodeAccentColor(type, scheme).withAlpha(180),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: listLayout
-                  ? nodeAccentColor(type, scheme).withAlpha(150)
-                  : scheme.outlineVariant.withAlpha(60),
-            ),
-          ),
-          child: Row(
-            mainAxisSize: listLayout ? MainAxisSize.max : MainAxisSize.min,
-            children: [
-              TablerIcon(
-                stepIconFor(type),
-                size: 13,
-                color: nodeAccentColor(type, scheme),
-              ),
-              const SizedBox(width: 4),
-              if (listLayout)
-                Expanded(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 11, color: scheme.onSurface),
-                  ),
-                )
-              else
-                Text(
-                  label,
-                  style: TextStyle(fontSize: 11, color: scheme.onSurface),
-                ),
-              if (tag.isNotEmpty) ...[
-                const SizedBox(width: 4),
-                Text(
-                  tag,
-                  style: TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.outline,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -1445,6 +1578,48 @@ Widget buildDetachedNodeEditor(PanelWindowStore store, PipelineNode node) {
       );
     case PipelineStepType.videoDeinterlace:
       editor = VideoDeinterlaceStepEditor(
+        key: ValueKey(node.id),
+        params: params,
+        onChanged: onChanged,
+        isZh: isZh,
+      );
+    case PipelineStepType.audioEqualizer:
+      editor = AudioEqualizerStepEditor(
+        key: ValueKey(node.id),
+        params: params,
+        onChanged: onChanged,
+        isZh: isZh,
+      );
+    case PipelineStepType.audioReverse:
+      editor = AudioReverseStepEditor(
+        key: ValueKey(node.id),
+        params: params,
+        onChanged: onChanged,
+        isZh: isZh,
+      );
+    case PipelineStepType.audioSpectrum:
+      editor = AudioSpectrumStepEditor(
+        key: ValueKey(node.id),
+        params: params,
+        onChanged: onChanged,
+        isZh: isZh,
+      );
+    case PipelineStepType.audioWaveform:
+      editor = AudioWaveformStepEditor(
+        key: ValueKey(node.id),
+        params: params,
+        onChanged: onChanged,
+        isZh: isZh,
+      );
+    case PipelineStepType.videoFade:
+      editor = VideoFadeStepEditor(
+        key: ValueKey(node.id),
+        params: params,
+        onChanged: onChanged,
+        isZh: isZh,
+      );
+    case PipelineStepType.videoReverse:
+      editor = VideoReverseStepEditor(
         key: ValueKey(node.id),
         params: params,
         onChanged: onChanged,

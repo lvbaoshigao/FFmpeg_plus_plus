@@ -1166,6 +1166,31 @@ class _SettingsPageState extends State<SettingsPage> {
           build: _buildDebug,
         ),
         _CardDef(
+          id: 'nodeUsage',
+          title: (s) => s.isZh ? '节点使用频次' : 'Node usage frequency',
+          icon: Icons.bar_chart_outlined,
+          keywords: [
+            '节点使用频次',
+            '节点使用次数',
+            '清除节点使用频次',
+            '重置节点使用次数',
+            '清空',
+            '重置',
+            '频次重置',
+            '使用统计',
+            '排序',
+            'node',
+            'usage',
+            'frequency',
+            'count',
+            'statistics',
+            'reset',
+            'clear',
+            'ranking',
+          ],
+          build: (context, _) => const NodeUsageSettingsCard(),
+        ),
+        _CardDef(
           id: 'cache',
           title: (s) => s.cardCache,
           icon: Icons.cleaning_services_outlined,
@@ -5946,6 +5971,112 @@ Widget _buildDebug(BuildContext ctx, AppState state) {
         },
       ),
   ]);
+}
+
+/// Usage statistics shared by desktop settings and the mobile detail route.
+class NodeUsageSettingsCard extends StatelessWidget {
+  const NodeUsageSettingsCard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    // Snapshot derived values: execution can update the existing map in place.
+    final (language, types, uses, hasData) = context
+        .select<AppState, (String, int, int, bool)>((state) {
+          final counts = state.config.nodeUsageCount.values.where((n) => n > 0);
+          return (
+            state.config.language,
+            counts.length,
+            counts.fold<int>(0, (sum, count) => sum + count),
+            state.config.nodeUsageCount.isNotEmpty,
+          );
+        });
+    final state = context.read<AppState>();
+    final zh = AppStrings.of(language).isZh;
+    final scheme = Theme.of(context).colorScheme;
+    return _glass(context, state, zh ? '节点使用频次' : 'Node usage frequency', [
+      Text(
+        zh
+            ? '统计范围：本机将节点添加至画布的次数（含 AI 与独立窗口新增），按节点类型汇总，用于节点菜单的频次排序。'
+            : 'Scope: node additions to the canvas on this device, including AI and '
+                  'detached windows. Counts are grouped by type for frequency sorting.',
+        key: const ValueKey('node-usage-scope'),
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
+      ),
+      const SizedBox(height: 10),
+      Semantics(
+        liveRegion: true,
+        child: Text(
+          zh
+              ? '已记录 $types 种节点，共 $uses 次使用'
+              : '$types node ${types == 1 ? 'type' : 'types'} · '
+                    '$uses ${uses == 1 ? 'use' : 'uses'}',
+          key: const ValueKey('node-usage-summary'),
+          style: TextStyle(color: scheme.onSurface, fontSize: 13),
+        ),
+      ),
+      const SizedBox(height: 6),
+      Text(
+        zh
+            ? '仅清除使用次数，保留收藏、最近使用、项目和其他设置。'
+            : 'Only usage counts are cleared. Favorites, recent nodes, '
+                  'projects and other settings are kept.',
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
+      ),
+      const SizedBox(height: 10),
+      Align(
+        alignment: Alignment.centerRight,
+        child: OutlinedButton.icon(
+          key: const ValueKey('reset-node-usage'),
+          onPressed: hasData ? () => _resetNodeUsage(context, state, zh) : null,
+          icon: const Icon(Icons.restart_alt, size: 18),
+          label: Text(zh ? '重置使用次数' : 'Reset usage counts'),
+        ),
+      ),
+    ]);
+  }
+}
+
+Future<void> _resetNodeUsage(
+  BuildContext context,
+  AppState state,
+  bool zh,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      scrollable: true,
+      icon: const Icon(Icons.restart_alt),
+      title: Text(zh ? '重置节点使用频次？' : 'Reset node usage frequency?'),
+      content: Text(
+        zh
+            ? '将清除本机记录的全部节点使用次数，之后的使用将重新累计。'
+                  '收藏、最近使用、项目和其他设置不会改变。此操作无法撤销。'
+            : 'Clear all locally recorded node usage counts and start counting '
+                  'again. Favorites, recent nodes, projects and other settings '
+                  'will not change. This cannot be undone.',
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('cancel-reset-node-usage'),
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: Text(zh ? '取消' : 'Cancel'),
+        ),
+        FilledButton(
+          key: const ValueKey('confirm-reset-node-usage'),
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: Text(zh ? '重置' : 'Reset'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+  await state.updateConfig(
+    (config) => config..nodeUsageCount = <String, int>{},
+  );
 }
 
 Widget _buildCache(BuildContext ctx, AppState state) {

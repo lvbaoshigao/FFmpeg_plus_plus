@@ -188,6 +188,20 @@ const NodeTypeSpec kTypes[] = {
      {COMMON_KEYS, "mode", "threshold_db", "min_duration"}},
     {makeTypeId(0x2C), "videoDeinterlace", nullptr, "视频去隔行",
      MK_VIDEO, MK_VIDEO, false, 0, {COMMON_KEYS, "mode", "parity"}},
+
+    // ── 音频可视化、倒放、均衡器与视频淡变（ID 自 0x2D 顺延）──
+    {makeTypeId(0x2D), "audioSpectrum", nullptr, "音频频谱图",
+     MK_AUDIO, MK_IMAGE, false, 0, {COMMON_KEYS, "width", "height", "output_format"}},
+    {makeTypeId(0x2E), "audioWaveform", nullptr, "音频波形图",
+     MK_AUDIO, MK_IMAGE, false, 0, {COMMON_KEYS, "width", "height", "output_format"}},
+    {makeTypeId(0x2F), "audioReverse", nullptr, "音频倒放",
+     MK_AUDIO, MK_AUDIO, false, 0, {COMMON_KEYS}},
+    {makeTypeId(0x30), "videoReverse", nullptr, "视频倒放",
+     MK_VIDEO, MK_VIDEO, false, 0, {COMMON_KEYS}},
+    {makeTypeId(0x31), "audioEqualizer", nullptr, "音频均衡器",
+     MK_AUDIO, MK_AUDIO, false, 0, {COMMON_KEYS, "bass_db", "mid_db", "treble_db"}},
+    {makeTypeId(0x32), "videoFade", nullptr, "视频淡入淡出",
+     MK_VIDEO, MK_VIDEO, false, 0, {COMMON_KEYS, "fade_in", "fade_out", "fade_out_start"}},
 };
 
 // ── 结构性节点（源/输出）──────────────────────────────────────

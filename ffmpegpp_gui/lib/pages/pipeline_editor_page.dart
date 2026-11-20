@@ -19,6 +19,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
+import '../models/node_picker_options.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../services/ai_chat_attachments.dart';
@@ -41,6 +42,7 @@ import '../theme/mobile_visual_theme.dart';
 import '../widgets/ai_workflow_card.dart';
 import '../widgets/animated_popup.dart';
 import '../widgets/app_card.dart';
+import '../widgets/app_dropdown.dart';
 // 统一滑块：条件门「命中概率」也走 AppSlider，否则这一条没有玻璃轨道与
 // 彗星拖尾，与属性面板里其它滑块外观不一致（见 app_slider.dart 文件头）。
 import '../widgets/app_slider.dart';
@@ -56,14 +58,18 @@ import '../widgets/option_menu_bar.dart';
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
 import '../widgets/step_editors/audio_convert_step_editor.dart';
 import '../widgets/step_editors/audio_denoise_step_editor.dart';
+import '../widgets/step_editors/audio_equalizer_step_editor.dart';
 import '../widgets/step_editors/audio_fade_step_editor.dart';
 import '../widgets/step_editors/audio_metadata_step_editor.dart';
 import '../widgets/step_editors/audio_noise_gate_step_editor.dart';
 import '../widgets/step_editors/audio_normalize_step_editor.dart';
 import '../widgets/step_editors/audio_quality_step_editor.dart';
+import '../widgets/step_editors/audio_reverse_step_editor.dart';
 import '../widgets/step_editors/audio_silence_trim_step_editor.dart';
+import '../widgets/step_editors/audio_spectrum_step_editor.dart';
 import '../widgets/step_editors/audio_speed_step_editor.dart';
 import '../widgets/step_editors/audio_volume_step_editor.dart';
+import '../widgets/step_editors/audio_waveform_step_editor.dart';
 import '../widgets/step_editors/av_process_step_editor.dart';
 import '../widgets/step_editors/clip_step_editor.dart';
 import '../widgets/step_editors/concat_media_step_editor.dart';
@@ -89,10 +95,12 @@ import '../widgets/step_editors/start_step_editor.dart';
 import '../widgets/step_editors/subtitle_step_editor.dart';
 import '../widgets/step_editors/video_crop_step_editor.dart';
 import '../widgets/step_editors/video_deinterlace_step_editor.dart';
+import '../widgets/step_editors/video_fade_step_editor.dart';
 import '../widgets/step_editors/video_filter_step_editor.dart';
 import '../widgets/step_editors/video_frame_rate_step_editor.dart';
 import '../widgets/step_editors/video_geometry_step_editor.dart';
 import '../widgets/step_editors/video_overlay_step_editor.dart';
+import '../widgets/step_editors/video_reverse_step_editor.dart';
 import '../widgets/tabler_icon.dart';
 import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
@@ -281,6 +289,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 工具箱搜索：控制器与查询串共用（桌面右面板与移动端弹层同时只会有一个在树里）。
   final TextEditingController _toolboxSearchCtrl = TextEditingController();
   String _toolboxQuery = '';
+  NodePickerCategory _toolboxCategory = NodePickerCategory.video;
+  NodePickerSort _toolboxSort = NodePickerSort.name;
+  StateSetter? _canvasPickerSetState;
+  Map<String, int> _nodePickerUsage = const {};
+  final Set<String> _countedControlUsageIds = {};
   // 画布 / 右面板 水平分割比例（默认画布占 60%）
   double _canvasFraction = 0.6;
   // 分割比例 notifier：拖动分割线时只重建受影响的两个 SizedBox，
@@ -341,7 +354,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 仅 PC 端可按住小地图右上角的握把拖动改变。
   Offset? _miniMapFloat;
 
-  /// 「元素」选择框：只展示当前文件媒体类型可用（含一跳跨类型产出）的节点。
+  /// 「元素」选择框：只展示源媒体及跨类型链路闭包可达的节点。
   bool _showOnlyAvailable = false;
 
   /// 右侧「元素 / 属性」面板：隐藏（菜单栏图标可恢复）。
@@ -611,6 +624,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 整页子树（玻璃图层、RenderObject、图片引用）就此泄漏 —— 反复进出编辑器
     // 即反复泄漏，这是「用一段时间后内存涨到几百 MB」的来源之一。
     _appState = context.read<AppState>();
+    _toolboxCategory = switch (widget.video.fileMediaType) {
+      MediaType.audio => NodePickerCategory.audio,
+      MediaType.image => NodePickerCategory.image,
+      MediaType.video => NodePickerCategory.video,
+    };
     _appState.addListener(_onPanelAppStateChanged);
     // 编辑器不再监听 window_manager 的 maximize 状态：窗口按钮与最大化图标
     // 统一由 widgets/window_chrome.dart 维护（见本文件 build() 的 WindowChrome
@@ -720,6 +738,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       _pushUndo();
       setState(() => _nodes.add(node));
       _commitChange();
+      _trackUsage(type);
       return node.id;
     };
     _appState.mcpOnAddGate = (gateName, x, y) {
@@ -741,6 +760,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       _pushUndo();
       setState(() => _nodes.add(node));
       _commitChange();
+      _trackControlUsage(nodePickerGateUsageKey(gate.name), node.id);
       return node.id;
     };
     _appState.mcpOnDeleteNode = (nodeId) {
@@ -967,6 +987,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     );
     setState(() => _nodes.add(node));
     _commitChange();
+    _trackControlUsage(nodePickerGateUsageKey(gate.name), node.id);
     if (context.read<AppState>().config.debugMode) {
       context.read<AppState>().addLog(
         '[逻辑门] 添加 ${gate.name} @ (${canvasPos.dx.toStringAsFixed(0)}, ${canvasPos.dy.toStringAsFixed(0)}) id=${node.id.substring(0, 8)}',
@@ -1022,10 +1043,19 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     });
   }
 
+  void _trackControlUsage(String key, String id) {
+    if (!_countedControlUsageIds.add(id)) return;
+    context.read<AppState>().updateConfig((config) {
+      config.nodeUsageCount[key] = math.max(0, config.nodeUsageCount[key] ?? 0) + 1;
+      return config;
+    });
+  }
+
   void _trackUsage(PipelineStepType type) {
     final state = context.read<AppState>();
     state.updateConfig((c) {
-      c.nodeUsageCount[type.name] = (c.nodeUsageCount[type.name] ?? 0) + 1;
+      if (type == PipelineStepType.unknown) return c;
+      c.nodeUsageCount[type.name] = math.max(0, c.nodeUsageCount[type.name] ?? 0) + 1;
       // 「最近使用」记的是**最后用过**的顺序而不是次数：大图编辑时用户脑子里
       // 想的是「我刚才用了什么」，而不是统计意义上最常用的那几种。
       c.recentNodeTypes.remove(type.name);
@@ -1173,6 +1203,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       _selectedLogicBlockId = null;
     });
     _commitChange();
+    for (final node in pasted) {
+      if (!node.isGate) _trackUsage(node.type);
+    }
     showToast(
       context,
       s.isZh
@@ -2785,11 +2818,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     double padding,
     Map<String, dynamic> extraParams,
   ) {
+    final id = _uuid.v4();
     _pushUndo();
     setState(() {
       _logicBlocks.add(
         LogicBlock(
-          id: _uuid.v4(),
+          id: id,
           type: type,
           childNodeIds: childIds,
           params: {..._defaultLogicParams(type), ...extraParams},
@@ -2804,6 +2838,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       _selectedNodeIds.clear();
     });
     _commitChange();
+    _trackControlUsage(nodePickerBlockUsageKey(type.name), id);
   }
 
   /// 各类逻辑块的初始参数。
@@ -2870,53 +2905,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   }
 
   // ── 通用节点（跨 音/视频/图片，创建后在属性里选择媒体类型）──
-  static const _genericTypes = [
-    PipelineStepType.metadataStrip,
-    PipelineStepType.mediaConvert,
-    PipelineStepType.mediaScale,
-    PipelineStepType.mediaCrop,
-    PipelineStepType.mediaRotate,
-    PipelineStepType.mediaColor,
-    PipelineStepType.mediaSharpen,
-    PipelineStepType.mediaOverlay,
-  ];
-  // 被通用节点合并的旧单格式节点（imageConvert/audioConvert/imageScale/
-  // videoGeometry/imageCrop/videoCrop/imageRotate/imageAdjust/videoFilter/
-  // imageSharpen/videoOverlay）不再出现在工具箱，但枚举与编辑器保留，
-  // 旧配置文件仍可正常还原、编辑与执行。
-  static const _videoTypes = [
-    PipelineStepType.avProcess,
-    PipelineStepType.subtitle,
-    PipelineStepType.clip,
-    PipelineStepType.frame,
-    PipelineStepType.speed,
-    PipelineStepType.extractAudio,
-    PipelineStepType.videoFrameRate,
-    PipelineStepType.videoDeinterlace,
-  ];
-  static const _audioTypes = [
-    PipelineStepType.audioQuality,
-    PipelineStepType.audioSpeed,
-    PipelineStepType.audioVolume,
-    PipelineStepType.audioCompressor,
-    PipelineStepType.audioMetadata,
-    PipelineStepType.audioFade,
-    PipelineStepType.audioNormalize,
-    PipelineStepType.audioNoiseGate,
-    PipelineStepType.audioDenoise,
-    PipelineStepType.audioSilenceTrim,
-  ];
-  static const _imageTypes = [
-    PipelineStepType.imageBrightness,
-    PipelineStepType.imageNoise,
-    PipelineStepType.imageDenoise,
-    PipelineStepType.imageChannelExtract,
-    PipelineStepType.imageCompress,
-  ];
-  static const _containerTypes = [
-    PipelineStepType.concatMedia,
-    PipelineStepType.imageToVideo,
-  ];
+  static const _genericTypes = nodePickerGenericTypes;
+  static const _videoTypes = nodePickerVideoTypes;
+  static const _audioTypes = nodePickerAudioTypes;
+  static const _imageTypes = nodePickerImageTypes;
+  static const _containerTypes = nodePickerContainerTypes;
   static const _allNodeTypes = [
     PipelineStepType.start,
     ..._genericTypes,
@@ -2945,24 +2938,28 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 也要把它们的产出类型一并放开（用户举例：视频源经「提取音频」后应当能用
   /// 整套音频节点）。
   ///
-  /// 刻意只登记**提取 / 换链**型节点：「帧提取」虽然也产出图片，但它的语义是
-  /// 导出静帧、而不是继续在同一张图上处理链，放开它会让视频源点亮整组图片节点，
-  /// 正好背离「只显示可用节点」的初衷。
+  /// 只登记可继续处理的文件产出；帧提取的批量目录不作为媒体类型入口。
+  /// 频谱图与波形图产出单张图片，可继续连接图片处理或图片转视频。
   static const Map<PipelineStepType, MediaType> _crossTypeEntries = {
     PipelineStepType.extractAudio: MediaType.audio,
     PipelineStepType.imageToVideo: MediaType.video,
+    PipelineStepType.audioSpectrum: MediaType.image,
+    PipelineStepType.audioWaveform: MediaType.image,
   };
 
-  /// 「显示可用」的结果集：源媒体类型 + 一跳跨类型入口的产出之后，所有输入类型
-  /// 能被覆盖的节点。
-  ///
-  /// 视频源 → 视频节点 +（提取音频后的）音频节点；音频源 → 只有音频节点；
-  /// 图片源 → 图片节点 +（合成视频后的）视频节点。
+  /// 将跨类型入口迭代到闭包，再展示输入类型可达的节点。
+  /// 例如视频 → 提取音频 → 频谱图/波形图 → 图片处理，支持多步转换。
   Set<PipelineStepType> _availableTypes() {
     final usable = <MediaType>{..._sourceMediaTypes()};
-    for (final e in _crossTypeEntries.entries) {
-      final step = PipelineNode(id: '', type: e.key);
-      if (step.inputTypes.any(usable.contains)) usable.add(e.value);
+    var expanded = true;
+    while (expanded) {
+      expanded = false;
+      for (final entry in _crossTypeEntries.entries) {
+        final step = PipelineNode(id: '', type: entry.key);
+        if (step.inputTypes.any(usable.contains) && usable.add(entry.value)) {
+          expanded = true;
+        }
+      }
     }
     final out = <PipelineStepType>{
       PipelineStepType.start,
@@ -3098,21 +3095,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           Icons.more_horiz,
           s.isZh ? '全部元素...' : 'All elements...',
           () {
-            // 二级菜单延后一帧再弹：一级菜单（约 10 项）正在退场的同时把 29 项的
-            // 二级菜单推入，会让同一帧的布局/绘制翻倍 —— 这正是「点一下卡一下」
-            // 的来源。摊到相邻帧后肉眼无感。
-            // 同时给菜单一个固定宽度：29 项若走 IntrinsicWidth，弹出前要先对每一项
-            // 做一遍固有尺寸测量，白白多出一整趟布局。
-            final types = _visibleNodeTypes();
-            WidgetsBinding.instance.addPostFrameCallback((_) async {
-              if (!mounted) return;
-              final all = await showAnimatedMenu<PipelineStepType>(
-                context: context,
-                position: screenPos,
-                width: isMobilePlatform ? 200 : 240,
-                items: [for (final t in types) makeItem(t)],
-              );
-              if (all != null && mounted) _addNodeAt(all, canvasPos);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _showCanvasNodePicker(canvasPos);
             });
           },
           color: scheme.outline,
@@ -3146,6 +3130,71 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     ).then((type) {
       if (type != null) _addNodeAt(type, canvasPos);
     });
+  }
+
+  void _updateToolbox(VoidCallback change) {
+    setState(change);
+    _canvasPickerSetState?.call(() {});
+  }
+
+  Future<void> _showCanvasNodePicker(Offset canvasPos) async {
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => Consumer<AppState>(
+          builder: (dialogContext, state, _) => StatefulBuilder(
+            builder: (dialogContext, updateDialog) {
+              _canvasPickerSetState = updateDialog;
+              _nodePickerUsage = Map<String, int>.unmodifiable(
+                state.config.nodeUsageCount,
+              );
+              final s = AppStrings.of(state.config.language);
+              final scheme = Theme.of(dialogContext).colorScheme;
+              return AlertDialog(
+                key: const ValueKey('node-picker-dialog'),
+                insetPadding: const EdgeInsets.all(16),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                title: Text(s.isZh ? '选择节点类型' : 'Choose a node category'),
+                content: SizedBox(
+                  width: 420,
+                  height: math.min(
+                    600,
+                    MediaQuery.sizeOf(dialogContext).height * 0.7,
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildToolboxSearch(scheme, s, dense: false),
+                        _buildToolboxBody(
+                          scheme,
+                          s,
+                          dense: false,
+                          atCanvas: canvasPos,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: Text(
+                      MaterialLocalizations.of(dialogContext).closeButtonLabel,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+    } finally {
+      _canvasPickerSetState = null;
+    }
   }
 
   void _showNodeMenu(Offset screenPos, String nodeId) {
@@ -3642,6 +3691,48 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           onChanged: onChanged,
           isZh: isZh,
         );
+      case PipelineStepType.audioSpectrum:
+        editor = AudioSpectrumStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioWaveform:
+        editor = AudioWaveformStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioReverse:
+        editor = AudioReverseStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.videoReverse:
+        editor = VideoReverseStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioEqualizer:
+        editor = AudioEqualizerStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.videoFade:
+        editor = VideoFadeStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
       case PipelineStepType.imageAdjust:
         editor = ImageAdjustStepEditor(
           key: ValueKey(node.id),
@@ -3996,6 +4087,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final scheme = theme.colorScheme;
     final s = AppStrings.of(
       context.select<AppState, String>((st) => st.config.language),
+    );
+    // Snapshot values so resetting or mutating the existing map also refreshes order.
+    _nodePickerUsage = context.select<AppState, Map<String, int>>(
+      (state) => Map<String, int>.unmodifiable(state.config.nodeUsageCount),
     );
 
     // 自绘 CSD 统一走 WindowChrome：Linux 上它给内容整体下移 36px 并补窗口
@@ -6300,6 +6395,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                                       _pushUndo();
                                       setState(() => _nodes.add(node));
                                       _commitChange();
+                                      _trackUsage(stepType);
                                       return node.id;
                                     },
                                     onAddGate: (gateName, x, y) {
@@ -6320,6 +6416,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                                       _pushUndo();
                                       setState(() => _nodes.add(node));
                                       _commitChange();
+                                      _trackControlUsage(nodePickerGateUsageKey(gate.name), node.id);
                                       return node.id;
                                     },
                                     onSetGateParams: (nodeId, params) {
@@ -8943,18 +9040,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     );
   }
 
-  /// 搜索命中（匹配中文名 / 英文名 / 枚举名，忽略大小写）。
-  List<PipelineStepType> _toolboxSearchHits(String query, AppStrings s) {
-    final q = query.trim().toLowerCase();
-    if (q.isEmpty) return const [];
-    final out = <PipelineStepType>[];
-    for (final t in _allNodeTypes) {
-      final dummy = PipelineNode(id: '', type: t);
-      final hay = '${dummy.label} ${dummy.labelEn} ${t.name}'.toLowerCase();
-      if (hay.contains(q)) out.add(t);
-    }
-    return out;
-  }
+  List<PipelineStepType> _toolboxSearchHits(String query) =>
+      selectNodePickerTypes(
+        [
+          for (final type in _visibleNodeTypes()) type,
+          if (widget.containerInfo != null) ..._containerTypes,
+        ],
+        category: _toolboxCategory,
+        query: query,
+        sort: _toolboxSort,
+        usageCounts: _nodePickerUsage,
+      );
 
   /// 工具箱搜索框。桌面右面板（dense）与移动端弹层共用一套。
   Widget _buildToolboxSearch(
@@ -8962,70 +9058,127 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     AppStrings s, {
     required bool dense,
   }) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: dense ? 6 : 8),
-      child: TextField(
-        controller: _toolboxSearchCtrl,
-        style: TextStyle(fontSize: dense ? 11.5 : 13, color: scheme.onSurface),
-        decoration: InputDecoration(
-          isDense: true,
-          filled: true,
-          fillColor: scheme.surfaceContainerHighest.withAlpha(90),
-          hintText: s.isZh ? '搜索元素…' : 'Search elements…',
-          hintStyle: TextStyle(
-            fontSize: dense ? 11 : 12.5,
-            color: scheme.outline,
-          ),
-          prefixIcon: Icon(
-            Icons.search,
-            size: dense ? 14 : 16,
-            color: scheme.outline,
-          ),
-          // 图标槽位与行高对齐，避免「有眼睛/清除按钮的输入框比同行高几像素」
-          prefixIconConstraints: BoxConstraints(
-            minWidth: dense ? 28 : 32,
-            minHeight: dense ? 28 : 32,
-          ),
-          suffixIcon: _toolboxQuery.isEmpty
-              ? null
-              : InkWell(
-                  onTap: () {
+    final categories = [
+      for (final category in NodePickerCategory.values)
+        if (category != NodePickerCategory.container ||
+            widget.containerInfo != null)
+          category,
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final category in categories)
+                ChoiceChip(
+                  key: ValueKey('node-picker-category-${category.name}'),
+                  label: Text(nodePickerCategoryLabel(category, isZh: s.isZh)),
+                  selected: _toolboxCategory == category,
+                  onSelected: (_) => _updateToolbox(() {
+                    _toolboxCategory = category;
+                    _toolboxQuery = '';
                     _toolboxSearchCtrl.clear();
-                    setState(() => _toolboxQuery = '');
-                  },
-                  child: Icon(
-                    Icons.close,
-                    size: dense ? 14 : 16,
-                    color: scheme.outline,
-                  ),
+                  }),
                 ),
-          suffixIconConstraints: BoxConstraints(
-            minWidth: dense ? 28 : 32,
-            minHeight: dense ? 28 : 32,
-          ),
-          contentPadding: EdgeInsets.symmetric(
-            horizontal: dense ? 4 : 6,
-            vertical: dense ? 7 : 8,
-          ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(110)),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: scheme.outlineVariant.withAlpha(110)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: scheme.primary.withAlpha(160)),
+            ],
           ),
         ),
-        onChanged: (v) => setState(() => _toolboxQuery = v),
-      ),
+        AppDropdown<NodePickerSort>(
+          key: const ValueKey('node-picker-sort'),
+          value: _toolboxSort,
+          label: s.isZh ? '排序' : 'Sort',
+          height: dense ? 36 : 44,
+          items: [
+            AppDropdownItem(
+              NodePickerSort.name,
+              s.isZh ? '名称 A–Z（英文名）' : 'Name A–Z',
+            ),
+            AppDropdownItem(
+              NodePickerSort.usage,
+              s.isZh ? '使用频次' : 'Most used',
+            ),
+          ],
+          onChanged: (value) => _updateToolbox(() => _toolboxSort = value),
+        ),
+        const SizedBox(height: 8),
+        Padding(
+          padding: EdgeInsets.only(bottom: dense ? 6 : 8),
+          child: TextField(
+            key: const ValueKey('node-picker-query'),
+            controller: _toolboxSearchCtrl,
+            style: TextStyle(
+              fontSize: dense ? 11.5 : 13,
+              color: scheme.onSurface,
+            ),
+            decoration: InputDecoration(
+              isDense: true,
+              filled: true,
+              fillColor: scheme.surfaceContainerHighest.withAlpha(90),
+              hintText: s.isZh ? '在此类型中筛选…' : 'Filter this category…',
+              hintStyle: TextStyle(
+                fontSize: dense ? 11 : 12.5,
+                color: scheme.outline,
+              ),
+              prefixIcon: Icon(
+                Icons.search,
+                size: dense ? 14 : 16,
+                color: scheme.outline,
+              ),
+              // 图标槽位与行高对齐，避免「有眼睛/清除按钮的输入框比同行高几像素」
+              prefixIconConstraints: BoxConstraints(
+                minWidth: dense ? 28 : 32,
+                minHeight: dense ? 28 : 32,
+              ),
+              suffixIcon: _toolboxQuery.isEmpty
+                  ? null
+                  : InkWell(
+                      onTap: () {
+                        _toolboxSearchCtrl.clear();
+                        _updateToolbox(() => _toolboxQuery = '');
+                      },
+                      child: Icon(
+                        Icons.close,
+                        size: dense ? 14 : 16,
+                        color: scheme.outline,
+                      ),
+                    ),
+              suffixIconConstraints: BoxConstraints(
+                minWidth: dense ? 28 : 32,
+                minHeight: dense ? 28 : 32,
+              ),
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: dense ? 4 : 6,
+                vertical: dense ? 7 : 8,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(
+                  color: scheme.outlineVariant.withAlpha(110),
+                ),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(
+                  color: scheme.outlineVariant.withAlpha(110),
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: scheme.primary.withAlpha(160)),
+              ),
+            ),
+            onChanged: (v) => _updateToolbox(() => _toolboxQuery = v),
+          ),
+        ),
+      ],
     );
   }
 
-  /// 工具箱主体：搜索态给平铺结果，否则给「收藏 / 最近使用 / 分类」。
+  /// 当前类别内筛选并排序；收藏单独置顶，保留原有预览与拖拽行为。
   ///
   /// 桌面右面板与移动端弹层原本各写一遍同样的分类列表 —— 加一个区块就得改两处，
   /// 迟早漏。这里收成一个方法，只用 [dense] 区隔间距。
@@ -9033,6 +9186,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     ColorScheme scheme,
     AppStrings s, {
     required bool dense,
+    Offset? atCanvas,
   }) {
     final gap = dense ? 4.0 : 6.0;
     final sectionGap = dense ? 8.0 : 10.0;
@@ -9059,122 +9213,90 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       return Wrap(spacing: gap, runSpacing: gap, children: items);
     }
 
-    final hits = _toolboxSearchHits(_toolboxQuery, s);
-    if (_toolboxQuery.trim().isNotEmpty) {
-      if (hits.isEmpty) {
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 18),
-          child: Center(
-            child: Text(
-              s.isZh
-                  ? '没有匹配「${_toolboxQuery.trim()}」的元素'
-                  : 'No element matches “${_toolboxQuery.trim()}”',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11, color: scheme.outline),
-            ),
+    final hits = _toolboxSearchHits(_toolboxQuery);
+    final favourites = hits.where((type) => _isFavoriteType(type)).toList();
+    final others = hits.where((type) => !_isFavoriteType(type)).toList();
+    final query = _toolboxQuery.trim().toLowerCase();
+    final showLogic = _toolboxCategory == NodePickerCategory.control;
+    final logicTypes =
+        [
+          for (final type in LogicBlockType.values)
+            if (query.isEmpty ||
+                '${logicBlockTypeLabel(type, true)} ${logicBlockTypeLabel(type, false)} ${type.name}'
+                    .toLowerCase()
+                    .contains(query))
+              type,
+        ]..sort(
+          (a, b) => compareNodePickerEntries(
+            logicBlockTypeLabel(a, false), logicBlockTypeLabel(b, false),
+            keyA: nodePickerBlockUsageKey(a.name), keyB: nodePickerBlockUsageKey(b.name),
+            sort: _toolboxSort, usageCounts: _nodePickerUsage,
           ),
         );
-      }
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _categoryLabel(
-            scheme,
-            Icons.search,
-            s.isZh ? '搜索结果 · ${hits.length}' : '${hits.length} result(s)',
-          ),
-          SizedBox(height: gap),
-          arrangeItems([for (final t in hits) _buildToolboxItem(t, scheme, s)]),
-        ],
+    final gates = [
+      for (final gate in LogicGateType.values)
+        if (query.isEmpty ||
+            '${gate.name} ${gate.symbol(true)} ${gate.symbol(false)}'
+                .toLowerCase()
+                .contains(query))
+          gate,
+    ]..sort((a, b) => compareNodePickerEntries(
+      a.name, b.name,
+      keyA: nodePickerGateUsageKey(a.name), keyB: nodePickerGateUsageKey(b.name),
+      sort: _toolboxSort, usageCounts: _nodePickerUsage,
+    ));
+    final hasLogic = showLogic && (logicTypes.isNotEmpty || gates.isNotEmpty);
+    if (hits.isEmpty && !hasLogic) {
+      return Padding(
+        key: const ValueKey('node-picker-empty'),
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        child: Text(
+          s.isZh ? '此类型中没有匹配的元素' : 'No matching elements in this category',
+          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+        ),
       );
     }
-
-    // 「显示可用」：avail == null 表示不过滤。
-    final Set<PipelineStepType>? avail = _showOnlyAvailable
-        ? _availableTypes()
-        : null;
-    bool vis(PipelineStepType t) => avail == null || avail.contains(t);
-
-    /// 一个分类区块：标题 + 芯片换行排。整组被过滤空后连标题一起不渲染，
-    /// 不会留下一排孤零零的分类标题。
-    List<Widget> section(
-      IconData icon,
-      String label,
-      List<PipelineStepType> types,
-    ) {
-      final shown = types.where(vis).toList();
-      if (shown.isEmpty) return const <Widget>[];
-      return [
-        _categoryLabel(scheme, icon, label),
-        SizedBox(height: gap),
-        arrangeItems([for (final t in shown) _buildToolboxItem(t, scheme, s)]),
-        SizedBox(height: sectionGap),
-      ];
-    }
-
-    final favs = _typesFromNames(
-      state.config.favoriteNodeTypes,
-    ).where(vis).toList();
-    // 已经置顶在「收藏」里的不再重复出现在「最近使用」里
-    final recents = _typesFromNames(
-      state.config.recentNodeTypes,
-    ).where((t) => !favs.contains(t)).where(vis).toList();
-
     return Column(
+      key: const ValueKey('node-picker-results'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (favs.isNotEmpty) ...[
+        if (favourites.isNotEmpty) ...[
           _categoryLabel(scheme, Icons.star, s.isZh ? '收藏' : 'Favourites'),
           SizedBox(height: gap),
-          arrangeItems([for (final t in favs) _buildToolboxItem(t, scheme, s)]),
+          arrangeItems([
+            for (final type in favourites)
+              _buildToolboxItem(type, scheme, s, atCanvas: atCanvas),
+          ]),
           SizedBox(height: sectionGap),
         ],
-        ...section(Icons.history, s.isZh ? '最近使用' : 'Recent', recents),
-        // start / output 恒定展示：它们不受媒体类型约束。
-        arrangeItems([
-          _buildToolboxItem(PipelineStepType.start, scheme, s),
-          _buildToolboxItem(PipelineStepType.output, scheme, s),
-        ]),
-        SizedBox(height: sectionGap),
-        ...section(
-          Icons.category_outlined,
-          s.isZh ? '通用' : 'General',
-          _genericTypes,
-        ),
-        ...section(
-          Icons.videocam_outlined,
-          s.isZh ? '视频' : 'Video',
-          _videoTypes,
-        ),
-        ...section(
-          Icons.audiotrack_outlined,
-          s.isZh ? '音频' : 'Audio',
-          _audioTypes,
-        ),
-        ...section(Icons.image_outlined, s.isZh ? '图片' : 'Image', _imageTypes),
-        _categoryLabel(
-          scheme,
-          Icons.account_tree_outlined,
-          s.isZh ? '逻辑' : 'Logic',
-        ),
-        SizedBox(height: gap),
-        arrangeItems([
-          for (final t in LogicBlockType.values)
-            _buildLogicToolboxItem(t, scheme, s),
-        ]),
-        // 逻辑门分组：符号小、数量多，间距再紧一档
-        SizedBox(height: gap),
-        arrangeItems([
-          for (final g in LogicGateType.values)
-            _buildGateToolboxItem(g, scheme, s),
-        ]),
-        if (widget.containerInfo != null) ...[
-          SizedBox(height: sectionGap),
-          ...section(
-            Icons.folder_special_outlined,
-            s.isZh ? '容器' : 'Container',
-            _containerTypes,
+        if (others.isNotEmpty) ...[
+          _categoryLabel(
+            scheme,
+            Icons.category_outlined,
+            nodePickerCategoryLabel(_toolboxCategory, isZh: s.isZh),
           ),
+          SizedBox(height: gap),
+          arrangeItems([
+            for (final type in others)
+              _buildToolboxItem(type, scheme, s, atCanvas: atCanvas),
+          ]),
+        ],
+        if (hasLogic) ...[
+          SizedBox(height: sectionGap),
+          _categoryLabel(
+            scheme,
+            Icons.account_tree_outlined,
+            s.isZh ? '逻辑' : 'Logic',
+          ),
+          SizedBox(height: gap),
+          arrangeItems([
+            for (final type in logicTypes)
+              _buildLogicToolboxItem(type, scheme, s),
+          ]),
+          SizedBox(height: gap),
+          arrangeItems([
+            for (final gate in gates) _buildGateToolboxItem(gate, scheme, s),
+          ]),
         ],
       ],
     );
@@ -9183,8 +9305,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   Widget _buildToolboxItem(
     PipelineStepType t,
     ColorScheme scheme,
-    AppStrings s,
-  ) {
+    AppStrings s, {
+    Offset? atCanvas,
+  }) {
     final dummy = PipelineNode(id: '', type: t);
     final tag = dummy.mediaTag;
     final listLayout =
@@ -9214,10 +9337,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             isFav: favorite,
             opacity: opacity,
           );
+    if (atCanvas != null) {
+      return InkWell(
+        key: ValueKey('node-picker-item-${t.name}'),
+        onTap: () {
+          _addNodeAt(t, atCanvas);
+          Navigator.pop(context);
+        },
+        onSecondaryTap: () => _toggleFavoriteType(t),
+        child: visual(favorite: _isFavoriteType(t)),
+      );
+    }
     // 移动端：工具箱是全屏弹层盖在画布上，拖拽落点被弹层拦截、竖向拖拽又被
     // 列表滚动抢走 —— 拖拽在手机上不可用。改为「点按即添加到画布中心」。
     if (isMobilePlatform) {
       return GestureDetector(
+        key: ValueKey('node-picker-item-${t.name}'),
         onTap: () => _mobileAddNode(t),
         // 长按 = 收藏 / 取消收藏。触摸设备没有右键，而「收藏」需要一个入口
         // —— 长按工具箱元素不会与点按（添加到画布）冲突。
@@ -9226,6 +9361,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       );
     }
     return Draggable<Object>(
+      key: ValueKey('node-picker-item-${t.name}'),
       data: t,
       feedback: Material(
         elevation: 6,
@@ -9366,12 +9502,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       children: [
         Icon(icon, size: 12, color: scheme.outline),
         const SizedBox(width: 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.w600,
-            color: scheme.outline,
+        Flexible(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: scheme.outline,
+            ),
           ),
         ),
       ],
@@ -9448,6 +9586,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 画布上方会出现红色提示条引导手指框选。
     if (isMobilePlatform) {
       return GestureDetector(
+        key: ValueKey('node-picker-block-${type.name}'),
         onTap: () {
           setState(() => _mobileToolboxOpen = false);
           _startLogicBoxSelect(type, s);
@@ -9456,6 +9595,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       );
     }
     return GestureDetector(
+      key: ValueKey('node-picker-block-${type.name}'),
       onTap: () {
         setState(() {
           _previewedLogicType = _previewedLogicType == type ? null : type;
@@ -9492,11 +9632,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     if (isMobilePlatform) {
       // 与 _buildToolboxItem 同理：弹层遮挡画布，拖拽不可用 → 点按即添加。
       return GestureDetector(
+        key: ValueKey('node-picker-gate-${gate.name}'),
         onTap: () => _mobileAddGate(gate),
         child: visual(),
       );
     }
     return Draggable<Object>(
+      key: ValueKey('node-picker-gate-${gate.name}'),
       data: gate,
       feedback: Material(
         elevation: 6,
@@ -9759,6 +9901,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       _pushUndo();
       setState(() => _nodes.add(node));
       _commitChange();
+      _trackUsage(stepType);
       return node.id;
     },
     addGate: (gateName, x, y) {
@@ -9774,6 +9917,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       _pushUndo();
       setState(() => _nodes.add(node));
       _commitChange();
+      _trackControlUsage(nodePickerGateUsageKey(gate.name), node.id);
       return node.id;
     },
     setGateParams: (nodeId, params) {
@@ -10167,8 +10311,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 元素工具箱的描述符列表（独立窗口按这份清单渲染芯片）。
   ///
   /// 语义与主窗口 `_buildToolbox` 一致：只在「显示可用」时过滤，收藏 / 最近 /
-  /// 输入输出 / 视频 / 音频 / 图片 / 容器的分组与顺序也一样。逻辑块与逻辑门
-  /// 刻意不列：它们的编辑器依赖画布交互（拖端口、命中测试），只能留在主窗口。
+  /// 输入输出 / 视频 / 音频 / 图片 / 容器分组同源；门使用既有新增门协议。
+  /// 逻辑块依赖主画布框选，仍保留在主窗口的控制分类内。
   List<Map<String, dynamic>> _buildToolboxDescriptors() {
     final avail = _showOnlyAvailable ? _availableTypes() : null;
     bool vis(PipelineStepType t) => avail == null || avail.contains(t);
@@ -10177,6 +10321,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       final dummy = PipelineNode(id: '', type: t);
       return <String, dynamic>{
         'id': t.name,
+        'kind': 'node',
         'label': dummy.label,
         'labelEn': dummy.labelEn,
         'tag': dummy.mediaTag,
@@ -10206,6 +10351,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     addAll(_audioTypes, 'audio');
     addAll(_imageTypes, 'image');
     if (widget.containerInfo != null) addAll(_containerTypes, 'container');
+    for (final gate in LogicGateType.values) {
+      out.add({
+        'id': gate.name,
+        'kind': 'gate',
+        'gateType': gate.name,
+        'label': gate.symbol(true),
+        'labelEn': gate.name.toUpperCase(),
+        'tag': gate.symbol(false),
+        'group': 'control',
+      });
+    }
     return out;
   }
 
@@ -10394,9 +10550,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         break;
       }
     }
-    if (type == null) return false;
+    if (type == null || type == PipelineStepType.unknown) return false;
+    final requestedId = args['nodeId'] as String?;
+    final existing = _nodes.where((node) => node.id == requestedId).firstOrNull;
+    if (existing != null) {
+      return !existing.isGate && existing.type == type ? existing.id : false;
+    }
     final node = PipelineNode(
-      id: (args['nodeId'] as String?) ?? _uuid.v4(),
+      id: requestedId ?? _uuid.v4(),
       type: type,
       x: (args['x'] as num?)?.toDouble() ?? _spawnCenter.dx,
       y: (args['y'] as num?)?.toDouble() ?? _spawnCenter.dy,
@@ -10404,6 +10565,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _pushUndo();
     setState(() => _nodes.add(node));
     _commitChange();
+    _trackUsage(type);
     return node.id;
   }
 
@@ -10412,8 +10574,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final gate = LogicGateType.values
         .asNameMap()[args['gate'] as String? ?? ''];
     if (gate == null) return false;
+    final requestedId = args['nodeId'] as String?;
+    final existing = _nodes.where((node) => node.id == requestedId).firstOrNull;
+    if (existing != null) {
+      return existing.isGate && existing.gate == gate ? existing.id : false;
+    }
     final node = PipelineNode(
-      id: (args['nodeId'] as String?) ?? _uuid.v4(),
+      id: requestedId ?? _uuid.v4(),
       type: PipelineStepType.start,
       x: (args['x'] as num?)?.toDouble() ?? _spawnCenter.dx,
       y: (args['y'] as num?)?.toDouble() ?? _spawnCenter.dy,
@@ -10422,6 +10589,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     _pushUndo();
     setState(() => _nodes.add(node));
     _commitChange();
+    _trackControlUsage(nodePickerGateUsageKey(gate.name), node.id);
     return node.id;
   }
 
@@ -13745,8 +13913,9 @@ Never delete A or B to "insert" a node.
 
 ## Media flow compatibility
 - start → (video|audio|image) → ... → output
-- Video producers/processors: avProcess, subtitle, clip, speed, videoCrop, videoFrameRate, videoDeinterlace, frame (frame outputs image)
-- Audio: audioConvert, audioQuality, audioSpeed, audioVolume, audioCompressor, audioNormalize, audioNoiseGate, audioDenoise, audioSilenceTrim, audioMetadata, extractAudio
+- Video producers/processors: avProcess, subtitle, clip, speed, videoCrop, videoFrameRate, videoDeinterlace, videoReverse, videoFade, frame (frame outputs image)
+- Audio: audioConvert, audioQuality, audioSpeed, audioVolume, audioCompressor, audioNormalize, audioNoiseGate, audioDenoise, audioSilenceTrim, audioMetadata, audioReverse, audioEqualizer, extractAudio
+- Audio → image: audioSpectrum, audioWaveform; generated PNG/JPG/WebP images can continue through image nodes.
 - Image: imageConvert, imageCompress, imageCrop, imageRotate, imageScale, imageBrightness, imageNoise, imageSharpen, imageDenoise, imageChannelExtract
 - Composite: concatMedia (same-type inputs), imageToVideo (images → video)
 - Generic (media_type required): metadataStrip (video/image/audio), mediaConvert, mediaScale, mediaCrop, mediaRotate, mediaColor, mediaSharpen, mediaOverlay
@@ -13765,6 +13934,8 @@ Video:
 - videoCrop: crop_mode (keep|remove), crop_x, crop_y, crop_w, crop_h
 - videoFrameRate: fps (1-240; converts to constant frame rate, audio copied)
 - videoDeinterlace: mode (0=frame output, 1=field output), parity (-1=auto, 0=TFF, 1=BFF)
+- videoReverse: no params; reverses video frames and any audio track, may require substantial memory
+- videoFade: fade_in (0-60 seconds, default 2), fade_out (0-60 seconds, default 2), fade_out_start (0=automatic duration-based placement; positive seconds=explicit start), video-only filter with audio preserved
 
 Audio:
 - audioConvert: audio_codec (aac|libmp3lame|libopus|libvorbis|flac|pcm_s16le), output_format (m4a|mp3|ogg|flac|wav)
@@ -13777,6 +13948,10 @@ Audio:
 - audioDenoise: noise_reduction (0.01-97 dB, default 12), noise_floor (-80 to -20 dB, default -30)
 - audioSilenceTrim: mode (both|leading|trailing), threshold_db (-60 to -20, default -40), min_duration (seconds)
 - audioMetadata: title, artist, album, cover_path, lyrics_path
+- audioSpectrum: width (integer 64-4096, default 1280), height (integer 64-4096, default 720), output_format (png|jpg|webp, default png); audio input to image output
+- audioWaveform: width (integer 64-4096, default 1280), height (integer 64-4096, default 720), output_format (png|jpg|webp, default png); audio input to image output
+- audioReverse: no params; reverses audio samples and may require substantial memory
+- audioEqualizer: bass_db, mid_db, treble_db (each -12 to 12 dB, default 0)
 - extractAudio: extract_mode (full|clip), start_time, end_time, audio_codec, output_format
 
 Image:

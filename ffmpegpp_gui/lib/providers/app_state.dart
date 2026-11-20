@@ -12,6 +12,7 @@ import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 import '../platform/app_platform.dart';
 import '../services/android_platform.dart';
+import '../services/audio_visualization.dart';
 import '../services/backend_client.dart';
 import '../services/config_service.dart';
 import '../services/ffmpeg_installer.dart';
@@ -73,7 +74,9 @@ class AppState extends ChangeNotifier {
 
   /// Looks up a library file by id.
   VideoFile? videoById(String id) {
-    final cache = _videoIndexCache ??= {for (final file in _videos) file.id: file};
+    final cache = _videoIndexCache ??= {
+      for (final file in _videos) file.id: file,
+    };
     return cache[id];
   }
 
@@ -1609,6 +1612,9 @@ class AppState extends ChangeNotifier {
     _tasksNotify();
   }
 
+  @visibleForTesting
+  void addGraphTasksForTest(VideoFile video) => _addTasksFromGraph(video);
+
   void _addTasksFromGraph(VideoFile video) {
     // 入队前必须做完整的图校验：环路、媒体类型匹配、悬空节点、裁剪参数、
     // 并行冲突等。此前校验只在若干 UI 入口触发，程序化入队（AI 生成图 /
@@ -1667,7 +1673,26 @@ class AppState extends ChangeNotifier {
             c.action == 'extract_frames_all') {
           effectiveOutput =
               c.params['output_dir'] as String? ?? effectiveOutput;
+        } else if (c.action != '_cleanup' && c.params['output'] is String) {
+          effectiveOutput = c.params['output'] as String;
         }
+      }
+      final visualizesAudio = calls.any(
+        (call) =>
+            call.action == 'audio_spectrum' || call.action == 'audio_waveform',
+      );
+      if (visualizesAudio) {
+        final reserved = AudioVisualization.uniqueOutput(
+          effectiveOutput,
+          _tasks.map((task) => task.outputPath),
+        );
+        final last = calls.lastWhere((call) => call.action != '_cleanup');
+        if (last.params['output'] is String) {
+          last.params['output'] = reserved;
+        } else if (last.params['output_dir'] is String) {
+          last.params['output_dir'] = reserved;
+        }
+        effectiveOutput = reserved;
       }
       final label = plans.length > 1
           ? '${video.filename} [任务${i + 1}]'
@@ -1827,6 +1852,7 @@ class AppState extends ChangeNotifier {
           status: TaskStatus.failed,
           error: '$error',
         );
+        onTaskFinished?.call(task.filename, TaskStatus.failed);
         _tasksNotify();
         _scheduleTaskPersist();
       }
@@ -2119,12 +2145,38 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _processPipelineTask(TaskProcessRun run, String taskId) async {
+    final task = _tasks.firstWhere((task) => task.id == taskId);
+    final protected = task.pipelineCalls!.any(
+      (call) =>
+          call.action == 'audio_spectrum' || call.action == 'audio_waveform',
+    );
+    final workspace = protected
+        ? await Directory.systemTemp.createTemp('ffmpegpp_visualization_')
+        : null;
+    try {
+      await _processPipelineTaskBody(run, taskId, workspace: workspace);
+    } finally {
+      if (workspace != null && workspace.existsSync()) {
+        workspace.deleteSync(recursive: true);
+      }
+    }
+  }
+
+  Future<void> _processPipelineTaskBody(
+    TaskProcessRun run,
+    String taskId, {
+    Directory? workspace,
+  }) async {
     final ti = _tasks.indexWhere((t) => t.id == taskId);
     if (ti < 0) return;
     final task = _tasks[ti];
     final calls = task.pipelineCalls!;
     final realCalls = calls.where((c) => c.action != '_cleanup').toList();
-    final cleanupCalls = calls.where((c) => c.action == '_cleanup').toList();
+    // Visualizer pipelines write only inside this task's private workspace.
+    // Never delete a public path merely because it appeared in a loop plan.
+    final cleanupCalls = workspace == null
+        ? calls.where((c) => c.action == '_cleanup').toList()
+        : <BackendCall>[];
 
     // Expand loop calls: duplicate entire consecutive groups of the SAME logic block
     //
@@ -2242,10 +2294,54 @@ class AppState extends ChangeNotifier {
       }
     }
     // 循环中间产物与正常临时文件一起清理（成功/失败路径都会执行 _cleanupTempFiles）
-    for (final path in loopCleanupPaths) {
+    for (final path in workspace == null ? loopCleanupPaths : <String>[]) {
       cleanupCalls.add(BackendCall(action: '_cleanup', params: {'path': path}));
     }
 
+    String? publicOutput;
+    if (workspace != null) {
+      final last = expandedCalls.last;
+      publicOutput =
+          (last.params['output'] ?? last.params['output_dir']) as String?;
+      if (publicOutput != null &&
+          (last.action == 'audio_spectrum' ||
+              last.action == 'audio_waveform')) {
+        publicOutput = AudioVisualization.withExtension(
+          publicOutput,
+          AudioVisualization.fromParams(last.params).format,
+        );
+      }
+      if (publicOutput == null) {
+        throw const FormatException('音频可视化任务需要最终文件输出');
+      }
+      if (FileSystemEntity.typeSync(publicOutput, followLinks: false) !=
+          FileSystemEntityType.notFound) {
+        throw FileSystemException('输出路径已被占用，已保留现有文件', publicOutput);
+      }
+      final staged = <String, String>{};
+      for (final call in expandedCalls) {
+        for (final field in ['output', 'output_dir']) {
+          final output = call.params[field];
+          if (output is String) {
+            staged.putIfAbsent(output, () {
+              final extension = File(
+                output,
+              ).uri.pathSegments.last.split('.').last;
+              return '${workspace.path}/step_${staged.length}.$extension';
+            });
+          }
+        }
+      }
+      for (final call in expandedCalls) {
+        for (final field in ['input', 'output', 'output_dir']) {
+          final original = call.params[field];
+          if (staged.containsKey(original)) {
+            call.params[field] = staged[original];
+          }
+        }
+        call.params['_owned_output'] = true;
+      }
+    }
     addLog('节点图任务: ${expandedCalls.length} 步', category: 'info');
 
     // 初始化每步进度追踪
@@ -2366,6 +2462,26 @@ class AppState extends ChangeNotifier {
             case 'extract_frames_range':
             case 'extract_frames_all':
               resp = await _runFrameExtraction(run, p);
+              break;
+            case 'audio_spectrum':
+            case 'audio_waveform':
+              resp = await _runAudioVisualization(
+                run,
+                taskId,
+                p,
+                waveform: call.action == 'audio_waveform',
+                callIndex: ci,
+              );
+              break;
+            case 'video_reverse':
+            case 'video_fade':
+              resp = await _runVideoNode(
+                run,
+                task.id,
+                p,
+                reverse: call.action == 'video_reverse',
+                callIndex: ci,
+              );
               break;
             case 'image_convert':
               resp = await _runImageConvert(run, p);
@@ -2553,12 +2669,26 @@ class AppState extends ChangeNotifier {
       }
     }
 
+    final finalOutput = expandedCalls.isEmpty
+        ? task.outputPath
+        : (expandedCalls.last.params['output'] ??
+                      expandedCalls.last.params['output_dir'])
+                  as String? ??
+              task.outputPath;
+    var effectiveOutput = actualOutputFor[finalOutput] ?? finalOutput;
+    if (publicOutput != null && _ownsRun(taskId, run)) {
+      effectiveOutput = await AudioVisualization.publish(
+        effectiveOutput,
+        publicOutput,
+        checkCancelled: run.throwIfCancelled,
+      );
+    }
     final fi3 = _tasks.indexWhere((t) => t.id == taskId);
     if (_ownsRun(taskId, run) &&
         fi3 >= 0 &&
         !_cancelRequested &&
         _isLiveStatus(_tasks[fi3].status)) {
-      final outSize = await _measureOutputSize(task.outputPath);
+      final outSize = await _measureOutputSize(effectiveOutput);
       // [FIX 收尾下标必须在 await 之后重新解析] _measureOutputSize 是**异步**目录
       // 遍历 + 逐项 length()（帧提取可能产出上万张 PNG，耗时可达数秒）。这段窗口
       // 里用户完全可以：① removeTask / clearCompletedTasks / clearAllTasks 让列表
@@ -2580,6 +2710,7 @@ class AppState extends ChangeNotifier {
             1.0,
           ),
           outputSize: outSize,
+          outputPath: effectiveOutput,
         );
         addLog('任务完成: ${task.filename}', category: 'info');
         onTaskFinished?.call(task.filename, TaskStatus.completed);
@@ -2723,6 +2854,103 @@ class AppState extends ChangeNotifier {
     };
   }
 
+  Future<Map<String, dynamic>> _runAudioVisualization(
+    TaskProcessRun run,
+    String taskId,
+    Map<String, dynamic> params, {
+    required bool waveform,
+    int? callIndex,
+  }) async {
+    final visualization = AudioVisualization.fromParams(params);
+    final output = AudioVisualization.withExtension(
+      params['output'] as String,
+      visualization.format,
+    );
+    _ensureOutputDir(output);
+    final args = visualization.arguments(
+      input: params['input'] as String,
+      output: output,
+      waveform: waveform,
+      overwrite: params['_owned_output'] == true,
+    );
+    final label = waveform ? '音频波形图' : '音频频谱图';
+    addLog('$label: $_ffmpegBin ${args.join(' ')}', category: 'info');
+    final response = await _runFfmpegWithProgress(
+      run,
+      taskId,
+      args,
+      label,
+      callIndex: callIndex,
+    );
+    if (response['success'] == true) response['_actual_output'] = output;
+    return response;
+  }
+
+  Future<VideoTimeline> _probeVideoTimeline(
+    TaskProcessRun run,
+    String input,
+  ) async {
+    final probe = await run.run(_ffprobeBin, [
+      '-v',
+      'error',
+      '-show_streams',
+      '-show_format',
+      '-of',
+      'json',
+      input,
+    ]);
+    if (probe.exitCode != 0) throw const FormatException('无法读取视频流和音轨时序');
+    return VideoTimeline.fromProbe(
+      jsonDecode(probe.stdout as String) as Map<String, dynamic>,
+    );
+  }
+
+  Future<Map<String, dynamic>> _runVideoNode(
+    TaskProcessRun run,
+    String taskId,
+    Map<String, dynamic> params, {
+    required bool reverse,
+    int? callIndex,
+  }) async {
+    try {
+      final input = params['input'] as String;
+      final output = params['output'] as String;
+      final timeline = await _probeVideoTimeline(run, input);
+      run.throwIfCancelled();
+      final options = GraphExecutor.videoOptionsForPath(output);
+      final args = reverse
+          ? timeline.reverseArguments(
+              input: input,
+              output: output,
+              options: options,
+            )
+          : VideoTimeline.fadeArguments(
+              input: input,
+              output: output,
+              options: options,
+              sourcePixelFormat: timeline.pixelFormat,
+              filters: GraphExecutor.videoFadeFilters(
+                params,
+                duration: timeline.videoDuration,
+                startTime: timeline.videoFilterStart,
+              ),
+            );
+      _ensureOutputDir(output);
+      return await _runFfmpegWithProgress(
+        run,
+        taskId,
+        args,
+        reverse ? '视频倒放' : '视频淡入淡出',
+        totalDuration: timeline.videoDuration,
+        callIndex: callIndex,
+      );
+    } on TaskProcessCancelled {
+      rethrow;
+    } on FormatException catch (error) {
+      return {'success': false, 'error': error.message};
+    }
+  }
+
   Future<Map<String, dynamic>> _runImageConvert(
     TaskProcessRun run,
     Map<String, dynamic> p, {
@@ -2734,7 +2962,21 @@ class AppState extends ChangeNotifier {
     try {
       final outDir = File(output).parent;
       if (!outDir.existsSync()) outDir.createSync(recursive: true);
-      final args = <String>['-y', '-i', input];
+      const stillFormats = {'png', 'jpg', 'jpeg', 'webp'};
+      final inputExt = input.split('.').last.toLowerCase();
+      final outputExt = output.split('.').last.toLowerCase();
+      final args = <String>[
+        '-y',
+        // Names inherited from an audio visualization can contain %03d.
+        // Treat a still-image path literally rather than as a frame sequence.
+        if (stillFormats.contains(inputExt) && input.contains('%')) ...[
+          '-f',
+          'image2',
+          '-pattern_type',
+          'none',
+        ],
+        '-i', input,
+      ];
       if (output.endsWith('.ico')) {
         args.addAll([
           '-vf',
@@ -2752,6 +2994,9 @@ class AppState extends ChangeNotifier {
         // WebP(libwebp) 的 quality 是 0–100 且「越大越好」，与 mjpeg 的 -q:v 尺度相反；
         // 原代码把 webp 混进 jpg 用 -q:v，导致 webp 质量被压到极低。这里用 -quality 直接映射。
         args.addAll(['-quality', '${quality.clamp(0, 100)}']);
+      }
+      if (stillFormats.contains(outputExt) && output.contains('%')) {
+        args.addAll(['-frames:v', '1', '-f', 'image2', '-update', '1']);
       }
       args.add(output);
       addLog('$label: $_ffmpegBin ${args.join(' ')}', category: 'info');

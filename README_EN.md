@@ -85,13 +85,23 @@ node and ends with an **Output** node; processing nodes go in between:
   filters (brightness, contrast, saturation, gamma, hue, vignette, denoise, sharpen, grayscale),
   geometry (scale / flip / rotate), overlay (watermark / logo with 5-position placement, opacity,
   scale and margin).
-- **Audio**: transcode, speed, volume, dynamic compression, fade in/out, metadata, audio extraction.
+- **Audio**: transcode, speed, volume, dynamic compression, fade in/out, metadata, audio extraction,
+  reverse, and a three-band equalizer.
 - **Image**: format conversion, crop, rotate, scale, brightness, adjust (saturation · gamma ·
   contrast), noise, sharpen, denoise, channel extraction.
 - **Pacing & trimming**: speed change, time-range clipping, single-frame / range / full frame
   extraction, interactive video crop.
 - **Combining**: concatenating multiple files, turning an image sequence into video, subtitle burn-in
   (SRT / ASS / SSA with a color picker and font selector).
+
+The **Audio Spectrum / Audio Waveform** nodes generate a single PNG, JPG, or WebP image with
+configurable dimensions. Their image outputs can continue through image processing nodes.
+**Video Reverse** reverses the source audio alongside the picture; **Video Fade** can place
+fade-out automatically from the current input duration. Reverse buffers media, so trim long files first.
+
+Select a media category before filtering the node list, then sort by English name (A–Z) or usage.
+Successful node additions update local usage counts. Reset them in Settings → Node usage;
+favorites are preserved.
 
 ### Step 2 — Connect them into a graph
 
