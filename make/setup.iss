@@ -1,19 +1,19 @@
 ; ============================================================
-; FFmpeg++ v6.0.0-beta1 Inno Setup Installer Script
-; Build: 2026-11-15
+; FFmpeg++ v6.0.0-beta2 Inno Setup Installer Script
+; Build: 2026-11-20
 ; ============================================================
 ; 使用方法:
 ;   1. 确保 build/ 文件夹已准备好 (flutter build + ffmpegpp.dll)
 ;   2. Inno Setup Compiler → File → Open → 选此文件 → Build → Compile
 ;   3. 或命令行: iscc setup.iss
-;   4. 输出: dist\FFmpeg++_v6.0.0-beta1_setup.exe
+;   4. 输出: dist\FFmpeg++_v6.0.0-beta2_setup.exe
 ; ============================================================
 
 #define MyAppName "FFmpeg++"
-#define MyAppVersion "6.0.0-beta1"
+#define MyAppVersion "6.0.0-beta2"
 ; 纯数字版本号（Windows 版本资源要求 x.x.x.x，不能包含 beta 等字符）。
 ; 从 MyAppVersion 派生（单一版本源）：去掉 '-' 之后的预发布后缀，再补第四段 0：
-;   6.0.0-beta1 → 6.0.0.0；6.1.0 → 6.1.0.0。
+;   6.0.0-beta2 → 6.0.0.0；6.1.0 → 6.1.0.0。
 ; 注意 MyAppVersion 须保持 x.y.z[-tag] 三段数字形式，否则派生值非法。
 #define _MyAppVersionPrePos Pos('-', MyAppVersion)
 #define _MyAppVersionBase (_MyAppVersionPrePos = 0 ? MyAppVersion : Copy(MyAppVersion, 1, _MyAppVersionPrePos - 1))

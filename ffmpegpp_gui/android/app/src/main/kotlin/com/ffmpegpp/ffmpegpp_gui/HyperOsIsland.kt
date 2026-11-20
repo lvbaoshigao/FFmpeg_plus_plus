@@ -28,7 +28,7 @@ import android.provider.Settings
  *     1=OS1 / 2=OS2 / 3=OS3（只有 OS3 有岛）
  *  3. `content://miui.statusbar.notification.public` —— 应用是否被允许发焦点通知
  *
- * ## 2026-11-15 重写要点（「完全没有通知 / 岛上什么都没有」的根因）
+ * ## 2026-11-20 重写要点（「完全没有通知 / 岛上什么都没有」的根因）
  *
  * 1. **通道改为启动时预注册**（[ensureChannels]）：之前只在第一次发通知时才
  *    `createNotificationChannel`。这种「运行中新建的通道」在部分 ROM 上会被静默

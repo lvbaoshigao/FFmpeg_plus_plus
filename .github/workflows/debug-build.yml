@@ -25,9 +25,9 @@ on:
           - macos
           - android
       version:
-        description: '版本标签（仅用于产物命名，如 6.0.0-beta1）'
+        description: '版本标签（仅用于产物命名，如 6.0.0-beta2）'
         required: false
-        default: '6.0.0-beta1'
+        default: '6.0.0-beta2'
         type: string
       ref:
         description: '要检出的 git 分支或 tag（默认 main）'
@@ -214,7 +214,7 @@ jobs:
       - name: Build .deb package
         run: |
           mkdir -p deb/DEBIAN deb/opt/ffmpegpp deb/usr/bin deb/usr/share/applications deb/usr/share/icons/hicolor/256x256/apps
-          # heredoc 必须无引号，${VER} 才会展开；此处原先写死 6.0.0-beta1，
+          # heredoc 必须无引号，${VER} 才会展开；此处原先写死 6.0.0-beta2，
           # 传 version=5.31.0 时会出现「文件名 5.31、包内 Version 5.30」。
           cat > deb/DEBIAN/control << EOF
           Package: ffmpegpp
@@ -365,7 +365,7 @@ jobs:
       - name: Build .deb package
         run: |
           mkdir -p deb/DEBIAN deb/opt/ffmpegpp deb/usr/bin deb/usr/share/applications deb/usr/share/icons/hicolor/256x256/apps
-          # heredoc 必须无引号，${VER} 才会展开；此处原先写死 6.0.0-beta1，
+          # heredoc 必须无引号，${VER} 才会展开；此处原先写死 6.0.0-beta2，
           # 传 version=5.31.0 时会出现「文件名 5.31、包内 Version 5.30」。
           cat > deb/DEBIAN/control << EOF
           Package: ffmpegpp

@@ -60,7 +60,7 @@ jobs:
 
       - name: Static analysis
         # 底线是 error 必须为 0 —— 这正是「调用点存在、方法定义被静默丢失」
-        # 与「漏 import 导致类型未定义」这类问题的拦截线（2026-11-15 实测：
+        # 与「漏 import 导致类型未定义」这类问题的拦截线（2026-11-20 实测：
         # pipeline_editor_page.dart 缺 foundation 导入使 ValueListenable 未定义，
         # 4 个测试文件连编译都过不去，而任何 make 工作流都不会发现）。
         #

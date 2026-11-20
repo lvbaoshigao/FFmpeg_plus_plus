@@ -4,7 +4,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 
-const _currentVersion = '6.0.0-beta1';
+const _currentVersion = '6.0.0-beta2';
 
 const _lanzouUrls = {
   'windows': 'https://wwbrq.lanzouv.com/b002w12goj',
@@ -33,7 +33,8 @@ String _dataDir() {
   if (Platform.isMacOS) {
     return '${Platform.environment['HOME'] ?? '/tmp'}/Library/Application Support/FFmpeg++';
   }
-  final base = Platform.environment['XDG_DATA_HOME'] ??
+  final base =
+      Platform.environment['XDG_DATA_HOME'] ??
       '${Platform.environment['HOME'] ?? '/tmp'}$_s.local${_s}share';
   return '$base${_s}FFmpeg++';
 }
@@ -48,11 +49,23 @@ class UpdateResult {
   final String? error;
   final bool releaseNotesError;
   final UpdateSource source;
+
   /// 安装包的期望 SHA-256（取自 release 资产里的 `<asset>.sha256`）。
   /// 为空表示发布方未提供校验文件，此时无法校验完整性（H-4）。
   final String? downloadSha256;
-  UpdateResult({this.remoteVersion, this.releaseNotes, this.downloadUrl, this.password, this.error, this.releaseNotesError = false, this.source = UpdateSource.github, this.downloadSha256});
-  bool get hasUpdate => remoteVersion != null && compareVersions(remoteVersion!, _currentVersion) > 0;
+  UpdateResult({
+    this.remoteVersion,
+    this.releaseNotes,
+    this.downloadUrl,
+    this.password,
+    this.error,
+    this.releaseNotesError = false,
+    this.source = UpdateSource.github,
+    this.downloadSha256,
+  });
+  bool get hasUpdate =>
+      remoteVersion != null &&
+      compareVersions(remoteVersion!, _currentVersion) > 0;
 }
 
 /// 下载结果。
@@ -90,7 +103,7 @@ class DownloadResult {
 enum UpdateSource { lanzou, github }
 
 int compareVersions(String a, String b) {
-  // [FIX M-3] 前缀剥离改为大小写不敏感：'V6.0.0-beta1' 的大写 V 也要剥掉，
+  // [FIX M-3] 前缀剥离改为大小写不敏感：'V6.0.0-beta2' 的大写 V 也要剥掉，
   // 否则 'V5' 被 int.tryParse 抹平成 0，大版本号被错误拉低。
   final (na, pa) = _parseVersionParts(a.replaceFirst(RegExp(r'^[vV]'), ''));
   final (nb, pb) = _parseVersionParts(b.replaceFirst(RegExp(r'^[vV]'), ''));
@@ -184,17 +197,29 @@ Future<UpdateResult> _checkLanzou() async {
     final key = _platformKey();
     final url = _lanzouUrls[key];
     // 该平台（如 Intel Mac）尚未提供更新包时给出明确提示，而不是回退到 windows 包
-    if (url == null) return UpdateResult(error: '该平台暂未提供更新包', source: UpdateSource.lanzou);
-    final resp = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
-    final match = RegExp(r'<span id="filename">([^<]+)</span>').firstMatch(resp.body);
-    if (match == null) return UpdateResult(error: 'parse_failed', source: UpdateSource.lanzou);
+    if (url == null)
+      return UpdateResult(error: '该平台暂未提供更新包', source: UpdateSource.lanzou);
+    final resp = await http
+        .get(Uri.parse(url))
+        .timeout(const Duration(seconds: 10));
+    final match = RegExp(
+      r'<span id="filename">([^<]+)</span>',
+    ).firstMatch(resp.body);
+    if (match == null)
+      return UpdateResult(error: 'parse_failed', source: UpdateSource.lanzou);
     final raw = match.group(1)!.trim();
     // [FIX M-4] 正则失败时不要用文件名原文当版本号（否则几乎必然误报有新版本），
     // 置为 null：hasUpdate 在 remoteVersion 为 null 时显式视为「无更新」。
-    final version = RegExp(r'(\d+(?:\.\d+){1,3}(?:-[a-zA-Z]+\d*)?)')
-        .firstMatch(raw)?.group(1);
+    final version = RegExp(
+      r'(\d+(?:\.\d+){1,3}(?:-[a-zA-Z]+\d*)?)',
+    ).firstMatch(raw)?.group(1);
     final password = _lanzouPasswords[key];
-    return UpdateResult(remoteVersion: version, downloadUrl: url, password: password, source: UpdateSource.lanzou);
+    return UpdateResult(
+      remoteVersion: version,
+      downloadUrl: url,
+      password: password,
+      source: UpdateSource.lanzou,
+    );
   } catch (e) {
     return UpdateResult(error: e.toString(), source: UpdateSource.lanzou);
   }
@@ -202,11 +227,19 @@ Future<UpdateResult> _checkLanzou() async {
 
 Future<UpdateResult> _checkGithub() async {
   try {
-    final resp = await http.get(
-      Uri.parse('https://api.github.com/repos/$_githubRepo/releases/latest'),
-      headers: {'Accept': 'application/vnd.github.v3+json'},
-    ).timeout(const Duration(seconds: 15));
-    if (resp.statusCode != 200) return UpdateResult(error: 'http_${resp.statusCode}', source: UpdateSource.github);
+    final resp = await http
+        .get(
+          Uri.parse(
+            'https://api.github.com/repos/$_githubRepo/releases/latest',
+          ),
+          headers: {'Accept': 'application/vnd.github.v3+json'},
+        )
+        .timeout(const Duration(seconds: 15));
+    if (resp.statusCode != 200)
+      return UpdateResult(
+        error: 'http_${resp.statusCode}',
+        source: UpdateSource.github,
+      );
     final json = jsonDecode(resp.body) as Map<String, dynamic>;
     final tagName = (json['tag_name'] as String?) ?? '';
     final body = (json['body'] as String?) ?? '';
@@ -281,7 +314,10 @@ String _assetSuffix() {
 bool _isArm64() {
   // 缓存结果，避免每次检查更新时阻塞 UI 线程
   if (_arm64Cache != null) return _arm64Cache!;
-  if (Platform.isWindows) { _arm64Cache = false; return false; }
+  if (Platform.isWindows) {
+    _arm64Cache = false;
+    return false;
+  }
   try {
     final result = Process.runSync('uname', ['-m']);
     final arch = result.stdout.toString().trim();
@@ -291,6 +327,7 @@ bool _isArm64() {
   }
   return _arm64Cache!;
 }
+
 bool? _arm64Cache;
 
 /// [FIX M-5] 净化下载文件名，避免 Windows 保留名 / 结尾点空格 / 非法字符
@@ -300,8 +337,11 @@ bool? _arm64Cache;
 /// - 基名（不含扩展名）命中保留名（CON/PRN/AUX/NUL/COM1-9/LPT1-9）时加前缀 '_'。
 /// 正常文件名原样保留；空 / 路径段（含 '/' '\' / '.' '..'）退回到固定名。
 String _safeDownloadName(String rawName) {
-  if (rawName.isEmpty || rawName == '.' || rawName == '..' ||
-      rawName.contains('/') || rawName.contains(r'\')) {
+  if (rawName.isEmpty ||
+      rawName == '.' ||
+      rawName == '..' ||
+      rawName.contains('/') ||
+      rawName.contains(r'\')) {
     return 'update.download';
   }
   var name = rawName.replaceAll(RegExp(r'[. ]+$'), '');
@@ -322,7 +362,8 @@ String _safeDownloadName(String rawName) {
 ///
 /// 需要「是否做过完整性校验」的调用方请用 [downloadUpdateWithResult]；
 /// 本函数等价于取 `.path`，校验失败同样抛异常。
-Future<String> downloadUpdate(String url, {
+Future<String> downloadUpdate(
+  String url, {
   void Function(int received, int total)? onProgress,
   String? expectedSha256,
 }) async {
@@ -347,7 +388,8 @@ Future<String> downloadUpdate(String url, {
 ///   由 UI 提示用户，而不是让用户以为已经校验过。
 /// - 服务端没返回 Content-Length（total == -1）时无法校验长度：记录告警后
 ///   按实际收到的字节继续（不直接失败），由 SHA-256 或基础校验兜底。
-Future<DownloadResult> downloadUpdateWithResult(String url, {
+Future<DownloadResult> downloadUpdateWithResult(
+  String url, {
   void Function(int received, int total)? onProgress,
   String? expectedSha256,
 }) async {
@@ -388,10 +430,7 @@ Future<DownloadResult> downloadUpdateWithResult(String url, {
     // contentLength 为 -1 表示服务端没给长度（chunked 传输），此时无法用
     // 「收到字节数 == 声明长度」判断完整性：只记录告警，不中断下载。
     if (total < 0) {
-      _warn(
-        warnings,
-        '服务端未返回 Content-Length，无法校验下载长度（已按实际收到的字节数继续）',
-      );
+      _warn(warnings, '服务端未返回 Content-Length，无法校验下载长度（已按实际收到的字节数继续）');
     }
     sink = file.openWrite();
     await for (final chunk in response) {
@@ -419,15 +458,20 @@ Future<DownloadResult> downloadUpdateWithResult(String url, {
       // 没有发布方哈希时的兜底：至少确认这是「给本平台的、非空的安装包」，
       // 而不是 404 错误页、其他平台的包或 0 字节的半截文件。
       _checkBasicPackage(bytes: received, fileName: fileName);
-      _warn(
-        warnings,
-        '发布方未提供 SHA-256，仅完成基础校验（非空 + 扩展名/平台匹配），未做完整性强校验',
-      );
+      _warn(warnings, '发布方未提供 SHA-256，仅完成基础校验（非空 + 扩展名/平台匹配），未做完整性强校验');
     }
   } catch (_) {
     // 失败时清掉半截文件，避免下次被误当成有效安装包执行
-    if (sink != null) { try { await sink.close(); } catch (_) {} }
-    if (file.existsSync()) { try { file.deleteSync(); } catch (_) {} }
+    if (sink != null) {
+      try {
+        await sink.close();
+      } catch (_) {}
+    }
+    if (file.existsSync()) {
+      try {
+        file.deleteSync();
+      } catch (_) {}
+    }
     rethrow;
   } finally {
     client.close();
@@ -497,7 +541,8 @@ Future<void> installAndRestart(String filePath) async {
     await Process.start('bash', [
       '-c',
       'sleep 1 && pkexec dpkg -i "\$0" ; nohup "\$1" &>/dev/null &',
-      filePath, exe,
+      filePath,
+      exe,
     ], mode: ProcessStartMode.detached);
     await Future.delayed(const Duration(milliseconds: 500));
     exit(0);
