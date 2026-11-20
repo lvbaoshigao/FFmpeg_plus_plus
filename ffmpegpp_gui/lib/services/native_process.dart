@@ -16,7 +16,11 @@ class NativeProcessManager {
 
   // DLL 模式
   NativeBridge? _bridge;
+  static const _activePollMs = 16;
+  static const _maxIdlePollMs = 250;
+  static const _pollBurstLimit = 100;
   Timer? _pollTimer;
+  int _pollDelayMs = _activePollMs;
 
   final _responseController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -83,18 +87,46 @@ class NativeProcessManager {
     }
   }
 
+  void _schedulePoll() {
+    _pollTimer = Timer(Duration(milliseconds: _pollDelayMs), _poll);
+  }
+
   void _startPolling() {
-    _pollTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
-      // [FIX M-2] 析构后不再轮询，避免回调对已关闭的 Controller 调 add
-      if (_disposed || _bridge == null) return;
-      int count = 0;
-      while (count < 100) {
-        final line = _bridge!.poll();
+    // Do not postpone a fast poll when several requests arrive together.
+    if (_pollTimer != null && _pollDelayMs == _activePollMs) return;
+    _pollTimer?.cancel();
+    _pollDelayMs = _activePollMs;
+    _schedulePoll();
+  }
+
+  void _poll() {
+    _pollTimer = null;
+    final bridge = _bridge;
+    if (_disposed || bridge == null) return;
+
+    var count = 0;
+    try {
+      while (count < _pollBurstLimit) {
+        final line = bridge.poll();
         if (line == null) break;
         _handleLine(line.trim());
         count++;
       }
-    });
+    } finally {
+      if (!_disposed && identical(_bridge, bridge)) {
+        if (count > 0 ||
+            _pendingCompleters.isNotEmpty ||
+            _readyCompleter?.isCompleted == false) {
+          _pollDelayMs = _activePollMs;
+        } else {
+          _pollDelayMs = (_pollDelayMs * 2).clamp(
+            _activePollMs,
+            _maxIdlePollMs,
+          );
+        }
+        _schedulePoll();
+      }
+    }
   }
 
   void _handleLine(String line) {
@@ -140,6 +172,7 @@ class NativeProcessManager {
       // remove their pending completer before returning a failure immediately.
       throw StateError('后端拒绝请求 (code=$result)');
     }
+    _startPolling();
   }
 
   Future<Map<String, dynamic>> request(
@@ -277,9 +310,19 @@ class NativeProcessManager {
     });
   }
 
-  Future<void> shutdown() async {
+  void _stopPolling(String error) {
     _pollTimer?.cancel();
     _pollTimer = null;
+    final ready = _readyCompleter;
+    if (ready != null && !ready.isCompleted) {
+      final failure = <String, dynamic>{'type': 'error', 'error': error};
+      _cachedReady = failure;
+      ready.complete(failure);
+    }
+  }
+
+  Future<void> shutdown() async {
+    _stopPolling('后端已关闭');
     if (_bridge != null) {
       try {
         _bridge!.shutdown();
@@ -294,8 +337,7 @@ class NativeProcessManager {
     // shutdown（dispose 同步），但各 add 点已被 _disposed / isClosed 守卫，
     // 末尾到达的 poll 回调不会再对已关闭的 Controller 调 add 而抛 StateError。
     _disposed = true;
-    _pollTimer?.cancel();
-    _pollTimer = null;
+    _stopPolling('后端已销毁');
     _failAllPending('后端已销毁');
     if (_bridge != null) {
       try {

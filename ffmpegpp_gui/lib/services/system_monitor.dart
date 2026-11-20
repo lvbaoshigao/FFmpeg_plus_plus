@@ -16,36 +16,66 @@ class SystemMonitor {
   String gpuName = '';
   double gpuPercent = 0;
 
+  /// Creates a monitor. An alternate native reader allows deterministic sampling.
+  SystemMonitor({Future<Map<String, dynamic>?> Function()? readNativeStats})
+    : _readNativeStats = readNativeStats ??
+          (Platform.isAndroid ? AndroidPlatformBridge.systemStats : null);
+
+  final Future<Map<String, dynamic>?> Function()? _readNativeStats;
+  final _warmUpTimers = <Timer>[];
   Timer? _timer;
+  int _generation = 0;
   bool _gpuNameCached = false;
-  bool _busy = false;  // 防止 2s 周期内前一轮未完成时重叠执行
+  bool _busy = false;
 
   // Linux CPU 上一次采样值
   int _prevCpuTotal = 0;
   int _prevCpuIdle = 0;
 
+  /// Starts one sampler, including the short CPU baseline warm-up.
   void start() {
-    _tick();
-    // 首次采样只建立了 baseline（prev 值），CPU 百分比从第二次采样才有意义。
-    // 立即再采一次，让 UI 首次渲染就能看到真实数值。
-    Future.delayed(const Duration(milliseconds: 120), () => _tick());
-    Future.delayed(const Duration(milliseconds: 400), () => _tick());
-    _timer = Timer.periodic(const Duration(seconds: 2), (_) => _tick());
+    if (_timer != null) return;
+    final generation = ++_generation;
+    // Do not average CPU usage over the time the monitor was hidden.
+    _prevCpuTotal = _prevCpuIdle = _wPrevTotal = _wPrevIdle = 0;
+    _timer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(_tick(generation)),
+    );
+    for (final delay in const [120, 400]) {
+      _warmUpTimers.add(Timer(
+        Duration(milliseconds: delay),
+        () => unawaited(_tick(generation)),
+      ));
+    }
+    unawaited(_tick(generation));
   }
 
+  /// Cancels scheduled samples and invalidates any in-flight read.
   void stop() {
     _timer?.cancel();
     _timer = null;
+    for (final timer in _warmUpTimers) {
+      timer.cancel();
+    }
+    _warmUpTimers.clear();
   }
 
-  Future<void> _tick() async {
-    if (_busy) return;
+  bool _isCurrent(int generation) =>
+      _timer != null && generation == _generation;
+
+  Future<void> _tick(int generation) async {
+    if (!_isCurrent(generation) || _busy) return;
     _busy = true;
     try {
-      if (Platform.isAndroid) {
-        await _updateAndroid();
+      final readNativeStats = _readNativeStats;
+      if (readNativeStats != null) {
+        await _updateAndroid(generation, readNativeStats);
       } else {
-        await Future.wait([_updateCpuRam(), _updateGpu()]);
+        await Future.wait([
+          _updateCpuRam(generation),
+          _updateGpu(generation),
+        ]);
       }
     } finally {
       _busy = false;
@@ -57,10 +87,14 @@ class SystemMonitor {
   ///   部分 ROM 上会被 SELinux 拦截）；
   /// - CPU 走原生侧 /proc/stat 差值，GPU 走 sysfs 探测 + EGL 读型号；
   /// - 通道不可用（如热重载后旧进程）时回退到 /proc 读取，能读到什么算什么。
-  Future<void> _updateAndroid() async {
-    final stats = await AndroidPlatformBridge.systemStats();
+  Future<void> _updateAndroid(
+    int generation,
+    Future<Map<String, dynamic>?> Function() readStats,
+  ) async {
+    final stats = await readStats();
+    if (!_isCurrent(generation)) return;
     if (stats == null) {
-      await _updateCpuRamLinux();
+      await _updateCpuRamLinux(generation);
       return;
     }
     cpuPercent = stats['cpuPercent'] as double;
@@ -74,25 +108,23 @@ class SystemMonitor {
     if (name.isNotEmpty) gpuName = name;
   }
 
-  Future<void> _updateCpuRam() async {
+  Future<void> _updateCpuRam(int generation) async {
     if (Platform.isWindows) {
       await _updateCpuRamWindows();
     } else if (Platform.isMacOS) {
-      await _updateCpuRamMacOS();
+      await _updateCpuRamMacOS(generation);
     } else {
-      await _updateCpuRamLinux();
+      await _updateCpuRamLinux(generation);
     }
   }
 
-  Future<void> _updateGpu() async {
-    // Android 无 nvidia-smi/lspci，每次尝试都白启动一个失败进程；直接跳过
-    if (Platform.isAndroid) return;
+  Future<void> _updateGpu(int generation) async {
     if (Platform.isWindows) {
-      await _updateGpuWindows();
+      await _updateGpuWindows(generation);
     } else if (Platform.isMacOS) {
-      await _updateGpuMacOS();
+      await _updateGpuMacOS(generation);
     } else {
-      await _updateGpuLinux();
+      await _updateGpuLinux(generation);
     }
   }
 
@@ -170,11 +202,12 @@ class SystemMonitor {
 
   bool _gpuQueryUnavailable = false;
 
-  Future<void> _updateGpuWindows() async {
+  Future<void> _updateGpuWindows(int generation) async {
     // GPU 型号：仅首次查询一次（GpuInfo 内部：nvidia-smi 优先，失败走一次
     // CIM；结果全局缓存，启动时的低配检测与这里共用同一次探测）
     if (!_gpuNameCached) {
       final name = await GpuInfo.detectName();
+      if (!_isCurrent(generation)) return;
       if (name != null && name.isNotEmpty) {
         gpuName = name;
         _gpuNameCached = true;
@@ -187,6 +220,7 @@ class SystemMonitor {
     try {
       final result = await Process.run('nvidia-smi',
           ['--query-gpu=utilization.gpu', '--format=csv,noheader,nounits']);
+      if (!_isCurrent(generation)) return;
       if (result.exitCode == 0) {
         gpuPercent =
             double.tryParse(result.stdout.toString().trim().split('\n').first) ??
@@ -197,6 +231,7 @@ class SystemMonitor {
         gpuPercent = -1;
       }
     } catch (_) {
+      if (!_isCurrent(generation)) return;
       _gpuQueryUnavailable = true;
       gpuPercent = -1;
     }
@@ -204,17 +239,18 @@ class SystemMonitor {
 
   // ── Linux ──
 
-  Future<void> _updateCpuRamLinux() async {
+  Future<void> _updateCpuRamLinux(int generation) async {
     // CPU 与内存独立容错：部分 Android ROM 用 SELinux 拦截 /proc/stat，
     // 不能让 CPU 读取失败把本可正常读取的 /proc/meminfo 也拖成 -1。
-    await _readCpuLinux();
-    await _readRamLinux();
+    await _readCpuLinux(generation);
+    if (_isCurrent(generation)) await _readRamLinux(generation);
   }
 
-  Future<void> _readCpuLinux() async {
+  Future<void> _readCpuLinux(int generation) async {
     try {
       // CPU: 解析 /proc/stat
       final statContent = await File('/proc/stat').readAsString();
+      if (!_isCurrent(generation)) return;
       final cpuLine = statContent.split('\n').firstWhere((l) => l.startsWith('cpu '), orElse: () => '');
       if (cpuLine.isNotEmpty) {
         final parts = cpuLine.split(RegExp(r'\s+')).skip(1).map((s) => int.tryParse(s) ?? 0).toList();
@@ -233,14 +269,15 @@ class SystemMonitor {
     } catch (_) {
       // 读取失败（Android 上 /proc/stat 可能被 SELinux 拦截）：
       // 标记 -1，UI 显示 "--" 而非误导性的 0%。
-      cpuPercent = -1;
+      if (_isCurrent(generation)) cpuPercent = -1;
     }
   }
 
-  Future<void> _readRamLinux() async {
+  Future<void> _readRamLinux(int generation) async {
     try {
       // 内存: 解析 /proc/meminfo
       final memContent = await File('/proc/meminfo').readAsString();
+      if (!_isCurrent(generation)) return;
       double totalKB = 0, availKB = 0;
       for (final line in memContent.split('\n')) {
         if (line.startsWith('MemTotal:')) {
@@ -260,18 +297,20 @@ class SystemMonitor {
         ramUsedGb = -1;
       }
     } catch (_) {
+      if (!_isCurrent(generation)) return;
       ramTotalGb = -1;
       ramUsedGb = -1;
     }
   }
 
-  Future<void> _updateGpuLinux() async {
+  Future<void> _updateGpuLinux(int generation) async {
     try {
       // 尝试 nvidia-smi
       final result = await Process.run('nvidia-smi', [
         '--query-gpu=utilization.gpu,name',
         '--format=csv,noheader,nounits',
       ]);
+      if (!_isCurrent(generation)) return;
       if (result.exitCode == 0) {
         final line = result.stdout.toString().trim().split('\n').first;
         final parts = line.split(',').map((s) => s.trim()).toList();
@@ -287,9 +326,10 @@ class SystemMonitor {
     } catch (_) {}
 
     // nvidia-smi 不可用时，尝试读取 sysfs
-    if (!_gpuNameCached) {
+    if (_isCurrent(generation) && !_gpuNameCached) {
       try {
         final result = await Process.run('lspci', []);
+        if (!_isCurrent(generation)) return;
         if (result.exitCode == 0) {
           for (final line in result.stdout.toString().split('\n')) {
             if (line.contains('VGA') || line.contains('3D controller')) {
@@ -305,9 +345,10 @@ class SystemMonitor {
 
   // ── macOS ──
 
-  Future<void> _updateCpuRamMacOS() async {
+  Future<void> _updateCpuRamMacOS(int generation) async {
     try {
       final result = await Process.run('top', ['-l', '1', '-n', '0', '-s', '0']);
+      if (!_isCurrent(generation)) return;
       if (result.exitCode == 0) {
         final output = result.stdout.toString();
         // CPU usage: parse "CPU usage: X% user, Y% sys, Z% idle"
@@ -327,10 +368,11 @@ class SystemMonitor {
     } catch (_) {}
   }
 
-  Future<void> _updateGpuMacOS() async {
+  Future<void> _updateGpuMacOS(int generation) async {
     if (_gpuNameCached) return;
     try {
       final result = await Process.run('system_profiler', ['SPDisplaysDataType']);
+      if (!_isCurrent(generation)) return;
       if (result.exitCode == 0) {
         final match = RegExp(r'Chipset Model:\s*(.+)').firstMatch(result.stdout.toString());
         if (match != null) {

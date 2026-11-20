@@ -164,13 +164,8 @@ class FontPicker extends StatelessWidget {
   static List<(String, String)>? _cachedFonts;
 
   /// 正在进行中的枚举 Future。
-  /// 启动预热（preloadFonts）与「首次打开选择器」可能几乎同时触发枚举，
-  /// 共享同一个 Future 可以避免并发跑两遍 reg query / fc-list / system_profiler。
+  /// 同时打开的选择器共享枚举，避免重复的系统字体查询。
   static Future<List<(String, String)>>? _loading;
-
-  /// 启动预加载：提前枚举系统字体并缓存，避免首次打开字体选择器时卡顿。
-  /// 幂等：已缓存直接返回；枚举进行中则复用同一个 Future。
-  static Future<List<(String, String)>> preloadFonts() => _getAllFonts();
 
   static Future<List<(String, String)>> _getAllFonts() {
     final cached = _cachedFonts;

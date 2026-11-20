@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -37,23 +38,73 @@ class _QueueKey {
 }
 
 class QueuePage extends StatefulWidget {
-  const QueuePage({super.key});
+  /// Creates a queue page with an optional hardware monitor for testing.
+  const QueuePage({super.key, this.monitor});
+
+  final SystemMonitor? monitor;
+
   @override
   State<QueuePage> createState() => _QueuePageState();
 }
 
-class _QueuePageState extends State<QueuePage> {
-  final _monitor = SystemMonitor();
+class _QueuePageState extends State<QueuePage> with WidgetsBindingObserver {
+  late SystemMonitor _monitor;
+  final _monitorActive = ValueNotifier(false);
+  late AppLifecycleState? _lifecycle;
+  bool _monitorVisible = false;
 
   @override
   void initState() {
     super.initState();
-    _monitor.start();
+    _monitor = widget.monitor ?? SystemMonitor();
+    final binding = WidgetsBinding.instance;
+    _lifecycle = binding.lifecycleState;
+    binding.addObserver(this);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _monitorVisible = TickerMode.valuesOf(context).enabled &&
+        (!isMobilePlatform || MediaQuery.sizeOf(context).width >= 430);
+    _syncMonitor();
+  }
+
+  @override
+  void didUpdateWidget(covariant QueuePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(widget.monitor, oldWidget.monitor)) return;
+    _monitor.stop();
+    _monitor = widget.monitor ?? SystemMonitor();
+    if (_monitorActive.value) _monitor.start();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lifecycle = state;
+    _syncMonitor();
+  }
+
+  void _syncMonitor() {
+    // Inactive desktop windows can still be visible beside another window.
+    final visible = _monitorVisible &&
+        (_lifecycle == null ||
+            _lifecycle == AppLifecycleState.resumed ||
+            _lifecycle == AppLifecycleState.inactive);
+    if (visible == _monitorActive.value) return;
+    if (visible) {
+      _monitor.start();
+    } else {
+      _monitor.stop();
+    }
+    _monitorActive.value = visible;
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _monitor.stop();
+    _monitorActive.dispose();
     super.dispose();
   }
 
@@ -233,9 +284,11 @@ class _QueuePageState extends State<QueuePage> {
     return card;
   }
 
-  Widget _monitorBar(ColorScheme scheme, AppState state) {
-    return _MonitorWidget(monitor: _monitor, scheme: scheme);
-  }
+  Widget _monitorBar(ColorScheme scheme) => _MonitorWidget(
+    monitor: _monitor,
+    active: _monitorActive,
+    scheme: scheme,
+  );
 
   /// 顶栏操作按钮 + 资源占用（桌面端与移动端共用同一份逻辑）。
   /// 按钮文字统一单行省略：顶栏高度固定，字号调大时折行会把整条顶栏撑高
@@ -317,7 +370,7 @@ class _QueuePageState extends State<QueuePage> {
       const SizedBox(width: 8),
       Padding(
         padding: const EdgeInsets.only(right: 12),
-        child: _monitorBar(scheme, state),
+        child: _monitorBar(scheme),
       ),
     ];
   }
@@ -385,7 +438,7 @@ class _QueuePageState extends State<QueuePage> {
       if (MediaQuery.sizeOf(context).width >= 430)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: _monitorBar(scheme, state),
+          child: _monitorBar(scheme),
         ),
     ];
   }
@@ -405,42 +458,65 @@ class _QueuePageState extends State<QueuePage> {
 }
 
 class _MonitorWidget extends StatefulWidget {
+  const _MonitorWidget({
+    required this.monitor,
+    required this.active,
+    required this.scheme,
+  });
+
   final SystemMonitor monitor;
+  final ValueListenable<bool> active;
   final ColorScheme scheme;
-  const _MonitorWidget({required this.monitor, required this.scheme});
+
   @override
   State<_MonitorWidget> createState() => _MonitorWidgetState();
 }
 
 class _MonitorWidgetState extends State<_MonitorWidget> {
   Timer? _refreshTimer;
-  // 上次渲染的指标快照：仅在数值真正变化时才 setState，
-  // 避免空闲/数值稳定时每 2 秒无条件重建（长任务期间累积无谓 build）。
+  // Rebuild only when a displayed metric actually changes.
   String? _lastSnapshot;
 
   @override
   void initState() {
     super.initState();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (!mounted) return;
-      final snap = _snapshot();
-      // [FIX L-13] 在状态变化时更新快照并触发重建，移出 build() 避免 build 副作用
-      if (snap != _lastSnapshot) {
-        _lastSnapshot = snap;
-        setState(() {});
+    widget.active.addListener(_syncRefresh);
+    _syncRefresh();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MonitorWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(widget.active, oldWidget.active)) return;
+    oldWidget.active.removeListener(_syncRefresh);
+    widget.active.addListener(_syncRefresh);
+    _syncRefresh();
+  }
+
+  void _syncRefresh() {
+    if (!widget.active.value) {
+      _refreshTimer?.cancel();
+      _refreshTimer = null;
+      return;
+    }
+    _refreshTimer ??= Timer.periodic(const Duration(seconds: 2), (_) {
+      final snapshot = _snapshot();
+      if (snapshot != _lastSnapshot) {
+        setState(() => _lastSnapshot = snapshot);
       }
     });
   }
 
-  /// 把当前指标压成一个可比较的字符串（仅用于变更检测）。
   String _snapshot() {
     final m = widget.monitor;
     return '${m.cpuPercent.toStringAsFixed(0)}|${m.ramUsedGb.toStringAsFixed(1)}'
-        '|${m.ramPercent.toStringAsFixed(0)}|${m.gpuPercent.toStringAsFixed(0)}';
+        '|${m.ramPercent.toStringAsFixed(0)}|${m.gpuPercent.toStringAsFixed(0)}'
+        '|${m.gpuName}';
   }
 
   @override
   void dispose() {
+    widget.active.removeListener(_syncRefresh);
     _refreshTimer?.cancel();
     super.dispose();
   }

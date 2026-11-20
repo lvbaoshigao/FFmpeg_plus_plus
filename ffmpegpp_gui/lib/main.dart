@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show FontLoader, ByteData;
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
@@ -16,11 +15,11 @@ import 'pages/detached_window_page.dart';
 import 'platform/app_platform.dart';
 import 'providers/app_state.dart';
 import 'services/gpu_info.dart';
+import 'services/imported_font_loader.dart';
 import 'services/integrity.dart';
 import 'services/multi_window.dart';
 // 高刷新率（Android 专用）：在支持 90/120/144Hz 的屏幕上按设置请求最高刷新率
 import 'services/refresh_rate.dart';
-import 'widgets/font_picker.dart';
 // shaderGlassSupported：玻璃 shader 是否被当前后端支持（Skia/Windows 为 false）。
 // 用于门控下面的 shader 预加载，避免在永远走不到 shader 分支的平台上白编译。
 import 'widgets/liquid_glass_fallback.dart';
@@ -108,22 +107,12 @@ void main(List<String> arguments) async {
 
   // Binding 已在 main() 开头初始化（面板窗口判定需要它）
   _startupLog('1-Binding OK');
-
-  // ── 内存优化：限制图片缓存上限，避免大量缩略图撑爆内存 ──
-  // 移动端内存更紧张：24MB / 150 张（原 32MB/200，缩略图 80×45 足够）；
-  // 桌面端缩略图均为 80×45 小图、壁纸最多一张物理分辨率大图，48MB 足够
-  // （原 64MB，实测占用不到一半）。启动 300-400MB 峰值的一大部分是
-  // ImageCache 预留 + 壁纸解码，这里把上限压低。
-  if (isMobilePlatform) {
-    PaintingBinding.instance.imageCache.maximumSizeBytes = 24 << 20; // 24MB
-    PaintingBinding.instance.imageCache.maximumSize = 150; // 最多 150 张
-  } else {
-    // 32MB 足够（缩略图 80×45、缓存宽度已限 ≤720px），实测常驻占用不到一半。
-    // 48MB 在玻璃纹理之外仍贡献可观 RSS，是 500MB+ 的一个可削减项。
-    PaintingBinding.instance.imageCache.maximumSizeBytes = 32 << 20; // 32MB
-    PaintingBinding.instance.imageCache.maximumSize = 200; // 最多 200 张
-  }
-  _startupLog('1a-ImageCache capped');
+  // Decoded image cache is separate from live images and renderer textures.
+  // Wallpaper decode is independently capped by ImageMemoryBudget.
+  PaintingBinding.instance.imageCache
+    ..maximumSizeBytes = 12 << 20
+    ..maximumSize = 64;
+  _startupLog('1a-ImageCache capped at 12MiB / 64 entries');
 
   // 完整性校验 — 后台执行，失败不退出（策略：写日志 + 记录原因，不阻断启动）
   IntegrityCheck.verify().then((ok) {
@@ -153,9 +142,7 @@ void main(List<String> arguments) async {
   _startupLog('2-ErrorHandlers OK');
 
   // 并行执行：窗口初始化（仅桌面）+ 字体加载（互相无依赖）。
-  // 注意：自定义字体枚举改为首帧后（见 _loadCustomFonts 调用处），
-  // 避免启动瞬间把用户 fonts/ 目录里所有 .ttf/.otf 全量读进内存——
-  // 这是启动 300-400MB 峰值的主要来源之一。首帧后按需加载不阻塞首屏。
+  // 读取配置后只注册选中的导入字体，不把整个 fonts/ 目录载入引擎。
   final serverPath = _findServer();
   _startupLog('3-server: $serverPath');
 
@@ -203,13 +190,7 @@ void main(List<String> arguments) async {
   );
   _startupLog('8-runApp done');
 
-  // ── 首帧后的「必需加载」：自定义字体 ──
-  // 只有它是无条件执行的：不做就是缺字体（文字回退到系统字体），属于功能而非预热，
-  // 所以不受「关闭预加载」门控。推迟到首帧后是为了避开「读数 MB 字体字节 +
-  // 后端 dlopen + 壁纸解码」叠加造成的启动内存峰值。
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(_loadCustomFonts());
-  });
+
 
   // 后台初始化后端，UI 先显示加载画面。等待首帧完成后才启动：
   // 首帧期间只保留 Flutter 引擎 + Splash，避免配置读取、后端 dlopen、
@@ -217,16 +198,13 @@ void main(List<String> arguments) async {
   await WidgetsBinding.instance.endOfFrame;
   await appState.init(serverPath);
   _startupLog('6-AppState.init OK');
+  _watchConfiguredFont(appState);
 
-  // ── 纯预热项目的总闸：「关闭预加载」（config.noPreload）──
-  // 门控的是「做与不做都不影响功能、只是首次用到时现场付代价」的动作：
-  //   * 字体列表枚举（FontPicker.preloadFonts，缓存在静态字段里）
-  //   * 壁纸按物理分辨率解码进 ImageCache
-  // 这两处此前无条件执行，于是开关只对外壳的页面预热生效、对启动内存几乎没影响。
-  // 必须等 `appState.init` 之后才判定：配置要读出来才知道开没开。
+  // Font names are enumerated when the picker is opened, not on startup.
+  // Optional prefetch only prepares the bounded current wallpaper.
   final warmupEnabled = !appState.config.noPreload;
   if (!warmupEnabled) {
-    _startupLog('6b-warmup: 关闭预加载已开启，跳过字体列表 / 壁纸预热');
+    _startupLog('6b-warmup: skipped wallpaper prefetch');
   }
 
   // 高刷新率：在支持 90 / 120 / 144Hz 的设备上按设置请求屏幕的最高刷新率。
@@ -243,10 +221,7 @@ void main(List<String> arguments) async {
     }),
   );
 
-  // 后端就绪后预热：字体列表 + 壁纸解码（进主界面不再卡首帧）。
-  // 壁纸那一项内部还会再判一次「有没有配壁纸」。
   if (warmupEnabled) {
-    unawaited(_preloadFonts());
     unawaited(_precacheWallpaper(appState));
   }
 
@@ -320,17 +295,8 @@ Future<void> _autoTuneGlass(AppState state) async {
   }
 }
 
-/// 后台预热字体列表（仅一次，缓存在 FontPicker 静态字段中）。
-Future<void> _preloadFonts() async {
-  try {
-    await FontPicker.preloadFonts();
-    _startupLog('9-fonts preloaded');
-  } catch (e) {
-    _startupLog('9-fonts preload error: $e');
-  }
-}
 
-/// 预热壁纸到 ImageCache（按 app.dart 同款 cacheWidth 限制解码），
+/// 预热壁纸到 ImageCache（共用固定像素预算和解码 key），
 /// 避免进入主界面瞬间解码大图卡顿。
 Future<void> _precacheWallpaper(AppState state) async {
   try {
@@ -351,7 +317,9 @@ Future<void> _precacheWallpaper(AppState state) async {
     final done = Completer<void>();
     late ImageStreamListener listener;
     listener = ImageStreamListener(
-      (_, _) {
+      (info, _) {
+        // Each ImageStream listener receives an owned image handle.
+        info.dispose();
         if (!done.isCompleted) done.complete();
       },
       onError: (_, _) {
@@ -359,8 +327,11 @@ Future<void> _precacheWallpaper(AppState state) async {
       },
     );
     stream.addListener(listener);
-    await done.future.timeout(const Duration(seconds: 10), onTimeout: () {});
-    stream.removeListener(listener);
+    try {
+      await done.future.timeout(const Duration(seconds: 10), onTimeout: () {});
+    } finally {
+      stream.removeListener(listener);
+    }
     _startupLog('9b-wallpaper precached');
   } catch (e) {
     _startupLog('9b-wallpaper precache error: $e');
@@ -465,43 +436,36 @@ void _killOldProcesses() {
   }
 }
 
-/// 从用户数据目录 fonts/ 加载所有 .ttf/.otf 字体（启动时调用）
-Future<void> _loadCustomFonts() async {
-  try {
-    if (isMobilePlatform) {
-      // 移动端：字体由设置页 _copyToAppDir 复制到「应用文档目录/FFmpeg++/fonts」，
-      // 必须与那里保持一致 —— 之前这里直接 return（不加载）且 _logDir 指向的是
-      // systemTemp 缓存目录（会被系统清理），导致安卓重启后字体永远回退系统字体。
-      final doc = await getApplicationDocumentsDirectory();
-      final fontsDir = Directory('${doc.path}${_sep}FFmpeg++${_sep}fonts');
-      if (!fontsDir.existsSync()) return;
-      await _loadFontsFromDir(fontsDir);
-      return;
-    }
-    final fontsDir = Directory('$_logDir${_sep}fonts');
-    if (!fontsDir.existsSync()) {
-      // 兼容旧版：也检查 exe 同级 fonts/ 目录
-      final exeDir = Directory(Platform.resolvedExecutable).parent;
-      final legacyDir = Directory('${exeDir.path}${_sep}fonts');
-      if (!legacyDir.existsSync()) return;
-      await _loadFontsFromDir(legacyDir);
-      return;
-    }
-    await _loadFontsFromDir(fontsDir);
-  } catch (_) {}
+final _importedFontLoader = ImportedFontLoader();
+
+/// Font registration is permanent for an engine, so only register chosen faces.
+void _watchConfiguredFont(AppState state) {
+  String? previous;
+  void refresh() {
+    final family = state.config.fontFamily;
+    if (family == previous) return;
+    previous = family;
+    unawaited(_loadConfiguredFont(family));
+  }
+  state.addListener(refresh);
+  refresh();
+  // AppState.dispose clears listeners with the root Provider.
 }
 
-Future<void> _loadFontsFromDir(Directory dir) async {
-  for (final file in dir.listSync().whereType<File>()) {
-    final name = file.uri.pathSegments.last;
-    if (!name.endsWith('.ttf') && !name.endsWith('.otf')) continue;
-    final fontName = name.replaceAll(RegExp(r'\.[^.]+$'), '');
-    try {
-      final loader = FontLoader(fontName);
-      final bytes = await file.readAsBytes();
-      loader.addFont(Future.value(ByteData.view(bytes.buffer)));
-      await loader.load();
-    } catch (_) {}
+Future<void> _loadConfiguredFont(String family) async {
+  try {
+    final directories = <Directory>[];
+    if (isMobilePlatform) {
+      final documents = await getApplicationDocumentsDirectory();
+      directories.add(Directory('${documents.path}${_sep}FFmpeg++${_sep}fonts'));
+    } else {
+      directories.add(Directory('$_logDir${_sep}fonts'));
+      final executable = Directory(Platform.resolvedExecutable).parent;
+      directories.add(Directory('${executable.path}${_sep}fonts'));
+    }
+    await _importedFontLoader.ensureLoaded(family, directories);
+  } catch (error) {
+    _startupLog('Selected custom font unavailable: $error');
   }
 }
 

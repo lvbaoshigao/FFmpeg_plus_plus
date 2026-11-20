@@ -17,6 +17,7 @@ import 'pages/settings_page.dart';
 import 'platform/app_platform.dart';
 import 'providers/app_state.dart';
 import 'services/android_platform.dart';
+import 'services/image_memory_budget.dart';
 import 'services/update_service.dart' as updater;
 import 'theme/app_neutral_surface.dart';
 import 'theme/app_page_transitions.dart';
@@ -45,8 +46,8 @@ import 'widgets/window_chrome.dart';
 /// 关键修复：`Image` 若同时给定 `cacheWidth`/`cacheHeight`（`ResizeImage` 默认
 /// `ResizeImagePolicy.exact`），会解码成「恰好 width×height」的矩形，不保持源图
 /// 宽高比（等价 BoxFit.fill），导致壁纸被异常拉伸。这里改用 `ResizeImagePolicy.fit`
-/// 按「屏幕物理分辨率」等比缩放解码：
-/// - 大图等比降采样到物理分辨率 → 高 DPI 下 1:1 显示，不再模糊；
+/// 按屏幕需求和固定像素预算等比缩放解码：
+/// - 大图最多约 2MP，避免 4K / 高 DPR 为装饰壁纸保留数十 MB；
 /// - 小图不放大（allowUpscaling 默认 false），不浪费内存、不产生伪清晰；
 /// - 等比缩放，绝不拉伸变形。
 ImageProvider<Object> wallpaperImageProvider(
@@ -55,18 +56,15 @@ ImageProvider<Object> wallpaperImageProvider(
   double logicalHeight,
   double devicePixelRatio,
 ) {
-  final int maxW = (logicalWidth * devicePixelRatio)
-      .round()
-      .clamp(1, 16384)
-      .toInt();
-  final int maxH = (logicalHeight * devicePixelRatio)
-      .round()
-      .clamp(1, 16384)
-      .toInt();
+  final target = ImageMemoryBudget.wallpaperSize(
+    logicalWidth,
+    logicalHeight,
+    devicePixelRatio,
+  );
   return ResizeImage(
     FileImage(File(path)),
-    width: maxW,
-    height: maxH,
+    width: target.width,
+    height: target.height,
     policy: ResizeImagePolicy.fit,
   );
 }
@@ -485,25 +483,67 @@ class _SplashScreenState extends State<_SplashScreen> {
   }
 }
 
-/// Stable desktop cache slot; selection must not replace the page Element.
-class CachedPageSlot extends StatelessWidget {
+/// Preserves page state while hidden pages stop ticking, painting, and relayout.
+class CachedPageSlot extends StatefulWidget {
   const CachedPageSlot({super.key, required this.active, required this.child});
 
   final bool active;
   final Widget child;
 
   @override
-  Widget build(BuildContext context) =>
-      TickerMode(enabled: active, child: child);
+  State<CachedPageSlot> createState() => _CachedPageSlotState();
+}
+
+class _CachedPageSlotState extends State<CachedPageSlot> {
+  Size? _lastActiveSize;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      if ((widget.active || _lastActiveSize == null) &&
+          constraints.hasBoundedWidth &&
+          constraints.hasBoundedHeight) {
+        _lastActiveSize = constraints.biggest;
+      }
+      final size = _lastActiveSize;
+      return Offstage(
+        offstage: !widget.active,
+        child: ExcludeFocus(
+          excluding: !widget.active,
+          child: TickerMode(
+            enabled: widget.active,
+            child: size == null
+                ? widget.child
+                : OverflowBox(
+                    alignment: Alignment.topLeft,
+                    minWidth: size.width,
+                    maxWidth: size.width,
+                    minHeight: size.height,
+                    maxHeight: size.height,
+                    child: widget.child,
+                  ),
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key});
+  const AppShell({super.key, this.pageBuilder, this.mobile});
+
+  /// Optional destination factory for focused page-lifecycle tests.
+  final IndexedWidgetBuilder? pageBuilder;
+
+  /// Overrides the platform layout in focused lifecycle tests.
+  final bool? mobile;
   @override
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> with WindowListener {
+class _AppShellState extends State<AppShell>
+    with WindowListener, WidgetsBindingObserver {
+  bool get _mobile => widget.mobile ?? isMobilePlatform;
   final _projectPageKey = GlobalKey<ProjectPageState>();
 
   /// 底部导航可见的页面索引，横向滑动按此顺序循环切换。
@@ -533,6 +573,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
           if (context.read<AppState>().selectedNav != target) {
             context.read<AppState>().selectNav(target);
           }
+          _schedulePageEviction();
         }
       }
       return false;
@@ -552,25 +593,23 @@ class _AppShellState extends State<AppShell> with WindowListener {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _mobilePageController = PageController(initialPage: 0);
     // 移动端没有窗口管理器，跳过窗口相关初始化。
     // 监听器只用于 onWindowClose（优雅关闭后端 / 子进程）；标题栏的
     // 最大化图标状态由 widgets/window_chrome.dart 自己维护。
-    if (!isMobilePlatform) {
+    if (!_mobile) {
       windowManager.addListener(this);
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final state = context.read<AppState>();
       state.onTaskFinished = _onTaskFinished;
-      if (!isMobilePlatform) {
+      if (!_mobile) {
         _checkPostUpdate();
         _autoCheckUpdate();
       }
-      // 主界面首帧后：后台分帧预热其余页面，减少首次切换卡顿
-      _prewarmPages();
-      // 「关闭预加载」运行时切换监听：开启=立即逐出非当前页缓存（释放
-      // 玻璃/模糊离屏纹理内存）；关闭=恢复后台预热。保证该开关在 PC 上
-      // 不只影响下一次启动，而是随时生效。
+      // Only visited destinations are retained; startup does not prewarm pages.
       _lastNoPreload = state.config.noPreload;
       _lastNav = state.selectedNav;
       _listenedState = state;
@@ -595,30 +634,26 @@ class _AppShellState extends State<AppShell> with WindowListener {
     final now = state.config.noPreload;
     if (now == _lastNoPreload) return;
     _lastNoPreload = now;
-    if (now) {
-      // 开启「关闭预加载」：逐出所有非当前页的缓存页面
-      final current = state.selectedNav;
-      var changed = false;
-      for (var i = 0; i < _pageCache.length; i++) {
-        if (i != current && _pageCache[i] != null) {
-          _pageCache[i] = null;
-          _pageLru.remove(i);
-          changed = true;
-        }
-      }
-      if (changed) setState(() {});
-    } else {
-      // 关闭「关闭预加载」：恢复后台预热（_warming 已在跳过时复位）
-      _prewarmPages();
-    }
+    _schedulePageEviction();
+  }
+
+  @override
+  void didHaveMemoryPressure() {
+    if (!mounted) return;
+    _pendingPageLimit = 1;
+    _schedulePageEviction();
   }
 
   /// selectedNav 被外部改动（不经过底部导航）时，让移动端 PageView 滑动到对应 Tab。
   void _onNavChanged() {
-    if (!mounted || !isMobilePlatform) return;
+    if (!mounted) return;
     final nav = context.read<AppState>().selectedNav;
     if (nav == _lastNav) return;
     _lastNav = nav;
+    _pageLru.remove(nav);
+    _pageLru.add(nav);
+    _schedulePageEviction();
+    if (!_mobile) return;
     final idx = _kMobileNavOrder.indexOf(nav);
     if (idx < 0) return;
     // 帧后再动 PageController：监听回调可能发生在 build/layout 阶段，
@@ -775,8 +810,12 @@ class _AppShellState extends State<AppShell> with WindowListener {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _mobilePageController.dispose();
-    if (!isMobilePlatform) windowManager.removeListener(this);
+    for (final notifier in _pageKeepAlive) {
+      notifier.dispose();
+    }
+    if (!_mobile) windowManager.removeListener(this);
     _listenedState?.removeListener(_onNoPreloadChanged);
     _listenedState?.removeListener(_onNavChanged);
     super.dispose();
@@ -1025,10 +1064,10 @@ class _AppShellState extends State<AppShell> with WindowListener {
     final navAutoHide = context.select<AppState, bool>(
       (s) => s.config.navAutoHide,
     );
-    final mobile = isMobilePlatform;
+    final mobile = _mobile;
 
     // 桌面端：左侧边栏 + 页面；移动端页面在下方用 _mobilePageView（PageView）。
-    final Widget page = Focus(
+    Widget desktopPage() => Focus(
       autofocus: true,
       onKeyEvent: _handleGlobalKey,
       child: Row(
@@ -1166,7 +1205,7 @@ class _AppShellState extends State<AppShell> with WindowListener {
     } else {
       // Windows / macOS 用系统标题栏（WindowChrome 内部自动 no-op）；
       // Linux 套上全应用统一的 36px 玻璃 CSD + 四边缩放热区。
-      body = WindowChrome(child: page);
+      body = WindowChrome(child: desktopPage());
     }
 
     return WallpaperBackground(
@@ -1197,229 +1236,168 @@ class _AppShellState extends State<AppShell> with WindowListener {
     }
   }
 
-  /// 移动端四个 Tab 的 PageView：滑动全程跟随手指；onPageChanged 回写选中态。
+  /// The viewport requests destinations on demand instead of building all tabs.
   Widget _mobilePageView() {
     final nav = context.read<AppState>().selectedNav;
     final idx = _kMobileNavOrder.indexOf(nav);
-    return PageView(
+    return PageView.builder(
       controller: _mobilePageController,
       physics: _SwipeGatePagePhysics(
         originPage: idx.toDouble(),
         gateFraction: 0.42,
       ),
-      // Root selection is committed at settle, not at intermediate pages.
       onPageChanged: (_) {},
-      children: [
-        for (final i in _kMobileNavOrder)
-          _KeepAlive(key: ValueKey<int>(i), child: _page(i)),
-      ],
+      itemCount: _kMobileNavOrder.length,
+      itemBuilder: (context, index) {
+        final destination = _kMobileNavOrder[index];
+        return _KeepAlive(
+          key: ValueKey<int>(destination),
+          keepAlive: _pageKeepAlive[destination],
+          child: ExcludeFocus(
+            excluding: destination != nav,
+            child: TickerMode(
+              enabled: destination == nav,
+              child: _page(destination),
+            ),
+          ),
+        );
+      },
     );
   }
 
-  /// 页面懒加载缓存：首次访问才构建，切换时保留状态（IndexedStack），
-  /// 避免 AnimatedSwitcher 每次切换重建整页导致的卡顿。
-  final List<Widget?> _pageCache = List.filled(6, null);
-
-  /// 页面访问顺序（LRU，最久未访问在前），常驻数超限时按此逐出。
+  static const int _kPageCount = 6;
+  static const int _kMaxAlivePages = 2;
+  final List<Widget?> _pageCache = List.filled(_kPageCount, null);
   final List<int> _pageLru = [];
+  final List<ValueNotifier<bool>> _pageKeepAlive = List.generate(
+    _kPageCount,
+    (_) => ValueNotifier(false),
+  );
   bool _evictScheduled = false;
+  int? _pendingPageLimit;
 
-  /// 常驻页面数上限。
-  /// 每页的玻璃面板（BackdropFilter）持有与面板等大的离屏纹理（含模糊
-  /// 半径 padding），6 页同时常驻时玻璃/模糊效果的 GPU 内存成倍增长
-  /// （用户实测开启玻璃后进程内存 500MB+）。超过上限时逐出最久未访问
-  /// 的页面，其纹理随 State dispose 一起释放。
-  static const int _kMaxAlivePages = 4;
-  Widget _page(int i) {
-    // 刷新 LRU 位置：当前页每次 build 都经过这里，最近访问的页永远靠后，
-    // 不会被误逐出
-    _pageLru.remove(i);
-    _pageLru.add(i);
-    final cached = _pageCache[i];
-    if (cached != null) return cached;
-    // 首次访问：构建页面并缓存
-    final page = switch (i) {
-      0 => ProjectPage(key: _projectPageKey),
-      1 => const QueuePage(),
-      2 => const CommandPage(),
-      3 => const ConfigLibraryPage(),
-      4 => const SettingsPage(),
-      5 => const LogPage(),
-      _ => const ProjectPage(),
-    };
-    _pageCache[i] = page;
-    // 构建发生在 build 期间，逐出需要 setState——推迟到帧后执行
-    if (!_evictScheduled) {
-      _evictScheduled = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _evictScheduled = false;
-        if (mounted) {
-          _evictStalePages(context.read<AppState>().selectedNav);
-        }
-      });
+  Widget _page(int index) {
+    if (index == context.read<AppState>().selectedNav) {
+      _pageLru.remove(index);
+      _pageLru.add(index);
+    } else if (!_pageLru.contains(index)) {
+      _pageLru.insert(0, index);
     }
+    final cached = _pageCache[index];
+    if (cached != null) return cached;
+    final page =
+        widget.pageBuilder?.call(context, index) ??
+        switch (index) {
+          0 => ProjectPage(key: _projectPageKey),
+          1 => const QueuePage(),
+          2 => const CommandPage(),
+          3 => const ConfigLibraryPage(),
+          4 => const SettingsPage(),
+          5 => const LogPage(),
+          _ => const SizedBox.shrink(),
+        };
+    _pageCache[index] = page;
+    _schedulePageEviction();
     return page;
   }
 
-  /// 常驻页数超过 _kMaxAlivePages 时，从最久未访问的页面开始逐出
-  /// （保留当前页与其相邻页——相邻页切换最频繁，逐出它们会立刻重建卡顿）。
-  void _evictStalePages(int current) {
-    // 移动端 PageView 会为四个 Tab 直接调用 _page(i)，逐出后会立刻重建，
-    // 反而造成抖动；移动端保持原行为（四个 Tab 全部常驻）。
-    // 代价要记住：四个 Tab 的玻璃纹理（开窗路径的壁纸采样 painter /
-    // 非开窗路径的 BackdropFilter 截屏）全部常驻，目前没有释放路径。
-    // 旧注释声称「已通过 AppCard 的可见性懒渲染处理，见 app_card.dart」——
-    // app_card.dart 里并不存在该机制，属过期说明，别再据此判断内存行为。
-    if (isMobilePlatform) return;
-    int alive() {
-      var n = 0;
-      for (final w in _pageCache) {
-        if (w != null) n++;
-      }
-      return n;
-    }
-
-    var evicted = false;
-    while (alive() > _kMaxAlivePages) {
-      int? victim;
-      for (final idx in _pageLru) {
-        if (idx == current || (idx - current).abs() <= 1) continue;
-        victim = idx;
-        break;
-      }
-      if (victim == null) return; // 只剩当前/相邻页，不再逐出
-      _pageCache[victim] = null;
-      _pageLru.remove(victim);
-      evicted = true;
-    }
-    if (evicted && mounted) setState(() {});
+  void _schedulePageEviction() {
+    if (_evictScheduled) return;
+    _evictScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _evictScheduled = false;
+      if (mounted) _evictStalePages(context.read<AppState>().selectedNav);
+    });
+    // Memory pressure can arrive while the UI is idle with no queued frame.
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
-  /// 所有页面同时存在于 IndexedStack（已访问的缓存、未访问的占位），
-  /// 切换零重建、零动画开销。
-  ///
-  /// 每个槽位固定为 CachedPageSlot，内部 TickerMode 仅启用当前页动画。
-  /// 索引 key 与槽位类型恒定，子节点才是页面本身：
-  /// 之前当前页走 `_page(i)`（内部又包了一层 KeyedSubtree）、非当前页直接放裸页面
-  /// widget，同一个槽位的 runtimeType 会随选中页切换而变（KeyedSubtree ↔ ProjectPage）
-  /// → framework 判定无法复用 Element，整页 State 被销毁重建（滚动位置、多选状态
-  /// 全部丢失），与「切换零重建」的意图相反。现在槽位类型恒定，切换只更新子节点。
-  Widget _pageStack(int current) => IndexedStack(
-    index: current,
+  void _evictStalePages(int current) {
+    // Both visible pages are needed until a swipe or programmatic slide settles.
+    if (_mobile &&
+        _mobilePageController.hasClients &&
+        _mobilePageController.position.isScrollingNotifier.value) {
+      return;
+    }
+    final noPreload = context.read<AppState>().config.noPreload;
+    final capacity =
+        _pendingPageLimit ?? (noPreload ? 1 : _kMaxAlivePages);
+    _pendingPageLimit = null;
+    var retained = _pageCache.where((page) => page != null).length;
+    var evicted = false;
+    for (final index in List<int>.of(_pageLru)) {
+      if (retained <= capacity) break;
+      if (index == current || _pageCache[index] == null) continue;
+      _pageCache[index] = null;
+      _pageLru.remove(index);
+      retained--;
+      evicted = true;
+    }
+    for (var index = 0; index < _kPageCount; index++) {
+      _pageKeepAlive[index].value = !noPreload && _pageCache[index] != null;
+    }
+    // The mobile notifiers release the actual sliver keep-alive children.
+    // Rebuilding its delegate here would immediately reconstruct stale slots.
+    if (evicted && !_mobile && mounted) setState(() {});
+  }
+
+  Widget _pageStack(int current) => Stack(
+    fit: StackFit.expand,
     children: [
-      for (var i = 0; i < 6; i++)
+      for (var index = 0; index < _kPageCount; index++)
         CachedPageSlot(
-          key: ValueKey<int>(i),
-          active: i == current,
-          // 当前页走 _page(i)（顺带刷新 LRU）；非当前页直接取缓存，未访问则为空占位
-          child: i == current
-              ? _page(i)
-              : (_pageCache[i] ?? const SizedBox.shrink()),
+          key: ValueKey<int>(index),
+          active: index == current,
+          child: index == current
+              ? _page(index)
+              : (_pageCache[index] ?? const SizedBox.shrink()),
         ),
     ],
   );
-
-  /// 全部页面数量（与 [_page] 的分支一一对应）。
-  ///
-  /// 预热目标必须落在 `[0, _kPageCount)` 内：[_page] 对越界索引有
-  /// `_ => const ProjectPage()` 兜底，所以越界**不报错**，只会静默预热成项目页
-  /// —— 表现是「日志说预热了 4 个页面，其中两个其实是重复的项目页」。
-  static const int _kPageCount = 6;
-
-  /// 桌面端预热目标：项目 + 处理队列两个主入口页。
-  static const List<int> _kPrewarmDesktop = [0, 1];
-
-  /// 后台分帧预热高频页面到缓存（主界面显示后逐帧构建），
-  /// 之后首次点击进入不再卡顿（构建成本已摊到空闲帧）。
-  /// 桌面端只预热「项目 + 处理队列」两个主入口页；其余页面首次点击时
-  /// 再构建（配合常驻上限，避免所有页面的玻璃面板纹理同时常驻）。
-  ///
-  /// 「关闭预加载」（cfg.noPreload）开启时跳过预热：启动只绘制当前页面，
-  /// 其余页面等用户手动切换到时才构建（首次切换现场构建，可能短暂
-  /// 增加 CPU 占用——换来更快的启动与更低的常驻内存）。
-  void _prewarmPages() {
-    if (_warming) return;
-    _warming = true;
-    final state = context.read<AppState>();
-    // 关闭预加载：除当前页外不构建任何页面。
-    // 复位 _warming：用户之后重新打开预加载时（本监听恢复预热路径）可以再次运行。
-    if (state.config.noPreload) {
-      _warming = false;
-      state.addLog('关闭预加载已开启：跳过后台页面预热，页面在首次切换时才构建', category: 'info');
-      return;
-    }
-    final targets = (isMobilePlatform ? _kMobileNavOrder : _kPrewarmDesktop)
-        .where((i) => i >= 0 && i < _kPageCount)
-        .toList(growable: false);
-    // 页数与页名都按 targets 推导：此前写死「N 个页面（项目/处理队列）」，
-    // 而移动端预热的是 项目/处理队列/配置库/设置 四个 Tab，日志与实际不符。
-    state.addLog(
-      '后台预热 ${targets.length} 个页面（${targets.map(_navLabel).join('/')}）',
-      category: 'info',
-    );
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      // 必须在 finally 里复位 _warming。此前只在「正常跑完」和「途中检测到关闭
-      // 预加载」两条路径复位：任何一次 `_page(i)` 抛异常（某页构建期出错）都会让
-      // _warming 永久停在 true，表现为「设置里把『关闭预加载』关掉、开关显示已
-      // 恢复后台预热，实际再也不会预热」——而这条路径恰恰只在出错时才会走到，
-      // 平时测不出来。
-      try {
-        for (final i in targets) {
-          if (!mounted) return;
-          // 每帧只构建一页，避免单帧长任务
-          await Future<void>.delayed(const Duration(milliseconds: 160));
-          if (!mounted) return;
-          // 预热途中用户开启了「关闭预加载」则中止剩余预热（_warming 由 finally 复位）
-          if (context.read<AppState>().config.noPreload) return;
-          setState(() {
-            _page(i);
-          });
-        }
-      } catch (e) {
-        // 预热失败不该影响用户：只记日志，该页改为首次切换时现场构建。
-        // 复位交给 finally，绝不能在这里 return 掉。
-        if (mounted) {
-          context.read<AppState>().addLog('后台页面预热中断：$e', category: 'warn');
-        }
-      } finally {
-        _warming = false;
-      }
-    });
-  }
-
-  /// 导航序号 → 中文页名（仅用于预热日志，与 _page 的分支保持一致）。
-  static String _navLabel(int i) => switch (i) {
-    0 => '项目',
-    1 => '处理队列',
-    2 => '命令',
-    3 => '配置库',
-    4 => '设置',
-    5 => '日志',
-    _ => '页$i',
-  };
-  bool _warming = false;
 }
 
 /// 让 PageView 子页在滑出视口后保持状态（AutomaticKeepAlive）。
 /// 否则左右滑动返回时页面会被重建，丢失滚动位置/输入状态。
 class _KeepAlive extends StatefulWidget {
+  const _KeepAlive({super.key, required this.child, required this.keepAlive});
+
   final Widget child;
-  const _KeepAlive({super.key, required this.child});
+  final ValueNotifier<bool> keepAlive;
+
   @override
   State<_KeepAlive> createState() => _KeepAliveState();
 }
 
 class _KeepAliveState extends State<_KeepAlive>
     with AutomaticKeepAliveClientMixin {
-  /// 「关闭预加载」开启时不再永久保活：划走的 Tab 状态被释放，
-  /// 内存随用随还（回到该 Tab 时现场重建，可能短暂卡顿——用户已明确
-  /// 选择低内存优先）。默认仍保活，保证翻页流畅。
   @override
-  bool get wantKeepAlive =>
-      !context.select<AppState, bool>((s) => s.config.noPreload);
+  void initState() {
+    super.initState();
+    widget.keepAlive.addListener(updateKeepAlive);
+  }
+
+  @override
+  void didUpdateWidget(covariant _KeepAlive oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.keepAlive != widget.keepAlive) {
+      oldWidget.keepAlive.removeListener(updateKeepAlive);
+      widget.keepAlive.addListener(updateKeepAlive);
+      updateKeepAlive();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.keepAlive.removeListener(updateKeepAlive);
+    super.dispose();
+  }
+
+  @override
+  bool get wantKeepAlive => widget.keepAlive.value;
+
   @override
   Widget build(BuildContext context) {
-    super.build(context); // 注册 keep-alive
+    super.build(context);
     return widget.child;
   }
 }

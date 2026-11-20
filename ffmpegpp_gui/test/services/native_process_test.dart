@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 class _FakeBridge implements NativeBridge {
   int requestResult = -1;
+  int pollCount = 0;
   final replies = <String>[];
 
   @override
@@ -22,7 +24,10 @@ class _FakeBridge implements NativeBridge {
   }
 
   @override
-  String? poll() => replies.isEmpty ? null : replies.removeAt(0);
+  String? poll() {
+    pollCount++;
+    return replies.isEmpty ? null : replies.removeAt(0);
+  }
 
   @override
   void shutdown() {}
@@ -59,34 +64,33 @@ void main() {
       });
 
       test('should fail an unbounded request and release its ID', () async {
-        final rejected = await process.requestWithId('job', 'transcode').timeout(
-          const Duration(seconds: 1),
-        );
+        final rejected = await process
+            .requestWithId('job', 'transcode')
+            .timeout(const Duration(seconds: 1));
         expect(rejected['id'], 'job');
         expect(rejected['success'], isFalse);
         expect(rejected['error'], contains('code=-1'));
 
         bridge.requestResult = 0;
-        final accepted = await process.requestWithId('job', 'transcode').timeout(
-          const Duration(seconds: 1),
-        );
+        final accepted = await process
+            .requestWithId('job', 'transcode')
+            .timeout(const Duration(seconds: 1));
         expect(accepted['success'], isTrue);
       });
 
       test('should fail a timed request before its response timeout', () async {
         bridge.requestResult = 7;
-        final rejected = await process.requestWithTimeout('probe', 120).timeout(
-          const Duration(seconds: 1),
-        );
+        final rejected = await process
+            .requestWithTimeout('probe', 120)
+            .timeout(const Duration(seconds: 1));
         expect(rejected['success'], isFalse);
         expect(rejected['error'], contains('code=7'));
 
         // Reuse the generated ID to prove rejection removed the pending entry.
         bridge.requestResult = 0;
-        final accepted = await process.requestWithId(
-          rejected['id'] as String,
-          'probe',
-        ).timeout(const Duration(seconds: 1));
+        final accepted = await process
+            .requestWithId(rejected['id'] as String, 'probe')
+            .timeout(const Duration(seconds: 1));
         expect(accepted['success'], isTrue);
       });
 
@@ -109,14 +113,68 @@ void main() {
         expect(await errors, isEmpty);
       });
 
-      test('should also reject the default-timeout request immediately', () async {
-        final rejected = await process.request('ping').timeout(
-          const Duration(seconds: 1),
-        );
-        expect(rejected['success'], isFalse);
-        expect(rejected['error'], contains('code=-1'));
-      });
+      test(
+        'should also reject the default-timeout request immediately',
+        () async {
+          final rejected = await process
+              .request('ping')
+              .timeout(const Duration(seconds: 1));
+          expect(rejected['success'], isFalse);
+          expect(rejected['error'], contains('code=-1'));
+        },
+      );
     });
+
+    testWidgets('should back off idle polls and wake for a request', (
+      tester,
+    ) async {
+      final bridge = _FakeBridge()..requestResult = 0;
+      process.dispose();
+      process = NativeProcessManager.withBridgeFactory((_) => bridge);
+      await process.start('isolated-fake-bridge');
+      try {
+        bridge.replies.add(jsonEncode({'type': 'ready'}));
+        Map<String, dynamic>? ready;
+        unawaited(process.waitForReady().then((reply) => ready = reply));
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(ready?['type'], 'ready');
+
+        final firstIdlePoll = bridge.pollCount;
+        await tester.pump(const Duration(seconds: 2));
+        expect(bridge.pollCount - firstIdlePoll, inInclusiveRange(1, 16));
+
+        Map<String, dynamic>? reply;
+        unawaited(process.request('ping').then((value) => reply = value));
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(reply?['success'], isTrue);
+      } finally {
+        await process.shutdown();
+      }
+      final stopped = bridge.pollCount;
+      await tester.pump(const Duration(seconds: 1));
+      expect(bridge.pollCount, stopped);
+    });
+
+    test(
+      'should resolve pending readiness and requests when shut down',
+      () async {
+        final bridge = _FakeBridge()..requestResult = 0;
+        process.dispose();
+        process = NativeProcessManager.withBridgeFactory((_) => bridge);
+        await process.start('isolated-fake-bridge');
+        final ready = process.waitForReady();
+        final reply = process.requestWithId('job', 'transcode');
+        await process.shutdown();
+        expect(
+          (await ready.timeout(const Duration(seconds: 1)))['type'],
+          'error',
+        );
+        expect(
+          (await reply.timeout(const Duration(seconds: 1)))['success'],
+          isFalse,
+        );
+      },
+    );
 
     final library = Platform.environment['FFMPEGPP_TEST_LIBRARY'];
     test(

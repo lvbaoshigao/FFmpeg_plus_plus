@@ -147,6 +147,13 @@ class _SoftPressFeature extends InteractiveInkFeature {
   final bool _highContrast;
   final RectCallback? _rect;
   final BorderRadius? _corners;
+  final Paint _fillPaint = Paint();
+  final Paint _edgePaint = Paint();
+  Rect? _paintBounds;
+  ShapeBorder? _paintBorder;
+  Path? _clipPath;
+  Shader? _edgeShader;
+  Color? _shaderColor;
   late final AnimationController _level;
   bool _releasing = false;
   bool _disposed = false;
@@ -167,11 +174,48 @@ class _SoftPressFeature extends InteractiveInkFeature {
   @override
   void cancel() => _release(const Duration(milliseconds: 95));
 
+  void _cachePaintResources(Rect bounds) {
+    final border = customBorder;
+    final resized = _paintBounds != bounds;
+    if (resized || _paintBorder != border) {
+      final corners =
+          _corners ??
+          BorderRadius.circular(math.min(12, bounds.shortestSide / 2));
+      _clipPath =
+          border?.getOuterPath(bounds, textDirection: _textDirection) ??
+          (Path()..addRRect(corners.toRRect(bounds)));
+      _paintBorder = border;
+    }
+    if (!_highContrast && (resized || _shaderColor != color)) {
+      _disposeEdgeShader();
+      // Keep the gradient fixed; Paint alpha carries the animation intensity.
+      _edgeShader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [color.withValues(alpha: 1), color.withValues(alpha: 0)],
+      ).createShader(bounds);
+      _edgePaint.shader = _edgeShader;
+      _shaderColor = color;
+    }
+    _paintBounds = bounds;
+  }
+
+  void _disposeEdgeShader() {
+    _edgePaint.shader = null;
+    _edgeShader?.dispose();
+    _edgeShader = null;
+    _shaderColor = null;
+  }
+
   @override
   void dispose() {
     if (_disposed) return;
     _disposed = true;
     _level.dispose();
+    _disposeEdgeShader();
+    _clipPath = null;
+    _paintBounds = null;
+    _paintBorder = null;
     super.dispose();
   }
 
@@ -180,36 +224,21 @@ class _SoftPressFeature extends InteractiveInkFeature {
     if (_disposed || !referenceBox.hasSize || color.a == 0) return;
     final bounds = _rect?.call() ?? Offset.zero & referenceBox.size;
     if (bounds.isEmpty) return;
-    final corners =
-        _corners ??
-        BorderRadius.circular(math.min(12, bounds.shortestSide / 2));
-    final path =
-        customBorder?.getOuterPath(bounds, textDirection: _textDirection) ??
-        (Path()..addRRect(corners.toRRect(bounds)));
+    _cachePaintResources(bounds);
     final strength = Curves.easeOutCubic.transform(_level.value);
     final alpha = (color.a * strength * (_highContrast ? 1.7 : 1)).clamp(
       0.0,
       1.0,
     );
-    final paint = Paint()..color = color.withValues(alpha: alpha);
+    _fillPaint.color = color.withValues(alpha: alpha);
     canvas.save();
     canvas.transform(transform.storage);
-    canvas.clipPath(path);
-    canvas.drawRect(bounds, paint);
+    canvas.clipPath(_clipPath!);
+    canvas.drawRect(bounds, _fillPaint);
     // A stationary, clipped edge light avoids a travelling ripple or scale.
     if (!_highContrast) {
-      canvas.drawRect(
-        bounds,
-        Paint()
-          ..shader = LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              color.withValues(alpha: alpha * 0.8),
-              color.withValues(alpha: 0),
-            ],
-          ).createShader(bounds),
-      );
+      _edgePaint.color = color.withValues(alpha: alpha * 0.8);
+      canvas.drawRect(bounds, _edgePaint);
     }
     canvas.restore();
   }

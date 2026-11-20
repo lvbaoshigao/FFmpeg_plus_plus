@@ -93,8 +93,8 @@ void main() {
   ) async {
     final key = GlobalKey<_TickingPageState>();
     Widget tree(bool active) => MaterialApp(
-      home: IndexedStack(
-        index: active ? 0 : 1,
+      home: Stack(
+        fit: StackFit.expand,
         children: [
           CachedPageSlot(
             key: const ValueKey(0),
@@ -125,6 +125,35 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     expect(tester.takeException(), isNull);
   });
+  testWidgets('hidden cache slots keep their last active layout constraints', (
+    tester,
+  ) async {
+    final sizes = <Size>[];
+    final content = LayoutBuilder(
+      builder: (context, constraints) {
+        sizes.add(constraints.biggest);
+        return const SizedBox.expand();
+      },
+    );
+    Widget tree(bool active, Size size) => MaterialApp(
+      home: Align(
+        child: SizedBox.fromSize(
+          size: size,
+          child: CachedPageSlot(active: active, child: content),
+        ),
+      ),
+    );
+    await tester.pumpWidget(tree(true, const Size(300, 200)));
+    expect(sizes.last, const Size(300, 200));
+    await tester.pumpWidget(tree(false, const Size(300, 200)));
+    final hiddenLayouts = sizes.length;
+    await tester.pumpWidget(tree(false, const Size(500, 400)));
+    expect(sizes.length, hiddenLayouts);
+    await tester.pumpWidget(tree(true, const Size(500, 400)));
+    expect(sizes.last, const Size(500, 400));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('desktop settings keeps one pane across rapid section switches', (
     tester,
   ) async {

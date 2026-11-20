@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../app.dart';
 import '../providers/app_state.dart';
+import '../services/image_memory_budget.dart';
 import '../theme/app_neutral_surface.dart';
 import 'desktop_resize_scope.dart';
 // effectiveGlassSigma / glassTuningOf：开窗预模糊的 σ 必须与 AppCard 开窗
@@ -42,7 +43,10 @@ final class WallpaperBackground extends StatelessWidget {
     );
     final theme = Theme.of(context);
     final base = AppNeutralSurface.background(theme.brightness);
-    final alpha = ((1.0 - opacity.clamp(0.0, 1.0)) * 220).round().clamp(20, 240);
+    final alpha = ((1.0 - opacity.clamp(0.0, 1.0)) * 220).round().clamp(
+      20,
+      240,
+    );
     return _WallpaperViewport(
       path: path,
       background: base,
@@ -96,13 +100,14 @@ class _WallpaperViewportState extends State<_WallpaperViewport> {
   @override
   Widget build(BuildContext context) {
     final path = widget.path;
+    final screen = MediaQuery.sizeOf(context);
     final hasWallpaper = path.isNotEmpty && _pathExists;
     final resizing = DesktopResizeScope.isResizingOf(context);
     if (!hasWallpaper) {
       _provider = null;
       _decodeTarget = null;
     } else if (!resizing || path != _decodeTarget?.path) {
-      final size = MediaQuery.sizeOf(context);
+      final size = screen;
       final dpr = MediaQuery.devicePixelRatioOf(context);
       final target = (path: path, size: size, dpr: dpr);
       if (!size.isEmpty && target != _decodeTarget) {
@@ -119,7 +124,7 @@ class _WallpaperViewportState extends State<_WallpaperViewport> {
     final provider = _provider;
     return WallpaperWindowScope(
       provider: provider,
-      screenSize: _decodeTarget?.size ?? Size.zero,
+      screenSize: screen,
       overlayColor: widget.overlay,
       child: Stack(
         children: [
@@ -130,6 +135,7 @@ class _WallpaperViewportState extends State<_WallpaperViewport> {
                 key: ValueKey(path),
                 image: provider,
                 fit: BoxFit.cover,
+                filterQuality: FilterQuality.low,
                 gaplessPlayback: true,
                 errorBuilder: (_, _, _) => const SizedBox.shrink(),
               ),
@@ -163,10 +169,9 @@ class WallpaperWindow {
   /// 像素 + 当前 σ」离屏渲染**一次**，所有玻璃卡共享同一张已模糊图，
   /// painter 退化成一次普通 drawImageRect，不再触发任何模糊。
   ///
-  /// 长宽比 = 屏幕长宽比；绝对像素尺寸 ≤ 屏幕逻辑尺寸 × DPR（有真实模糊时按
-  /// 1/2 分辨率渲染以省 3/4 纹理内存，见 [WallpaperBlurCache._rebuild]），
-  /// σ 已按 DPR 换算到设备像素空间。painter 侧只做「整张 → 屏幕矩形」的映射，
-  /// 因此分辨率与屏幕无关，不需要也不应该在这里假设满分辨率。
+  /// Its viewport crop and Gaussian-expanded intermediate each fit a 2 MiB
+  /// raster budget, even at 4K/high DPR. Sigma scales with the reduced raster.
+  /// The painter maps this bounded image back to the same screen rectangle.
   /// 为 null（尚未生成 / 生成失败 / 无壁纸）时 painter 回退实时模糊老路径。
   final ui.Image? blurred;
 
@@ -185,256 +190,218 @@ class WallpaperWindow {
   });
 }
 
-/// 进程级共享的「整屏预模糊壁纸」缓存（见 [WallpaperWindow.blurred]）。
-///
-/// 为什么必须共享而不是每个 scope 各自生成：主壳、每个二级页路由、移动端
-/// 每个 Tab 都各有一个 [WallpaperWindowScope]，参数（原图 / 屏幕 / DPR / σ）
-/// 在同一时刻完全相同。若各自生成一张，移动端访问过 4 个 Tab 就是 4 张全屏
-/// 设备像素图（4 × ~10MB ≈ 40MB）—— 比它省下的还多。这里做成单例：全进程
-/// 任何时刻最多一张，参数变化时后台重建并替换。
-///
-/// 生命周期：静态持有，随进程存活（最多一张全屏图，桌面约 4MB / 移动端约
-/// 10MB，与 ImageCache 里那张壁纸同量级）。换壁纸 / 改分辨率 / 改模糊度都会
-/// 自动替换并释放旧图。
+/// One process-wide preblur, rebuilt serially within [ImageMemoryBudget].
+/// Source clones are handles to shared pixels; only the latest pending request
+/// survives while one raster operation is in flight.
 class WallpaperBlurCache {
   WallpaperBlurCache._();
 
-  /// 当前可用的预模糊图；null = 尚无（玻璃卡走实时模糊回退）。
   static final ValueNotifier<ui.Image?> image = ValueNotifier<ui.Image?>(null);
+  static const int kBlurRebuildRetryCooldownMs = 3000;
+
+  /// An allocation boundary for deterministic concurrency/lifecycle tests.
+  @visibleForTesting
+  static Future<ui.Image> Function(ui.Picture picture, int width, int height)?
+  rasterizeForTesting;
 
   static ui.Image? _src;
   static Size _screen = Size.zero;
   static double _dpr = -1;
   static double _sigma = -1;
-
-  /// 自增令牌：作废在途的离屏渲染结果，避免旧任务覆盖新图。
   static int _token = 0;
   static Timer? _debounce;
-  static ui.Image? _pendingSource;
-  static ui.Image? _requestedSource;
-
-  /// 已排队的参数指纹。**防抖计时器只在参数真的变化时重置**：滚动 / 动画时
-  /// 玻璃卡每帧都会走 build 并调用 [request]，若无条件 `cancel + 新建`，
-  /// 计时器会被无限推迟、重建永不发生，预模糊优化等于没做（painter 会一直
-  /// 走每帧实时模糊的回退路径）。
-  static int? _scheduledKey;
-
-  /// 已失败的参数指纹：同一参数不再反复排队重试（如显存不足导致的持续失败），
-  /// 换壁纸 / 改分辨率 / 改模糊度会得到新指纹，届时自然重试。
+  static _BlurRequest? _pending;
+  static _BlurRequest? _running;
   static int? _failedKey;
-
-  /// [_failedKey] 记下失败的时刻（毫秒时间戳）。
-  /// 失败不是**永久**弃用该参数，而是冷却 [kBlurRebuildRetryCooldownMs]
-  /// 之后允许再试一次 —— 理由见 [request]。
   static int _failedAtMs = 0;
+  static final _memoryObserver = _WallpaperMemoryObserver();
+  static bool _observingMemory = false;
 
-  /// 同一参数指纹失败后的重试冷却时长（毫秒）。
-  ///
-  /// 为什么要有冷却而不是「失败一次就永久放弃」（原实现）：预模糊图一旦
-  /// 生成失败，painter 就会退化成**每帧 × 每张可见玻璃卡**对整屏跑一次
-  /// σ 高斯模糊，每次都要按 3σ 外扩分配离屏纹理、并被 GPU 资源池长期缓存
-  /// —— 代价远高于「暂时没有预模糊图」。而失败原因常常是一次性的
-  /// （显存瞬时紧张、应用从后台切回、窗口正在缩放），永久放弃等于把偶发
-  /// 故障升级成常驻劣化。冷却 3s 兼顾两者：持续失败时每 3s 只重试一次，
-  /// 开销可忽略；偶发失败则自动恢复。
-  static const int kBlurRebuildRetryCooldownMs = 3000;
-
-  static int _keyOf(ui.Image src, Size screen, double dpr, double sigma) =>
-      Object.hash(identityHashCode(src), screen, dpr, sigma);
-
-  /// 当前图是否适配这张原图与屏幕（几何匹配 —— 原图或屏幕尺寸变了就不能用，
-  /// 否则卡内壁纸的位置/比例会与卡外背景对不上）。σ 允许略旧（见 [request]）。
+  /// A stale blur is reusable only if the cover geometry remains identical.
+  /// Proportional resizing is safe; a changed aspect ratio uses the source until
+  /// its newly cropped blur is ready instead of stretching the old crop.
   static ui.Image? currentFor(ui.Image src, Size screen) {
-    final cur = image.value;
-    if (cur == null) return null;
-    if (_src == null || !_src!.isCloneOf(src) || _screen != screen) return null;
-    return cur;
+    final current = image.value;
+    if (current == null ||
+        _src == null ||
+        !_src!.isCloneOf(src) ||
+        screen.isEmpty ||
+        _screen.isEmpty) {
+      return null;
+    }
+    final ratio = _screen.aspectRatio / screen.aspectRatio;
+    return (ratio - 1).abs() < 0.000000001 ? current : null;
   }
 
-  /// 请求一张适配当前参数的预模糊图，并按需（防抖 120ms）调度离屏重建。
-  ///
-  /// 返回值语义：
-  ///  - 几何匹配且 σ 一致 → 当前图；
-  ///  - 几何匹配但 σ 已变（拖「模糊度」滑块）→ 仍返回**旧 σ 的图**（视觉上
-  ///    模糊度晚 120ms 跟上，好过回退到每帧实时模糊的昂贵路径）；
-  ///  - 几何不匹配（换壁纸 / 窗口缩放）→ null，调用方先走实时模糊回退。
   static ui.Image? request({
     required ui.Image src,
     required Size screen,
     required double dpr,
     required double sigma,
   }) {
-    final geoOk = currentFor(src, screen);
-    if (geoOk != null && _dpr == dpr && _sigma == sigma) return geoOk;
-    if (_requestedSource == null || !_requestedSource!.isCloneOf(src)) {
-      _requestedSource?.dispose();
-      _requestedSource = src.clone();
+    if (screen.isEmpty || !screen.width.isFinite || !screen.height.isFinite) {
+      return null;
     }
-    final key = _keyOf(_requestedSource!, screen, dpr, sigma);
-    // 同参数此前失败过：冷却期内不再重试（否则每帧 build 都会重新排队一次
-    // 离屏渲染）；冷却结束后放行，让它再试一次（见
-    // kBlurRebuildRetryCooldownMs 的说明）。
+    final available = currentFor(src, screen);
+    if (available != null &&
+        _screen == screen &&
+        _dpr == dpr &&
+        _sigma == sigma) {
+      if (_pending != null || (_running != null && _running!.token == _token)) {
+        // Returning to the published target must also cancel a superseded
+        // resize/tuning request, otherwise it could replace this valid crop.
+        _token++;
+        _debounce?.cancel();
+        _debounce = null;
+        _pending?.source.dispose();
+        _pending = null;
+      }
+      return available;
+    }
+    if (_pending?.matches(src, screen, dpr, sigma) ?? false) return available;
+    if (_pending == null &&
+        _running?.token == _token &&
+        (_running?.matches(src, screen, dpr, sigma) ?? false)) {
+      return available;
+    }
+    final key = Object.hash(src.width, src.height, screen, dpr, sigma);
     if (key == _failedKey &&
         DateTime.now().millisecondsSinceEpoch - _failedAtMs <
             kBlurRebuildRetryCooldownMs) {
-      return geoOk;
+      return available;
     }
-    if (key == _scheduledKey) return geoOk; // 已排队 / 已在途：不要重复发起
-    _scheduledKey = key;
-    final token = ++_token;
+    if (!_observingMemory) {
+      WidgetsBinding.instance.addObserver(_memoryObserver);
+      _observingMemory = true;
+    }
+    _pending?.source.dispose();
+    _pending = _BlurRequest(src.clone(), screen, dpr, sigma, key, ++_token);
     _debounce?.cancel();
-    _pendingSource?.dispose();
-    _pendingSource = null;
-    // 首次请求立即执行，不防抖：`_src == null` 表示此前从未成功生成过任何图，
-    // 即「开机 → 第一张预模糊图就绪」这段窗口。它是纯实时模糊窗口 —— 每帧 ×
-    // 每张可见玻璃卡都要对整屏跑一次 σ 模糊（Skia 为每次模糊分配 3σ 外扩的
-    // 离屏纹理），正是「刚进主界面内存飙到 500MB」的主因之一。这里白等 120ms
-    // 毫无收益，直接渲染能把这段窗口压到最短。
-    // 注意：**不清 `_scheduledKey`** —— 立即执行是异步的（`toImage` 需 1~3 帧），
-    // 期间每帧 build 都会再调 request，靠它挡掉重复发起（否则会每帧渲染一张）。
-    // 失败时 `_failedKey` 兜底，不会无限重试。
-    // 除此之外的情况（换壁纸 / 窗口缩放 / 拖「模糊度」滑块）仍走防抖，避免
-    // 连续变化时反复离屏渲染。
-    if (_src == null) {
-      unawaited(_rebuild(src, screen, dpr, sigma, key, token));
-      return geoOk;
-    }
-    final pending = src.clone();
-    _pendingSource = pending;
-    _debounce = Timer(const Duration(milliseconds: 120), () {
-      _debounce = null;
-      _pendingSource = null;
-      unawaited(_rebuild(pending, screen, dpr, sigma, key, token));
-      pending.dispose();
-    });
-    return geoOk;
+    _debounce = null;
+    _schedule();
+    return available;
   }
 
-  /// 释放进程级缓存的**全部**图像与几何状态（[FIX M1]）。
-  ///
-  /// 为什么必须有：本类用静态字段持有两张全屏 ui.Image —— 预模糊图（[image]）
-  /// 与源壁纸（[_src]）。在此之前**没有任何释放入口**：唯一的释放是「新图生成
-  /// 完成时替换旧图」（见 [_rebuild] 末尾），于是：
-  ///   1. 用户在设置里清掉壁纸、之后一直用纯色主题时，那张预模糊图会常驻到进程
-  ///      退出（`_resolve` 的 `provider == null` 分支只清了自己的窗口）；
-  ///   2. [_src] 是**静态强引用**，把整屏壁纸的 ui.Image 钉在 ImageCache 管辖
-  ///      之外 —— app.dart 的 didHaveMemoryPressure() 里 `imageCache.clear()`
-  ///      也回收不了它。
-  ///
-  /// 调用时机：WallpaperWindowScope 解析到 `provider == null`（= 当前没有配置
-  /// 壁纸）。provider 由 `config.backgroundImage` 派生，所以这个条件对**所有**
-  /// scope 同时成立，此时全局释放不会影响任何仍在显示壁纸的页面。
+  static void _schedule() {
+    if (_pending == null || _running != null) return;
+    if (_src == null) {
+      _startPending();
+    } else {
+      _debounce = Timer(const Duration(milliseconds: 120), _startPending);
+    }
+  }
+
+  static void _startPending() {
+    _debounce = null;
+    if (_pending == null || _running != null) return;
+    final request = _pending!;
+    _pending = null;
+    // A different decode cannot use the old cropped blur. Stop retaining that
+    // decoded size before starting the replacement raster (outside build).
+    if (_src != null && !_src!.isCloneOf(request.source)) {
+      final oldSource = _src!;
+      final oldBlur = image.value;
+      _src = null;
+      image.value = null;
+      _disposeAfterFrame(oldSource);
+      if (oldBlur != null) _disposeAfterFrame(oldBlur);
+    }
+    _running = request;
+    unawaited(
+      _rebuild(request).whenComplete(() {
+        _running = null;
+        _schedule();
+      }),
+    );
+  }
+
+  /// Invalidates queued/in-flight results and relinquishes published images.
+  /// The active raster owns its handle until its asynchronous allocation ends.
   static void release() {
-    final cur = image.value;
-    // ⚠️ 必须自增 _token：_rebuild 是异步的（toImage 要 1~3 帧），释放后仍可能有
-    // 在途任务回来把新图写进 image —— 不作废就变成「刚释放又泄漏回去」。
     _token++;
     _debounce?.cancel();
-    _pendingSource?.dispose();
-    _pendingSource = null;
     _debounce = null;
-    _scheduledKey = null;
+    _pending?.source.dispose();
+    _pending = null;
     _failedKey = null;
     _failedAtMs = 0;
-    _requestedSource?.dispose();
-    _requestedSource = null;
-    final oldSource = _src;
+    final source = _src;
+    final blurred = image.value;
     _src = null;
-    if (oldSource != null) _disposeAfterFrame(oldSource);
     _screen = Size.zero;
     _dpr = -1;
     _sigma = -1;
-    image.value = null; // 先置空：通知所有 scope 把卡片的 blurred 降级为 null
-    if (cur != null) {
-      // 本帧的绘制可能仍在用旧图，推迟到帧末释放，避免 use-after-dispose
-      //（与 _rebuild 里替换旧图的处理保持一致）。
-      _disposeAfterFrame(cur);
+    image.value = null;
+    if (source != null) _disposeAfterFrame(source);
+    if (blurred != null) _disposeAfterFrame(blurred);
+    if (_observingMemory) {
+      WidgetsBinding.instance.removeObserver(_memoryObserver);
+      _observingMemory = false;
     }
   }
 
   static void _disposeAfterFrame(ui.Image image) {
     WidgetsBinding.instance.addPostFrameCallback((_) => image.dispose());
-    // addPostFrameCallback alone does not request a frame when the app is idle.
     WidgetsBinding.instance.ensureVisualUpdate();
   }
 
-  /// 离屏渲染「按 cover 铺满整屏 + 高斯模糊」的壁纸（设备像素空间）。
-  /// [failKey] 为本次请求的参数指纹，失败时记入 [_failedKey] 以免反复重试。
-  static Future<void> _rebuild(
-    ui.Image src,
-    Size screen,
-    double dpr,
-    double sigma,
-    int failKey,
-    int token,
-  ) async {
-    // Keep an owned handle while the scope may replace or release its ImageInfo.
-    final source = src.clone();
-    final int dw = (screen.width * dpr).round().clamp(1, 8192);
-    final int dh = (screen.height * dpr).round().clamp(1, 8192);
-    final double sigmaDev = sigma * dpr;
-    // ── 半分辨率渲染（仅在有真实模糊时）──
-    // 这张图随后只会被**模糊后**贴进玻璃，高频信息已经在模糊里丢掉了，因此
-    // 按 1/2 分辨率渲染再放大回来，肉眼与满分辨率逐像素等价，而纹理内存与
-    // 采样开销都降到 1/4。这是「进主界面时内存飙升」里最容易被忽略的一块：
-    // 满分辨率下它是 (屏宽×DPR + 6σ)×(屏高×DPR + 6σ) 的 RGBA 大图
-    // （2K/DPR1.25 实测约 25MB 常驻），半分辨率后只剩 ~6MB。
-    // 唯一例外是「模糊度 = 0」（用户要的是清晰玻璃）：此时不能降采样，否则
-    // 玻璃里的壁纸会被无谓地糊掉 —— 用 σ_dev 做门槛，σ 越大越安全。
-    final int ds = sigmaDev >= 4.0 ? 2 : 1;
-    // 用整数除法（dw/ds 恒为整数关系：ds 只取 1 或 2），避免 double → int 的 num 报错
-    final int pw = (dw ~/ ds).clamp(1, 8192);
-    final int ph = (dh ~/ ds).clamp(1, 8192);
-    final double sigmaBs = sigmaDev / ds;
-    // 模糊在图像边界外取透明（kDecal）并【向内】衰减：若直接渲染一张 pw×ph
-    // 的图，屏幕最边缘（贴边的玻璃卡）会明显偏透、露出主题底色。原实现没有
-    // 这个问题 —— 它模糊的是整张壁纸、dst 是可能比屏幕更大的 cover，屏幕边缘
-    // 落在壁纸内部。这里用「外扩 3σ 画布 → 裁出中间 pw×ph」还原该行为：衰减
-    // 落在被裁掉的 padding 上，最终交付给 painter 的仍是屏幕尺寸的图，因此
-    // 不额外常驻内存（padding 那两张只是重建瞬间的临时对象）。
-    final int pad = (3 * sigmaBs).ceil().clamp(0, 512);
-    ui.Image? next;
-    ui.Image? resultSource;
+  static Future<ui.Image> _rasterize(
+    ui.Picture picture,
+    int width,
+    int height,
+  ) =>
+      rasterizeForTesting?.call(picture, width, height) ??
+      picture.toImage(width, height);
+
+  static Future<void> _rebuild(_BlurRequest request) async {
+    final source = request.source;
+    final budget = ImageMemoryBudget.blurSize(
+      request.screen.width,
+      request.screen.height,
+      request.dpr,
+      request.sigma,
+    );
+    final pw = budget.width;
+    final ph = budget.height;
+    final pad = budget.padding;
     ui.Image? padded;
+    ui.Image? next;
     ui.Picture? picture;
-    ui.Picture? cropPicture;
+    ui.Picture? crop;
+    var retained = false;
     try {
       final iw = source.width.toDouble();
       final ih = source.height.toDouble();
-      // 与 BoxFit.cover 一致：等比铺满整屏、居中裁切。与原 painter 的 cover
-      // 计算等价，保证卡内壁纸与卡外背景逐像素对齐。
       final scale = math.max(pw / iw, ph / ih);
-      final double cw = iw * scale;
-      final double ch = ih * scale;
-      final paint = Paint()
-        // 预渲染画布已是设备像素，σ 需乘 DPR（painter 里的 σ 是逻辑单位）
-        // 再除以降采样系数 ds（画布也同步缩小了 ds 倍，σ 必须同比例缩）
-        // σ 走进程级缓存：改「模糊度」时会连续重建，避免反复新建 native filter。
-        ..imageFilter = cachedGlassBlur(sigmaBs)
-        // 用 low 而非 medium：这里是把源壁纸**放大**到 cover（最差也是 1:1），
-        // mipmap 只在缩小采样时才有意义，而 medium 会让引擎为源图额外生成
-        // 一条 mipmap 链（≈ +1/3 纹理内存）—— 壁纸常是几千万像素的大图，
-        // 这笔开销在「进主界面」这个内存最紧张的时段尤其不值得。
-        ..filterQuality = FilterQuality.low;
-
-      final rec = ui.PictureRecorder();
-      Canvas(rec).drawImageRect(
+      final recorder = ui.PictureRecorder();
+      Canvas(recorder).drawImageRect(
         source,
         Rect.fromLTWH(0, 0, iw, ih),
-        Rect.fromLTWH(pad + (pw - cw) / 2, pad + (ph - ch) / 2, cw, ch),
-        paint,
+        Rect.fromLTWH(
+          pad + (pw - iw * scale) / 2,
+          pad + (ph - ih * scale) / 2,
+          iw * scale,
+          ih * scale,
+        ),
+        Paint()
+          ..imageFilter = cachedGlassBlur(budget.sigma)
+          ..filterQuality = FilterQuality.low,
       );
-      picture = rec.endRecording();
-      padded = await picture.toImage(pw + 2 * pad, ph + 2 * pad);
-      if (token != _token) return;
-
+      picture = recorder.endRecording();
+      padded = await _rasterize(
+        picture,
+        budget.paddedWidth,
+        budget.paddedHeight,
+      );
+      picture.dispose();
+      picture = null;
+      if (request.token != _token) return;
       if (pad == 0) {
         next = padded;
-        padded = null; // Ownership transfers to the published image.
+        padded = null;
       } else {
-        // 裁出 padding 内的屏幕区域作为最终图
-        final rec2 = ui.PictureRecorder();
-        Canvas(rec2).drawImageRect(
+        final recorder = ui.PictureRecorder();
+        Canvas(recorder).drawImageRect(
           padded,
           Rect.fromLTWH(
             pad.toDouble(),
@@ -443,57 +410,67 @@ class WallpaperBlurCache {
             ph.toDouble(),
           ),
           Rect.fromLTWH(0, 0, pw.toDouble(), ph.toDouble()),
-          // 1:1 纯裁剪拷贝（pw×ph → pw×ph）：high（双三次）在这里毫无收益，
-          // 只是每次重建都白做一遍高代价重采样。none = 精确像素拷贝。
           Paint()..filterQuality = FilterQuality.none,
         );
-        cropPicture = rec2.endRecording();
-        next = await cropPicture.toImage(pw, ph);
+        crop = recorder.endRecording();
+        next = await _rasterize(crop, pw, ph);
+        crop.dispose();
+        crop = null;
       }
-    } catch (_) {
-      next?.dispose();
+      if (request.token != _token) return;
+      final old = image.value;
+      final oldSource = _src;
+      _src = source;
+      retained = true;
+      _screen = request.screen;
+      _dpr = request.dpr;
+      _sigma = request.sigma;
+      _failedKey = null;
+      image.value = next;
       next = null;
+      if (oldSource != null) _disposeAfterFrame(oldSource);
+      if (old != null) _disposeAfterFrame(old);
+    } catch (_) {
+      if (request.token == _token) {
+        _failedKey = request.key;
+        _failedAtMs = DateTime.now().millisecondsSinceEpoch;
+      }
     } finally {
-      cropPicture?.dispose();
       picture?.dispose();
+      crop?.dispose();
       padded?.dispose();
-      if (next != null && token == _token) resultSource = source.clone();
-      source.dispose();
-    }
-    // 已被更新的任务取代 → 丢弃本次结果
-    if (token != _token) {
       next?.dispose();
-      return;
-    }
-    if (next == null) {
-      // 生成失败（如显存不足）：保留旧图，painter 仍可回退实时模糊。
-      // 记下指纹与失败时刻 → 冷却期内不再重试，冷却后自动再试一次
-      // （见 kBlurRebuildRetryCooldownMs）。
-      //
-      // 同时必须清掉 _scheduledKey：立即执行路径（`_src == null`）正是靠它
-      // 挡掉重复发起的，失败时不清就会让后续每次 build 都命中
-      // `key == _scheduledKey` 直接返回 —— 冷却机制形同虚设，重试永远排不上。
-      _failedKey = failKey;
-      _failedAtMs = DateTime.now().millisecondsSinceEpoch;
-      _scheduledKey = null;
-      return;
-    }
-    // 成功（含参数已变化后的首次成功）：清掉失败标记，让该指纹重新可试。
-    _failedKey = null;
-    final old = image.value;
-    final oldSource = _src;
-    _src = resultSource;
-    if (oldSource != null) _disposeAfterFrame(oldSource);
-    _scheduledKey = null;
-    _screen = screen;
-    _dpr = dpr;
-    _sigma = sigma;
-    image.value = next; // 通知所有 scope 重新发布给页内玻璃卡
-    if (old != null) {
-      // 本帧的绘制可能仍在用旧图，推迟到帧末再释放，避免 use-after-dispose
-      _disposeAfterFrame(old);
+      if (!retained) source.dispose();
     }
   }
+}
+
+final class _BlurRequest {
+  const _BlurRequest(
+    this.source,
+    this.screen,
+    this.dpr,
+    this.sigma,
+    this.key,
+    this.token,
+  );
+  final ui.Image source;
+  final Size screen;
+  final double dpr;
+  final double sigma;
+  final int key;
+  final int token;
+
+  bool matches(ui.Image image, Size size, double density, double blur) =>
+      source.isCloneOf(image) &&
+      screen == size &&
+      dpr == density &&
+      sigma == blur;
+}
+
+final class _WallpaperMemoryObserver with WidgetsBindingObserver {
+  @override
+  void didHaveMemoryPressure() => WallpaperBlurCache.release();
 }
 
 /// 壁纸窗口作用域：把当前壁纸解析为 [ui.Image]（异步，加载完成前
@@ -537,6 +514,7 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
   ImageStreamListener? _listener;
   ImageProvider? _resolvedFor;
   bool _disposed = false;
+  int _resolveEpoch = 0;
 
   /// [FIX M1] 当前仍持有壁纸的 scope 数量。
   ///
@@ -637,7 +615,7 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
       // [FIX M1] 没有壁纸 ⇒ 预模糊图与源壁纸引用都不再需要，全局释放掉。
       // 释放前必须先把本 scope 的窗口置空（上面一行）：否则下面 release() 触发的
       // image 通知会走 _publish()，用已释放的旧图重建一次窗口。
-      WallpaperBlurCache.release();
+      if (_liveWithProvider == 0) WallpaperBlurCache.release();
       return;
     }
     // 用 == 而不是 identical：壁纸 provider 每次 build 都是新实例，ResizeImage
@@ -649,9 +627,10 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
       _window.value = null;
       _releaseImageInfo();
     }
+    final epoch = _resolveEpoch;
     final listener = ImageStreamListener(
       (info, _) {
-        if (_disposed) {
+        if (_disposed || epoch != _resolveEpoch) {
           info.dispose();
           return;
         }
@@ -676,7 +655,7 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
       // 解码失败（文件被删/损坏）时清空窗口，玻璃卡回退到
       // BackdropFilter 路径；不传 onError 会把异常抛到全局错误处理。
       onError: (_, _) {
-        if (!_disposed) {
+        if (!_disposed && epoch == _resolveEpoch) {
           _window.value = null;
           _releaseImageInfo();
         }
@@ -697,11 +676,27 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
   }
 
   void _unsubscribe() {
+    _resolveEpoch++;
+    final previous = _resolvedFor;
     final l = _listener;
     if (l != null) _stream?.removeListener(l);
     _stream = null;
     _listener = null;
     _resolvedFor = null;
+    if (previous != null) {
+      unawaited(_evictOldDecode(previous));
+    }
+  }
+
+  // Evict the keep-alive entry, while other live views may still reuse it. Their
+  // ImageInfo handles and ImageStream listeners retain pixels until replacement.
+  static Future<void> _evictOldDecode(ImageProvider provider) async {
+    try {
+      final key = await provider.obtainKey(ImageConfiguration.empty);
+      PaintingBinding.instance.imageCache.evict(key, includeLive: false);
+    } catch (_) {
+      // A failed provider has no decoded keep-alive image to retain.
+    }
   }
 
   /// 把共享缓存里当前可用的预模糊图重新发布给页内玻璃卡（其余字段沿用）。

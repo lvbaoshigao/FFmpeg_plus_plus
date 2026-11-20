@@ -191,10 +191,6 @@ double mobileNavMaskExtent(double itemExtent) {
   return v < 8 ? 8 : v;
 }
 
-/// Keeps the legacy shell arguments while the indicator follows its own setting.
-Widget navMaskPill(ColorScheme scheme, bool isDark, String style) =>
-    const SelectionHighlight(radius: 22);
-
 /// OCLiquidGlass 静态 settings：dark/light 差异化由 tint/shadow 承担，
 /// 这样所有 build 都使用同一份 const 实例，避免每次新建 settings 触发
 /// shader uniform 重置（移动端表现为液态玻璃"来回跳跃"闪烁）。
@@ -928,7 +924,7 @@ class _MobileNavRailState extends State<MobileNavRail> {
           ? Duration.zero
           : const Duration(milliseconds: 150),
       curve: Curves.easeOutBack,
-      child: navMaskPill(scheme, isDark, style),
+      child: const SelectionHighlight(radius: 22),
     );
 
     // 退出「拖菜单栏松手后的吸附窗口」的条件：PageView 已停稳且停在选中项上
@@ -997,7 +993,7 @@ class _MobileNavRailState extends State<MobileNavRail> {
   ///
   /// 直接复用 [_dragX] / [_pageTick] / [_releasedFromDrag] / [_pageIsScrolling]：
   /// 任一时刻树上只有一个形态，两套定位不会互相干扰；遮罩本身也仍是同一个
-  /// [navMaskPill]（材质跟随独立的 selectionIndicatorStyle）。
+  /// [SelectionHighlight]（材质跟随独立的 selectionIndicatorStyle）。
   Widget _buildRailMask(
     int itemIdx,
     double itemExtent,
@@ -1020,7 +1016,7 @@ class _MobileNavRailState extends State<MobileNavRail> {
                 ? Duration.zero
                 : const Duration(milliseconds: 150),
             curve: Curves.easeOutBack,
-            child: navMaskPill(scheme, isDark, style),
+            child: const SelectionHighlight(radius: 22),
           );
 
           // 退出「拖菜单栏松手后的吸附窗口」的判定与横排一致：页面已停稳且

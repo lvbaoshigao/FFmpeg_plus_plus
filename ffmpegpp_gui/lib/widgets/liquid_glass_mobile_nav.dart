@@ -88,28 +88,28 @@ class _StyledAppTabBar extends StatefulWidget {
 }
 
 class _StyledAppTabBarState extends State<_StyledAppTabBar> {
-  double? _dragSlot;
+  final ValueNotifier<double?> _dragPosition = ValueNotifier(null);
   int? _focused;
 
   void _activate(int index) {
     final bar = widget.bar;
     final intercepted = bar.onTapIntercept?.call(index) ?? false;
-    if (mounted) {
-      setState(() => _dragSlot = null);
-    }
-    if (!intercepted) {
-      bar.onTap(index);
-    }
+    _dragPosition.value = null;
+    if (!intercepted) bar.onTap(index);
   }
 
   void _finishDrag() {
-    final slot = _dragSlot;
-    if (slot != null) {
-      _activate(slot.round());
-    }
+    final slot = _dragPosition.value;
+    if (slot != null) _activate(slot.round());
   }
 
-  void _cancelDrag() => setState(() => _dragSlot = null);
+  void _cancelDrag() => _dragPosition.value = null;
+
+  @override
+  void dispose() {
+    _dragPosition.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -150,93 +150,100 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
             builder: (context, constraints) {
               final slotWidth = constraints.maxWidth / bar.items.length;
               final reducedMotion = MediaQuery.disableAnimationsOf(context);
+              final staticRows = _StaticTabRows(
+                normal: Row(
+                  children: [
+                    for (var index = 0; index < bar.items.length; index++)
+                      Expanded(child: _interactiveItem(context, index)),
+                  ],
+                ),
+                selected: Row(
+                  children: [
+                    for (var index = 0; index < bar.items.length; index++)
+                      Expanded(child: _itemContent(context, index, true)),
+                  ],
+                ),
+              );
+              Rect selectionRect(double position) => Rect.fromLTWH(
+                position * slotWidth - style.capsuleOverhang,
+                0,
+                slotWidth + style.capsuleOverhang * 2,
+                style.capsuleHeight,
+              );
+
               return GestureDetector(
+                key: const ValueKey('app-tab-drag-surface'),
                 behavior: HitTestBehavior.opaque,
                 excludeFromSemantics: true,
-                onHorizontalDragStart: (_) =>
-                    setState(() => _dragSlot = bar.currentIndex.toDouble()),
-                onHorizontalDragUpdate: (details) => setState(() {
-                  _dragSlot =
-                      ((_dragSlot ?? bar.currentIndex.toDouble()) +
+                onHorizontalDragStart: (_) {
+                  _dragPosition.value = bar.currentIndex.toDouble();
+                },
+                onHorizontalDragUpdate: (details) {
+                  _dragPosition.value =
+                      ((_dragPosition.value ?? bar.currentIndex.toDouble()) +
                               (details.primaryDelta ?? 0) / slotWidth)
                           .clamp(0.0, bar.items.length - 1.0);
-                }),
+                },
                 onHorizontalDragEnd: (_) => _finishDrag(),
                 onHorizontalDragCancel: _cancelDrag,
-                onLongPressStart: (details) => setState(() {
-                  _dragSlot = (details.localPosition.dx / slotWidth - 0.5)
-                      .clamp(0.0, bar.items.length - 1.0);
-                }),
-                onLongPressMoveUpdate: (details) => setState(() {
-                  _dragSlot = (details.localPosition.dx / slotWidth - 0.5)
-                      .clamp(0.0, bar.items.length - 1.0);
-                }),
+                onLongPressStart: (details) {
+                  _dragPosition.value =
+                      (details.localPosition.dx / slotWidth - 0.5).clamp(
+                        0.0,
+                        bar.items.length - 1.0,
+                      );
+                },
+                onLongPressMoveUpdate: (details) {
+                  _dragPosition.value =
+                      (details.localPosition.dx / slotWidth - 0.5).clamp(
+                        0.0,
+                        bar.items.length - 1.0,
+                      );
+                },
                 onLongPressEnd: (_) => _finishDrag(),
                 onLongPressCancel: _cancelDrag,
-                child: TweenAnimationBuilder<double>(
-                  tween: Tween(end: _dragSlot ?? bar.currentIndex.toDouble()),
-                  duration: reducedMotion || _dragSlot != null
-                      ? Duration.zero
-                      : const Duration(milliseconds: 240),
-                  curve: Curves.easeOutCubic,
-                  builder: (context, position, _) {
-                    final rect = Rect.fromLTWH(
-                      position * slotWidth - style.capsuleOverhang,
-                      0,
-                      slotWidth + style.capsuleOverhang * 2,
-                      style.capsuleHeight,
-                    );
-                    return Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        Positioned.fromRect(
-                          rect: rect,
-                          child: SelectionHighlight(
-                            key: const ValueKey('app-tab-selection'),
-                            radius: style.capsuleHeight / 2,
-                            style: widget.indicatorStyle,
-                          ),
+                child: ValueListenableBuilder<double?>(
+                  valueListenable: _dragPosition,
+                  child: staticRows,
+                  builder: (context, dragPosition, rows) =>
+                      TweenAnimationBuilder<double>(
+                        tween: Tween<double>(
+                          end: dragPosition ?? bar.currentIndex.toDouble(),
                         ),
-                        Row(
-                          children: [
-                            for (
-                              var index = 0;
-                              index < bar.items.length;
-                              index++
-                            )
-                              Expanded(child: _interactiveItem(context, index)),
-                          ],
-                        ),
-                        // As in the hosted bar, keep color changes aligned with
-                        // the moving capsule and expose only one semantics row.
-                        Positioned.fill(
-                          child: IgnorePointer(
-                            child: ExcludeSemantics(
-                              child: ClipPath(
-                                clipper: _TabSelectionClipper(rect),
-                                child: Row(
-                                  children: [
-                                    for (
-                                      var index = 0;
-                                      index < bar.items.length;
-                                      index++
-                                    )
-                                      Expanded(
-                                        child: _itemContent(
-                                          context,
-                                          index,
-                                          true,
-                                        ),
-                                      ),
-                                  ],
+                        duration: reducedMotion || dragPosition != null
+                            ? Duration.zero
+                            : const Duration(milliseconds: 240),
+                        curve: Curves.easeOutCubic,
+                        child: rows,
+                        builder: (context, position, staticRows) {
+                          final rows = staticRows! as _StaticTabRows;
+                          final rect = selectionRect(position);
+                          return Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              Positioned.fromRect(
+                                rect: rect,
+                                child: SelectionHighlight(
+                                  key: const ValueKey('app-tab-selection'),
+                                  radius: style.capsuleHeight / 2,
+                                  style: widget.indicatorStyle,
                                 ),
                               ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
+                              rows.normal,
+                              Positioned.fill(
+                                child: IgnorePointer(
+                                  child: ExcludeSemantics(
+                                    child: ClipPath(
+                                      clipper: _TabSelectionClipper(rect),
+                                      child: rows.selected,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
                 ),
               );
             },
@@ -244,6 +251,7 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
         ),
       ),
     );
+
     return pal == null
         ? Padding(padding: margins, child: track)
         : NavGlassShell(
@@ -253,6 +261,12 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
             keyPrefix: 'styledAppTabBar',
             child: track,
           );
+  }
+
+  void _handleFocusHighlight(int index, bool show) {
+    final next = show ? index : null;
+    if (_focused == next) return;
+    setState(() => _focused = next);
   }
 
   Widget _interactiveItem(BuildContext context, int index) {
@@ -268,8 +282,7 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
       onTap: () => _activate(index),
       excludeSemantics: true,
       child: FocusableActionDetector(
-        onShowFocusHighlight: (show) =>
-            setState(() => _focused = show ? index : null),
+        onShowFocusHighlight: (show) => _handleFocusHighlight(index, show),
         actions: {
           ActivateIntent: CallbackAction<ActivateIntent>(
             onInvoke: (_) {
@@ -346,6 +359,16 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
       ),
     );
   }
+}
+
+class _StaticTabRows extends StatelessWidget {
+  const _StaticTabRows({required this.normal, required this.selected});
+
+  final Widget normal;
+  final Widget selected;
+
+  @override
+  Widget build(BuildContext context) => Stack(children: [normal, selected]);
 }
 
 class _TabSelectionClipper extends CustomClipper<Path> {

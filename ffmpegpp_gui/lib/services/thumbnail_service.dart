@@ -1,21 +1,54 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+
 import '../models/models.dart';
 import 'ffmpeg_installer.dart';
+import 'task_process_runner.dart';
 
-/// 统一的缩略图生成服务（视频抽帧 / 音频封面）。
-///
-/// 之前该逻辑在 video_card / task_card / container_detail_page /
-/// pipeline_editor_page 各复制一份且参数互不一致；统一为：
-/// - 缓存文件：`<systemTemp>/ffmpegpp_thumb_<fnv1a(path)><_cover>.jpg`，
-///   以 176x108 / -q:v 3 生成一份，各显示处按需缩放；
-/// - Process.start + 30 秒超时 kill（损坏文件/超长 seek 会卡住 ffmpeg，
-///   裸 Process.run 只会放弃等待，悬挂进程仍持有管道拖住后续导入）；
-/// - 同一文件的并发请求复用同一个 Future，避免重复起进程。
-class ThumbnailService {
-  ThumbnailService._();
+/// Generates and caches video thumbnails and audio artwork.
+final class ThumbnailService {
+  ThumbnailService._(
+    this._cacheDirectory,
+    this._runner, {
+    this._maxConcurrent = 2,
+    this._maxQueued = 64,
+    this._timeout = const Duration(seconds: 30),
+  });
 
-  // 缓存键：FNV-1a 稳定摘要（String.hashCode 跨运行不稳定且 32 位易碰撞）
+  /// Uses isolated temporary files and an injectable process runner in tests.
+  @visibleForTesting
+  factory ThumbnailService.forTesting({
+    required Directory cacheDirectory,
+    required TaskProcessRunner runner,
+    int maxConcurrent = 2,
+    int maxQueued = 64,
+    Duration timeout = const Duration(seconds: 30),
+  }) => ThumbnailService._(
+    cacheDirectory,
+    runner,
+    maxConcurrent: maxConcurrent,
+    maxQueued: maxQueued,
+    timeout: timeout,
+  );
+
+  static final _shared = ThumbnailService._(
+    Directory.systemTemp,
+    TaskProcessRunner(captureLimit: 16 * 1024),
+  );
+
+  final Directory _cacheDirectory;
+  final TaskProcessRunner _runner;
+  final int _maxConcurrent;
+  final int _maxQueued;
+  final Duration _timeout;
+  final _inFlight = <(String, bool), Future<String?>>{};
+  final _queue = Queue<_ThumbnailRequest>();
+  int _active = 0;
+
+  /// Returns the stable digest used in thumbnail cache filenames.
   static String stableHash(String s) {
     var h = 0x811c9dc5;
     for (final c in s.codeUnits) {
@@ -25,57 +58,141 @@ class ThumbnailService {
     return h.toRadixString(16).padLeft(8, '0');
   }
 
-  static final Map<String, Future<String?>> _inFlight = {};
-
+  /// Uses the shared thumbnail cache and process limit.
   static Future<String?> ensureThumbnail(
     String filepath, {
     String? ffmpeg,
     bool? isAudio,
+  }) => _shared.requestThumbnail(filepath, ffmpeg: ffmpeg, isAudio: isAudio);
+
+  /// Reuses a pending request for the same file and artwork mode.
+  ///
+  /// Cache misses beyond the backlog limit return null and may be retried.
+  Future<String?> requestThumbnail(
+    String filepath, {
+    String? ffmpeg,
+    bool? isAudio,
   }) {
-    // [FIX H-1] 规范化 key：isAudio 为 null 时按 false 处理，避免 "null" 与 "false"
-    // 被视为两个不同 key 而对同一文件重复起进程。
-    final audioFlag = (isAudio ?? false) ? 'a' : 'v';
-    final key = '$filepath|$audioFlag';
-    // [FIX H-1] 保留「先查后插」同步去重：并发调用同一 key 必须复用同一个 Future。
-    final existing = _inFlight[key];
-    if (existing != null) return existing;
-    // [FIX H-1] Future.sync 包裹：即便 _generate 在首个 await 前同步抛异常，
-    // 也不会在 _inFlight 残留永不完成的项；完成后移除 key，避免失败被永久缓存
-    //（null）且 Map 无界增长。真正的成功缓存交给调用点的 f.exists() 判断。
-    final fut = Future.sync(() => _generate(filepath, ffmpeg, isAudio))
-        .whenComplete(() => _inFlight.remove(key));
-    _inFlight[key] = fut;
-    return fut;
+    final audio = isAudio ?? detectMediaType(filepath) == MediaType.audio;
+    final key = (filepath, audio);
+    if (_inFlight[key] case final pending?) return pending;
+
+    final suffix = audio ? '_cover' : '';
+    final cache = File(
+      '${_cacheDirectory.path}${Platform.pathSeparator}'
+      'ffmpegpp_thumb_${stableHash(filepath)}$suffix.jpg',
+    );
+    final future = _cachedPath(cache);
+    if (_inFlight.length >= _maxConcurrent + _maxQueued) return future;
+
+    final request = future
+        .then((cached) {
+          if (cached != null) return Future<String?>.value(cached);
+          final job = _ThumbnailRequest(filepath, ffmpeg, audio, cache);
+          _queue.addLast(job);
+          _pump();
+          return job.result.future;
+        })
+        .whenComplete(() {
+          _inFlight.remove(key);
+        });
+    _inFlight[key] = request;
+    return request;
   }
 
-  static Future<String?> _generate(String filepath, String? ffmpeg, bool? isAudioOverride) async {
-    final isAudio = isAudioOverride ?? detectMediaType(filepath) == MediaType.audio;
-    final suffix = isAudio ? '_cover' : '';
-    final f = File('${Directory.systemTemp.path}/ffmpegpp_thumb_${stableHash(filepath)}$suffix.jpg');
+  static Future<String?> _cachedPath(File cache) async {
     try {
-      if (await f.exists()) return f.path;
-      final ext = filepath.split('.').last.toLowerCase();
-      final isImage = kImageExts.contains(ext);
-      final args = <String>['-y'];
-      if (!isImage && !isAudio) args.addAll(['-ss', '5']);
-      if (isAudio) {
-        args.addAll(['-i', filepath, '-an', '-vframes', '1', '-q:v', '3', f.path]);
-      } else {
-        args.addAll(['-i', filepath, '-vframes', '1', '-q:v', '3', '-s', '176x108', f.path]);
-      }
-      final proc = await Process.start(FfmpegInstaller.resolveFfmpeg(configured: ffmpeg), args);
-      final killTimer = Timer(const Duration(seconds: 30), () => proc.kill());
-      try {
-        // 排空 stdout/stderr：ffmpeg 的日志输出超过管道缓冲区时会阻塞在写端
-        await Future.wait([proc.stdout.drain<void>(), proc.stderr.drain<void>()]);
-        final exitCode = await proc.exitCode;
-        if (exitCode != 0) return null;
-      } finally {
-        killTimer.cancel();
-      }
-      return await f.exists() ? f.path : null;
-    } catch (_) {
+      return await cache.exists() ? cache.path : null;
+    } on FileSystemException {
       return null;
     }
   }
+
+  void _pump() {
+    while (_active < _maxConcurrent && _queue.isNotEmpty) {
+      _active++;
+      unawaited(_runNext(_queue.removeFirst()));
+    }
+  }
+
+  Future<void> _runNext(_ThumbnailRequest job) async {
+    try {
+      job.result.complete(await _generate(job));
+    } finally {
+      _active--;
+      _pump();
+    }
+  }
+
+  Future<String?> _generate(_ThumbnailRequest job) async {
+    Directory? work;
+    try {
+      final cached = await _cachedPath(job.cache);
+      if (cached != null) return cached;
+      // FFmpeg can leave partial output on failure. Publish only a complete
+      // image and remove only the temporary directory this job owns.
+      work = await _cacheDirectory.createTemp('ffmpegpp_thumbnail_work_');
+      final output = File('${work.path}${Platform.pathSeparator}thumbnail.jpg');
+      final ext = job.filepath.split('.').last.toLowerCase();
+      final args = <String>[
+        '-nostdin',
+        '-loglevel',
+        'error',
+        '-y',
+        if (!kImageExts.contains(ext) && !job.isAudio) ...['-ss', '5'],
+        '-i',
+        job.filepath,
+        if (job.isAudio) '-an',
+        '-vframes',
+        '1',
+        '-q:v',
+        '3',
+        if (job.isAudio) ...[
+          '-vf',
+          'scale=176:108:force_original_aspect_ratio=decrease:force_divisible_by=2',
+        ] else ...[
+          '-s',
+          '176x108',
+        ],
+        output.path,
+      ];
+      final run = _runner.createRun();
+      final timer = Timer(_timeout, run.cancel);
+      try {
+        final result = await run.run(
+          FfmpegInstaller.resolveFfmpeg(configured: job.ffmpeg),
+          args,
+        );
+        if (result.exitCode != 0 ||
+            !await output.exists() ||
+            await output.length() == 0) {
+          return null;
+        }
+        return await _cachedPath(job.cache) ??
+            (await output.rename(job.cache.path)).path;
+      } finally {
+        timer.cancel();
+      }
+    } catch (_) {
+      return null;
+    } finally {
+      if (work != null) {
+        try {
+          await work.delete(recursive: true);
+        } on FileSystemException {
+          // The cache directory may already have been removed.
+        }
+      }
+    }
+  }
+}
+
+final class _ThumbnailRequest {
+  _ThumbnailRequest(this.filepath, this.ffmpeg, this.isAudio, this.cache);
+
+  final String filepath;
+  final String? ffmpeg;
+  final bool isAudio;
+  final File cache;
+  final result = Completer<String?>();
 }

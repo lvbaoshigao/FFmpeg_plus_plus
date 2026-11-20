@@ -10,6 +10,18 @@ import 'package:flutter_test/flutter_test.dart';
 const _imageKey = ValueKey('press-capture');
 const _buttonKey = ValueKey('press-button');
 
+class _CountingBorder extends RoundedRectangleBorder {
+  const _CountingBorder({required this.onPath, required super.borderRadius});
+
+  final VoidCallback onPath;
+
+  @override
+  Path getOuterPath(Rect rect, {TextDirection? textDirection}) {
+    onPath();
+    return super.getOuterPath(rect, textDirection: textDirection);
+  }
+}
+
 Widget _host(Widget child, {bool reduced = false}) => MaterialApp(
   theme: AppTheme.light(),
   home: MediaQuery(
@@ -43,6 +55,77 @@ Future<List<int>> _pixels(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets(
+    'cached clipping tracks bounds and border changes until release',
+    (tester) async {
+      var paths = 0;
+      var removals = 0;
+      var bounds = const Rect.fromLTWH(0, 0, 160, 48);
+      await tester.pumpWidget(
+        _host(
+          const Material(
+            color: Colors.white,
+            child: Center(
+              child: SizedBox(key: _buttonKey, width: 160, height: 48),
+            ),
+          ),
+          reduced: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final before = await _pixels(tester);
+      final context = tester.element(find.byKey(_buttonKey));
+      final controller = Material.of(context);
+      final feature = Theme.of(context).splashFactory.create(
+        controller: controller,
+        referenceBox: tester.renderObject<RenderBox>(find.byKey(_buttonKey)),
+        position: Offset.zero,
+        color: Colors.black.withAlpha(30),
+        textDirection: TextDirection.ltr,
+        containedInkWell: true,
+        rectCallback: () => bounds,
+        customBorder: _CountingBorder(
+          onPath: () => paths++,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        onRemoved: () => removals++,
+      );
+      await tester.pump();
+      expect(paths, 1);
+      final lit = await _pixels(tester);
+      for (var frame = 0; frame < 3; frame++) {
+        controller.markNeedsPaint();
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(paths, 1);
+      expect(await _pixels(tester), lit);
+
+      bounds = const Rect.fromLTWH(20, 0, 120, 48);
+      controller.markNeedsPaint();
+      await tester.pump();
+      expect(paths, 2);
+      expect(await _pixels(tester), isNot(lit));
+      feature.customBorder = _CountingBorder(
+        onPath: () => paths++,
+        borderRadius: BorderRadius.circular(20),
+      );
+      await tester.pump();
+      expect(paths, 3);
+      final reshaped = await _pixels(tester);
+      feature.color = Colors.blue.withAlpha(30);
+      await tester.pump();
+      expect(paths, 3);
+      expect(await _pixels(tester), isNot(reshaped));
+      feature.confirm();
+      await tester.pump();
+      expect(removals, 1);
+      expect(await _pixels(tester), before);
+      expect(tester.binding.transientCallbackCount, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('ink lights the full contained shape and clears on cancellation', (
     tester,
   ) async {

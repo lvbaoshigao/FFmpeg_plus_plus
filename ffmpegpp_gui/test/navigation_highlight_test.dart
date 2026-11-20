@@ -441,9 +441,12 @@ void main() {
       (tester) async {
         final state = _state('theme');
         var builds = 0;
-        final items = [
+        var selected = 0;
+        var label = 'Projects';
+        late StateSetter setHostState;
+        List<LiquidGlassTabItem> items() => [
           LiquidGlassTabItem.builder(
-            label: 'Projects',
+            label: label,
             iconBuilder: (color) {
               builds++;
               return Icon(Icons.movie_outlined, color: color);
@@ -454,19 +457,54 @@ void main() {
         await _mount(
           tester,
           state,
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: AppLiquidTabBar(
-              currentIndex: 0,
-              onTap: (_) {},
-              items: items,
-            ),
+          StatefulBuilder(
+            builder: (context, setState) {
+              setHostState = setState;
+              return Align(
+                alignment: Alignment.bottomCenter,
+                child: AppLiquidTabBar(
+                  currentIndex: selected,
+                  onTap: (index) => setState(() => selected = index),
+                  items: items(),
+                ),
+              );
+            },
           ),
         );
         final before = builds;
+        final dragSurface = find
+            .byKey(const ValueKey('app-tab-drag-surface'))
+            .hitTestable();
+        expect(dragSurface, findsOneWidget);
+        final navRect = tester.getRect(dragSurface);
+        final firstCenter = Offset(navRect.left + navRect.width / 4, navRect.center.dy);
+        final gesture = await tester.startGesture(firstCenter);
+        final delta = Offset(navRect.width / 2 / 32, 0);
+        for (var frame = 0; frame < 32; frame++) {
+          await gesture.moveBy(delta);
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        expect(builds, before, reason: 'drag frames only move the indicator');
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(selected, 1);
+        expect(
+          builds,
+          greaterThan(before),
+          reason: 'committed selection rebuilds item colors',
+        );
+        setHostState(() => label = 'Workspaces');
+        await tester.pumpAndSettle();
+        expect(find.text('Workspaces'), findsNWidgets(2));
+        expect(
+          builds,
+          greaterThan(before),
+          reason: 'updated labels rebuild the static tab row',
+        );
+        final afterLabelUpdate = builds;
         state.addLog('Background progress');
         await tester.pump(const Duration(milliseconds: 200));
-        expect(builds, before);
+        expect(builds, afterLabelUpdate);
         await state.updateConfig(
           (config) => config..selectionIndicatorStyle = 'outline',
         );
