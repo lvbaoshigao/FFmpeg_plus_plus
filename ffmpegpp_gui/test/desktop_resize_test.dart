@@ -5,6 +5,7 @@ import 'package:ffmpegpp_gui/app.dart' show wallpaperImageProvider;
 
 import 'package:ffmpegpp_gui/platform/app_platform.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
+import 'package:ffmpegpp_gui/widgets/app_slider.dart';
 import 'package:ffmpegpp_gui/widgets/desktop_resize_scope.dart';
 import 'package:ffmpegpp_gui/widgets/glass_panel.dart';
 import 'package:ffmpegpp_gui/widgets/wallpaper_background.dart';
@@ -31,7 +32,13 @@ void main() {
                   body: Center(
                     child: GlassPanel(
                       style: 'blur',
-                      child: SizedBox(width: 200, child: TextField()),
+                      child: SizedBox(
+                        width: 200,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [TextField(), AppTrackGlass(height: 8)],
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -42,20 +49,24 @@ void main() {
         final field = find.byType(TextField);
         final element = tester.element(field);
         final backdrop = find.byType(BackdropFilter);
-        bool blurEnabled() => tester.widget<BackdropFilter>(backdrop).enabled;
-        expect(blurEnabled(), isTrue);
+        expect(backdrop, findsNWidgets(2));
+        void expectBlurEnabled(bool enabled) => expect(
+          tester.widgetList<BackdropFilter>(backdrop).map((w) => w.enabled),
+          everyElement(enabled),
+        );
+        expectBlurEnabled(true);
         await tester.enterText(field, 'keep me');
 
         tester.view.physicalSize = const Size(900, 650);
         await tester.pump(const Duration(milliseconds: 100));
-        expect(blurEnabled(), isFalse);
+        expectBlurEnabled(false);
         tester.view.physicalSize = const Size(960, 720);
         await tester.pump(const Duration(milliseconds: 100));
-        expect(blurEnabled(), isFalse);
+        expectBlurEnabled(false);
         expect(tester.element(field), same(element));
 
         await tester.pump(const Duration(milliseconds: 60));
-        expect(blurEnabled(), isTrue);
+        expectBlurEnabled(true);
         expect(tester.element(field), same(element));
         expect(find.text('keep me'), findsOneWidget);
         expect(tester.takeException(), isNull);

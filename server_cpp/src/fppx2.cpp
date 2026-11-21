@@ -592,8 +592,10 @@ bool parseNodeGraph(const std::vector<uint8_t>& payload, bool force, Fppx2Result
             v.spec = t;
             v.isStart = (t->name == std::string("start"));
             v.isOutput = (t->name == std::string("output"));
-            if (v.isStart) v.mediaOut = fd::startMediaOut(attr.value("params", json::object()));
             v.label = t->zhLabel;
+            const json params = attr.value("params", json::object());
+            if (v.isStart) v.mediaOut = fd::startMediaOut(params);
+            fd::resolveGenericMediaPorts(v, params, r.errors);
         } else if (g) {
             v.spec = g;
             v.label = g->zhLabel;

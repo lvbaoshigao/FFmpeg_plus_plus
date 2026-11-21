@@ -22,7 +22,8 @@ struct VNode {
     bool isStart = false;                // 非门源文件节点
     bool isOutput = false;
     std::string label;                   // 报错用显示名
-    uint8_t mediaOut = 0;                // start 节点按 params 解析后的输出媒体类型
+    uint8_t mediaIn = 0;                 // 通用节点按 params.media_type 解析后的输入媒体类型
+    uint8_t mediaOut = 0;                // start / 通用节点按 params 解析后的输出媒体类型
 };
 
 struct VEdge {
@@ -37,6 +38,9 @@ std::string genUuid();
 
 // start 节点的实际输出媒体类型由 params.file_media_type 决定
 uint8_t startMediaOut(const json& params);
+// 通用媒体节点的输入/输出媒体类型来自 params.media_type。
+void resolveGenericMediaPorts(VNode& node, const json& params,
+                              std::vector<std::string>& errors);
 
 // 由 GUI JSON 节点数组构建 VNode（fileId = 数组序；缺 id/type 记入 errors）
 void buildVNodesFromJson(const json& nodes, std::vector<VNode>& out,

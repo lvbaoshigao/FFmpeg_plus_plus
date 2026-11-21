@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../../providers/app_state.dart';
 
 import '../../services/frame_preview.dart';
 import '../app_slider.dart';
@@ -82,9 +85,13 @@ class _FrameStepEditorState extends State<FrameStepEditor> with StepEditorState<
   }
 
   Future<void> _generatePreview() async {
+    if (!mounted) return;
     setState(() => _loading = true);
     final t = p['extract_mode'] == 'single' ? (p['time'] as num?)?.toDouble() ?? 0.0 : (p['range_start'] as num?)?.toDouble() ?? 0.0;
-    final path = await FramePreview.generatePreview(widget.videoPath, t, width: 640);
+    final path = await FramePreview.generatePreview(
+      widget.videoPath, t, width: 640,
+      trace: context.read<AppState>().diagnosticTrace,
+    );
     if (mounted) setState(() { _previewPath = path; _loading = false; });
   }
 

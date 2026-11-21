@@ -14,6 +14,7 @@ import '../theme/app_neutral_surface.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_theme.dart';
+import 'app_alert_dialog.dart';
 import 'app_card.dart';
 import 'app_slider.dart';
 import 'toast.dart';
@@ -514,7 +515,7 @@ class TaskCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     showDialog<void>(
       context: context,
-      builder: (dCtx) => AlertDialog(
+      builder: (dCtx) => AppAlertDialog(
         title: Text(
           s.isZh ? '移除任务记录' : 'Remove Task Record',
           style: TextStyle(color: scheme.onSurface, fontSize: 15),
@@ -988,8 +989,7 @@ class TaskDetails extends StatelessWidget {
       (state) => state.config.language,
     );
     final useMobile =
-        mobile ??
-        (isMobilePlatform || MediaQuery.sizeOf(context).width < 700);
+        mobile ?? (isMobilePlatform || MediaQuery.sizeOf(context).width < 700);
     return TaskCard(task: task)._expanded(
       context,
       AppStrings.of(language),
@@ -1024,8 +1024,7 @@ class _PanelBox extends StatelessWidget {
       width: double.infinity,
       padding: padding,
       decoration: BoxDecoration(
-        color:
-            color ?? AppNeutralSurface.card(cs.brightness).withAlpha(40),
+        color: color ?? AppNeutralSurface.card(cs.brightness).withAlpha(40),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
           color: borderColor ?? cs.outlineVariant.withAlpha(70),
@@ -1151,9 +1150,10 @@ class _SummaryBar extends StatelessWidget {
       TaskStatus.pending => zh ? '等待开始处理' : 'Waiting to start',
       TaskStatus.processing =>
         '${s.remaining} ${_dashIfNa(task.remaining, zh)}',
-      TaskStatus.paused => zh
-          ? '进程已冻结（CPU 已释放），进度与已编码数据均保留'
-          : 'Process frozen (CPU released); progress is preserved',
+      TaskStatus.paused =>
+        zh
+            ? '进程已冻结（CPU 已释放），进度与已编码数据均保留'
+            : 'Process frozen (CPU released); progress is preserved',
       TaskStatus.completed =>
         zh ? '输出已写入下方路径' : 'Output written to the path below',
       TaskStatus.failed =>
@@ -2131,7 +2131,8 @@ class _ViewportNode extends StatelessWidget {
     final color = _color(scheme);
     final label = taskActionLabel(call.action, zh);
     final abbr = taskActionAbbr(call.action, zh);
-    final running = status == TaskStatus.processing || status == TaskStatus.paused;
+    final running =
+        status == TaskStatus.processing || status == TaskStatus.paused;
     return Tooltip(
       message:
           '$label\n${zh ? '进度' : 'Progress'}: ${(progress * 100).toStringAsFixed(0)}%',
@@ -2467,6 +2468,7 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
     final p = await ThumbnailService.ensureThumbnail(
       widget.filepath,
       ffmpeg: widget.ffmpeg,
+      trace: context.read<AppState>().diagnosticTrace,
     );
     if (mounted && p != null) setState(() => _path = p);
   }

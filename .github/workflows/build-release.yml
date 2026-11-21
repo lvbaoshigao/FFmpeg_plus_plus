@@ -114,24 +114,7 @@ jobs:
           cache: true
           pub-cache: true
 
-      # key 不含源码哈希 → 稳定命中，增量重编交给 CMake（理由见 compile-windows）
-      - name: Cache C++ backend build
-        uses: actions/cache@v5
-        with:
-          path: server_cpp/build_linux
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
-            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
-
-      - name: Build C++ backend (libffmpegpp.so)
-        run: |
-          cd server_cpp
-          mkdir -p build_linux
-          cd build_linux
-          cmake .. -DCMAKE_BUILD_TYPE=Release
-          make -j$(nproc)
-
+      # Flutter 的 Linux CMake 工程负责构建并安装 C++ 后端。
       - name: Build Flutter GUI
         run: |
           cd ffmpegpp_gui
@@ -142,7 +125,7 @@ jobs:
         run: |
           mkdir -p output
           cp -r ffmpegpp_gui/build/linux/x64/release/bundle/* output/
-          cp server_cpp/build_linux/libffmpegpp.so output/lib/
+          test -f output/lib/libffmpegpp.so
 
       - name: Pack bundle
         run: tar -czf linux-x64-bundle.tar.gz -C output .
@@ -219,24 +202,7 @@ jobs:
           restore-keys: |
             flutter-pub-${{ env.FLUTTER_VERSION }}-linux-arm64-
 
-      # key 不含源码哈希 → 稳定命中，增量重编交给 CMake（理由见 compile-windows）
-      - name: Cache C++ backend build
-        uses: actions/cache@v5
-        with:
-          path: server_cpp/build_linux
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
-            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
-
-      - name: Build C++ backend (libffmpegpp.so)
-        run: |
-          cd server_cpp
-          mkdir -p build_linux
-          cd build_linux
-          cmake .. -DCMAKE_BUILD_TYPE=Release
-          make -j$(nproc)
-
+      # Flutter 的 Linux CMake 工程负责构建并安装 C++ 后端。
       - name: Build Flutter GUI
         run: |
           cd ffmpegpp_gui
@@ -247,7 +213,7 @@ jobs:
         run: |
           mkdir -p output
           cp -r ffmpegpp_gui/build/linux/arm64/release/bundle/* output/
-          cp server_cpp/build_linux/libffmpegpp.so output/lib/
+          test -f output/lib/libffmpegpp.so
 
       - name: Pack bundle
         run: tar -czf linux-arm64-bundle.tar.gz -C output .
@@ -488,7 +454,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path build
           tar -xzf bundle/windows-bundle.tar.gz -C build
           # Run Inno Setup
-          & $iscc make\setup.iss
+          & $iscc "/DMyAppVersion=$env:APP_VERSION" make\setup.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
         shell: pwsh
 

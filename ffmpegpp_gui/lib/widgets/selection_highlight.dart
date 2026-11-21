@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import 'desktop_resize_scope.dart';
 import 'liquid_glass_fallback.dart';
@@ -88,25 +89,29 @@ final class SelectionHighlight extends StatelessWidget {
         child: const SizedBox.expand(),
       );
       final resizing = DesktopResizeScope.isResizingOf(context);
-      final sigma = tunedGlassSigma(8, tuning);
-      if (resolved == 'liquid') {
-        surface = resizing
-            ? body
-            : LiquidGlassBackdrop(
-                borderRadius: corners,
-                sigma: sigma,
-                tuning: tuning,
-                opacity: opacity,
-                child: body,
-              );
+      final effectsReduced =
+          isMobilePlatform && mobileGlassEffectsReducedOf(context);
+      final sigma = isMobilePlatform
+          ? mobileGlassSigma(tunedGlassSigma(8, tuning))
+          : tunedGlassSigma(8, tuning);
+      if (effectsReduced || resizing || sigma <= 0) {
+        // A static surface is simpler than keeping a disabled backdrop node in
+        // the tree; this also avoids unnecessary save-layer setup on mobile.
+        surface = body;
+      } else if (resolved == 'liquid' && isMobilePlatform) {
+        surface = MobileGlassSelection(radius: radius, style: resolved);
+      } else if (resolved == 'liquid') {
+        surface = LiquidGlassBackdrop(
+          borderRadius: corners,
+          sigma: sigma,
+          tuning: tuning,
+          opacity: opacity,
+          child: body,
+        );
       } else {
         surface = ClipRRect(
           borderRadius: corners,
-          child: BackdropFilter(
-            enabled: !resizing && sigma > 0,
-            filter: cachedGlassBlur(sigma),
-            child: body,
-          ),
+          child: BackdropFilter(filter: cachedGlassBlur(sigma), child: body),
         );
       }
     }

@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:archive/archive.dart';
 
+import 'diagnostic_trace.dart';
+
 class FfmpegInstaller {
   static String get _appDir => Directory(Platform.resolvedExecutable).parent.path;
   static String get ffmpegPath => Platform.isWindows
@@ -25,12 +27,33 @@ class FfmpegInstaller {
     return 'ffmpeg';
   }
 
-  static Future<bool> checkSystemFfmpeg() async {
+  static Future<bool> checkSystemFfmpeg({DiagnosticTrace? trace}) async {
+    final span = trace?.begin('installer.verify', details: {'method': 'system'});
     try {
       final r = await Process.run('ffmpeg', ['-version']);
+      span?.finish(success: r.exitCode == 0, details: {
+        'checkCount': 1, 'exitCode': r.exitCode,
+        if (r.exitCode != 0) 'failureType': 'exit_code',
+      });
       return r.exitCode == 0;
-    } catch (_) {
+    } catch (error) {
+      span?.finish(success: false, error: error, details: {'checkCount': 0, 'failureType': 'process_start'});
       return false;
+    }
+  }
+
+  static Future<void> _withInstallTrace(
+    DiagnosticTrace? trace,
+    String method,
+    Future<void> Function(DiagnosticSpan? span) action,
+  ) async {
+    final span = trace?.begin('ffmpeg.install', details: {'method': method});
+    try {
+      await action(span);
+      span?.finish(success: true);
+    } catch (error) {
+      span?.finish(success: false, error: error, details: {'failureType': 'installation'});
+      rethrow;
     }
   }
 
@@ -52,8 +75,11 @@ class FfmpegInstaller {
   static Future<void> installViaPackageManager({
     required void Function(String status) onStatus,
     required void Function(double progress) onProgress,
-  }) async {
+    DiagnosticTrace? trace,
+  }) => _withInstallTrace(trace, 'package_manager', (span) async {
+    span?.record('installer.phase', details: {'phase': 'detect'});
     final (cmd, args) = _detectPackageManager();
+    span?.record('installer.phase', details: {'phase': 'launch', 'manager': cmd});
     onStatus('正在通过 $cmd 安装 FFmpeg...');
     onProgress(0.1);
 
@@ -84,19 +110,21 @@ class FfmpegInstaller {
     });
 
     final exitCode = await process.exitCode;
+    span?.record('installer.process.exit', details: {'exitCode': exitCode, if (exitCode != 0) 'failureType': 'exit_code'});
     if (exitCode != 0) {
       throw Exception('$cmd 安装失败 (exit code: $exitCode)\n手动安装: sudo $cmd ${args.join(' ')}');
     }
 
     onProgress(0.8);
     onStatus('正在验证...');
-    final ok = await checkSystemFfmpeg();
+    span?.record('installer.phase', details: {'phase': 'verify', 'checkCount': 1});
+    final ok = await checkSystemFfmpeg(trace: trace);
     if (!ok) {
       throw Exception('安装完成但 FFmpeg 验证失败');
     }
     onStatus('安装完成！');
     onProgress(1.0);
-  }
+  });
 
   // ── Winget 安装 ──
 
@@ -104,7 +132,9 @@ class FfmpegInstaller {
     required void Function(String status) onStatus,
     required void Function(double progress) onProgress,
     required void Function(bool slow) onSpeedWarning,
-  }) async {
+    DiagnosticTrace? trace,
+  }) => _withInstallTrace(trace, 'winget', (span) async {
+    span?.record('installer.phase', details: {'phase': 'launch'});
     onStatus('正在通过 winget 安装 FFmpeg...');
     onProgress(0.1);
 
@@ -134,6 +164,7 @@ class FfmpegInstaller {
     });
 
     final exitCode = await process.exitCode;
+    span?.record('installer.process.exit', details: {'exitCode': exitCode, if (exitCode != 0) 'failureType': 'exit_code'});
     sw.stop();
 
     if (exitCode == 0) {
@@ -142,19 +173,22 @@ class FfmpegInstaller {
     } else {
       throw Exception('winget 安装失败 (exit code: $exitCode)');
     }
-  }
+  });
 
   static Future<void> importFromZips({
     required String ffmpegZipPath,
     required String ffprobeZipPath,
     required void Function(String status) onStatus,
     required void Function(double progress) onProgress,
-  }) async {
+    DiagnosticTrace? trace,
+  }) => _withInstallTrace(trace, 'archive', (span) async {
+    span?.record('installer.phase', details: {'phase': 'preflight'});
     // [FIX L-4] 保护用户原有可用 ffmpeg：升级前若已存在可运行的版本则先备份，
     // 仅当「本次安装事务内」新二进制验证失败且此前无可用版本时，才清理本次写入的文件。
     // 任何异常都不应删除用户此前可用的 ffmpeg。
-    final prevWorking = isInstalled && await verifyInstalled();
+    final prevWorking = isInstalled && await verifyInstalled(trace: trace);
     String? backupDir;
+    span?.record('installer.phase', details: {'phase': 'backup', 'previousWorking': prevWorking});
     if (prevWorking) {
       backupDir = '$_appDir${Platform.pathSeparator}'
           'ffmpegpp_bak_${DateTime.now().microsecondsSinceEpoch}';
@@ -173,20 +207,24 @@ class FfmpegInstaller {
       onProgress(0.3);
       final ffmpegExeName = Platform.isWindows ? 'ffmpeg.exe' : 'ffmpeg';
       final ffprobeExeName = Platform.isWindows ? 'ffprobe.exe' : 'ffprobe';
-      await _extractExeFromZip(ffmpegZipPath, ffmpegExeName, ffmpegPath);
+      span?.record('installer.phase', details: {'phase': 'extract', 'binary': 'ffmpeg'});
+      await _extractExeFromZip(ffmpegZipPath, ffmpegExeName, ffmpegPath, span);
       onStatus('正在解压 ffprobe...');
       onProgress(0.7);
-      await _extractExeFromZip(ffprobeZipPath, ffprobeExeName, ffprobePath);
+      span?.record('installer.phase', details: {'phase': 'extract', 'binary': 'ffprobe'});
+      await _extractExeFromZip(ffprobeZipPath, ffprobeExeName, ffprobePath, span);
       // 验证提取的二进制是否可正常运行
       onStatus('正在验证...');
       onProgress(0.9);
-      if (!await verifyInstalled()) {
+      span?.record('installer.phase', details: {'phase': 'verify', 'checkCount': 2});
+      if (!await verifyInstalled(trace: trace)) {
         // [FIX L-4] 交由下方 catch 统一处理，不再在此直接 uninstall
         throw Exception('提取的 FFmpeg 二进制无法正常运行');
       }
       onStatus('安装完成！');
       onProgress(1.0);
     } catch (e) {
+      span?.record('installer.phase', details: {'phase': 'rollback', 'restoreBackup': backupDir != null});
       // [FIX L-4] 本次安装事务失败：
       // - 若此前有可用版本，恢复备份（绝不删除用户原有 ffmpeg）；
       // - 仅当此前不存在可用版本时，才清理本次写入的可能损坏的文件。
@@ -204,10 +242,11 @@ class FfmpegInstaller {
       } catch (_) {}
       throw Exception('FFmpeg 安装失败: $e');
     }
-  }
+  });
 
-  static Future<void> _extractExeFromZip(String zipPath, String targetName, String destPath) async {
+  static Future<void> _extractExeFromZip(String zipPath, String targetName, String destPath, DiagnosticSpan? span) async {
     final bytes = await File(zipPath).readAsBytes();
+    span?.record('installer.decode.start', details: {'byteCount': bytes.length});
     // 解压炸弹防护必须在 decodeBytes 之前完成：decodeBytes 会把所有条目一次性
     // 解压到内存，事后再检查 file.size 已经太晚（M-8）。
     // 这里先从中央目录汇总声明的大小，超阈值直接拒绝，不做全量解压。
@@ -242,12 +281,14 @@ class FfmpegInstaller {
         throw Exception('ZIP 条目压缩比异常 (${f.name})，疑似解压炸弹');
       }
     }
+    span?.record('installer.decode', details: {'phase': 'probe', 'entryCount': probe.length, 'declaredBytes': declaredTotal});
     const maxTotal = 1024 * 1024 * 1024; // 全部条目解压后合计上限 1GB
     if (declaredTotal > maxTotal) {
       throw Exception('ZIP 解压后总大小过大: ${(declaredTotal / 1024 / 1024).toStringAsFixed(0)}MB');
     }
 
     final archive = ZipDecoder().decodeBytes(bytes);
+    span?.record('installer.decode', details: {'phase': 'extract', 'entryCount': archive.length});
     for (final file in archive) {
       if (file.isFile && file.name.toLowerCase().endsWith(targetName.toLowerCase())) {
         // 安全检查：拒绝包含路径穿越的 ZIP 条目
@@ -259,6 +300,7 @@ class FfmpegInstaller {
         if (content.length > 512 * 1024 * 1024) {
           throw Exception('$targetName 解压后过大 (${content.length} 字节)，已拒绝');
         }
+        span?.record('installer.extract', details: {'byteCount': content.length, 'entryCount': 1});
         await File(destPath).writeAsBytes(content);
         // POSIX 平台（macOS/Linux）：提取的二进制需要可执行权限，
         // 否则运行 ffmpeg -version 会 Permission denied。
@@ -278,12 +320,21 @@ class FfmpegInstaller {
   }
 
   /// 验证已安装的 ffmpeg/ffprobe 是否可正常运行
-  static Future<bool> verifyInstalled() async {
+  static Future<bool> verifyInstalled({DiagnosticTrace? trace}) async {
+    final span = trace?.begin('installer.verify', details: {'method': 'bundled'});
+    var checked = 0;
     try {
       final ffResult = await Process.run(ffmpegPath, ['-version']);
+      checked++;
+      span?.record('installer.verify.binary', details: {'binary': 'ffmpeg', 'exitCode': ffResult.exitCode});
       final fpResult = await Process.run(ffprobePath, ['-version']);
-      return ffResult.exitCode == 0 && fpResult.exitCode == 0;
-    } catch (_) {
+      checked++;
+      span?.record('installer.verify.binary', details: {'binary': 'ffprobe', 'exitCode': fpResult.exitCode});
+      final success = ffResult.exitCode == 0 && fpResult.exitCode == 0;
+      span?.finish(success: success, details: {'checkCount': checked, if (!success) 'failureType': 'exit_code'});
+      return success;
+    } catch (error) {
+      span?.finish(success: false, error: error, details: {'checkCount': checked, 'failureType': 'process_start'});
       return false;
     }
   }

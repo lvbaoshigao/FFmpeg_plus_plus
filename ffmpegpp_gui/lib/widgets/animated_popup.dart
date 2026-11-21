@@ -73,7 +73,7 @@ class AnimatedMenuEntry<T> {
   /// 是否为分隔线（此时忽略 child）。
   final bool isDivider;
 
-  /// 行高（分隔线固定 9）。
+  /// 条目最小高度；长文可自然增高（分隔线固定 9）。
   final double height;
 
   /// 自定义点击行为；提供时点击不返回 value，由回调自行处理
@@ -302,13 +302,14 @@ class _MenuRow<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final row = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      child: Align(alignment: Alignment.centerLeft, child: item.child),
+    final row = ConstrainedBox(
+      constraints: BoxConstraints(minHeight: item.height),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: Align(alignment: Alignment.centerLeft, child: item.child),
+      ),
     );
-    if (!item.enabled) {
-      return SizedBox(height: item.height, child: row);
-    }
+    if (!item.enabled) return row;
     return InkWell(
       onTap: () {
         if (item.onTap != null) {
@@ -317,7 +318,7 @@ class _MenuRow<T> extends StatelessWidget {
           onSelected(item.value);
         }
       },
-      child: SizedBox(height: item.height, child: row),
+      child: row,
     );
   }
 }

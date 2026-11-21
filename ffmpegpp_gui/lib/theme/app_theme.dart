@@ -12,6 +12,10 @@ import 'app_semantic_colors.dart';
 class AppTheme {
   static final String monoFont = Platform.isWindows ? 'Consolas' : 'monospace';
 
+  /// Shared confirmation-button roles for alerts and system pickers.
+  static const Color dialogActionAccent = Color(0xFFFFCC00);
+  static const Color dialogActionForeground = Color(0xFF211A0C);
+
   /// seedColor 为用户自定义主题色；dynamicSeed 非空时（Android Monet
   /// 动态取色）覆盖它作为种子色，使用与系统 Material You 一致的
   /// tonalSpot 方案生成整套配色。
@@ -131,11 +135,23 @@ class AppTheme {
         ? tt.apply(fontFamily: fontFamily, fontFamilyFallback: fallback)
         : tt.apply(fontFamilyFallback: fallback);
 
-    // Modal content stays legible over wallpaper without adding a blur layer.
+    // Shared modal roles match the reference without washing content out:
+    // charcoal translucent glass, a quiet warm rim, and paired action pills.
     final modalSurface = glassEffect == 'none'
         ? scheme.surfaceContainerHigh
-        : scheme.surfaceContainerHigh.withAlpha(isDark ? 245 : 247);
-    const modalRadius = Radius.circular(22);
+        : isDark
+        ? const Color(0xEB35322C)
+        : scheme.surfaceContainerHigh.withAlpha(246);
+    const modalRadius = Radius.circular(28);
+    final dialogShape = RoundedRectangleBorder(
+      borderRadius: const BorderRadius.all(modalRadius),
+      side: BorderSide(
+        color: isDark
+            ? const Color(0xFF81755B).withAlpha(105)
+            : scheme.outlineVariant.withAlpha(145),
+        width: 0.8,
+      ),
+    );
 
     return ThemeData(
       useMaterial3: true,
@@ -390,10 +406,10 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         shadowColor: Colors.black.withAlpha(isDark ? 90 : 35),
         elevation: 8,
-        // Transparent dialog wrappers let their own panel draw the edge.
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(modalRadius),
-        ),
+        // Shared by Material dialogs and custom modal panels.
+        shape: dialogShape,
+        // Explicit Dialog.constraints can opt wider for dedicated desktop editors.
+        constraints: const BoxConstraints(maxWidth: 560),
         titleTextStyle: appliedTt.titleMedium?.copyWith(
           fontSize: 18,
           fontWeight: w.value < FontWeight.w600.value ? FontWeight.w600 : w,
@@ -401,9 +417,98 @@ class AppTheme {
         contentTextStyle: appliedTt.bodyMedium?.copyWith(
           color: scheme.onSurfaceVariant,
         ),
-        actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
         // A 320dp viewport still has room for the standard 280dp dialog.
         insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      ),
+      datePickerTheme: DatePickerThemeData(
+        backgroundColor: modalSurface,
+        surfaceTintColor: Colors.transparent,
+        shape: dialogShape,
+        headerBackgroundColor: modalSurface,
+        headerForegroundColor: scheme.onSurface,
+        dayForegroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? dialogActionForeground
+              : null,
+        ),
+        dayBackgroundColor: WidgetStateProperty.resolveWith(
+          (states) =>
+              states.contains(WidgetState.selected) ? dialogActionAccent : null,
+        ),
+        todayForegroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? dialogActionForeground
+              : null,
+        ),
+        todayBackgroundColor: WidgetStateProperty.resolveWith(
+          (states) =>
+              states.contains(WidgetState.selected) ? dialogActionAccent : null,
+        ),
+        todayBorder: const BorderSide(color: dialogActionAccent),
+        cancelButtonStyle: TextButton.styleFrom(
+          backgroundColor: scheme.surfaceContainerHighest,
+          foregroundColor: scheme.onSurfaceVariant,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+        ),
+        confirmButtonStyle: TextButton.styleFrom(
+          backgroundColor: dialogActionAccent,
+          foregroundColor: dialogActionForeground,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+        ),
+      ),
+      timePickerTheme: TimePickerThemeData(
+        backgroundColor: modalSurface,
+        shape: dialogShape,
+        dialHandColor: dialogActionAccent,
+        entryModeIconColor: dialogActionAccent,
+        dayPeriodColor: WidgetStateColor.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? dialogActionAccent
+              : Colors.transparent,
+        ),
+        dialTextColor: WidgetStateColor.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? dialogActionForeground
+              : scheme.onSurface,
+        ),
+        dayPeriodTextColor: WidgetStateColor.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? dialogActionForeground
+              : scheme.onSurfaceVariant,
+        ),
+        hourMinuteColor: WidgetStateColor.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? dialogActionAccent
+              : scheme.surfaceContainerHighest,
+        ),
+        hourMinuteTextColor: WidgetStateColor.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? dialogActionForeground
+              : scheme.onSurface,
+        ),
+        cancelButtonStyle: TextButton.styleFrom(
+          backgroundColor: scheme.surfaceContainerHighest,
+          foregroundColor: scheme.onSurfaceVariant,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+        ),
+        confirmButtonStyle: TextButton.styleFrom(
+          backgroundColor: dialogActionAccent,
+          foregroundColor: dialogActionForeground,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+        ),
       ),
       bottomSheetTheme: BottomSheetThemeData(
         // Modal sheets inherit this color so MobileVisualTheme can replace it.

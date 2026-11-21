@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -13,300 +15,397 @@ import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
 import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
-// Linux 自绘窗口修饰（CSD）：全屏路由页统一套 WindowChrome。
 import '../widgets/window_chrome.dart';
 
 class LogPage extends StatefulWidget {
-  const LogPage({super.key});
+  const LogPage({super.key, this.embedded = false});
+
+  /// Whether the app shell already provides the wallpaper and window chrome.
+  final bool embedded;
+
   @override
   State<LogPage> createState() => _LogPageState();
 }
 
 class _LogPageState extends State<LogPage> {
-  final Set<int> _selectedIndices = {};
+  static const _filters = [
+    'all',
+    'info',
+    'ffmpeg',
+    'progress',
+    'error',
+    'trace',
+  ];
+  // Mobile pills are 40 dp tall plus 8 dp of margin on each side.
+  static const double _filterBarExtent = 56;
+
+  final Set<LogEntry> _selected = {};
   String _filter = 'all';
 
-  static const _filters = ['all', 'info', 'ffmpeg', 'progress', 'error'];
+  String _filterLabel(String filter, bool zh) =>
+      filter == 'all' ? (zh ? '全部' : 'All') : _categoryLabel(filter, zh);
 
-  String _filterLabel(String f, bool isZh) => switch (f) {
-    'all'      => isZh ? '全部' : 'All',
-    'info'     => isZh ? '信息' : 'Info',
-    'ffmpeg'   => 'FFmpeg',
-    'progress' => isZh ? '进度' : 'Progress',
-    'error'    => isZh ? '错误' : 'Error',
-    _          => f,
-  };
-
-  /// 日志类别徽标的本地化展示（原先直接 toUpperCase 显示英文，
-  /// 中文界面下残留 INFO/PROGRESS/AUDIT 等）。
-  String _catLabel(String cat, bool isZh) => switch (cat) {
-    'info'     => isZh ? '信息' : 'Info',
-    'progress' => isZh ? '进度' : 'Progress',
-    'error'    => isZh ? '错误' : 'Error',
-    'ffmpeg'   => 'FFmpeg',
-    'audit'    => isZh ? '审计' : 'Audit',
-    _          => isZh ? '一般' : 'General',
+  String _categoryLabel(String category, bool zh) => switch (category) {
+    'info' => zh ? '信息' : 'Info',
+    'progress' => zh ? '进度' : 'Progress',
+    'error' => zh ? '错误' : 'Error',
+    'ffmpeg' => 'FFmpeg',
+    'audit' => zh ? '审计' : 'Audit',
+    'warn' => zh ? '警告' : 'Warning',
+    'trace' => zh ? '探针' : 'Trace',
+    _ => zh ? '一般' : 'General',
   };
 
   @override
   Widget build(BuildContext context) {
-    // 只用 Selector 订阅日志版本号：进度心跳/任务更新等无关通知不再重建本页。
-    // （原实现两次 context.watch<AppState>() 会订阅整个 AppState，且 logEntries
-    //  getter 每次读取都分配一个包装列表；现改为单次 Selector + 过滤结果缓存。）
-    return Selector<AppState, (int, String)>(
-      selector: (_, s) => (s.logVersion, s.config.language),
+    return Selector<AppState, (int, String, String)>(
+      selector: (_, state) =>
+          (state.logVersion, state.config.language, state.config.cardStyle),
       builder: (context, key, _) {
-        final (_, language) = key;
-        final state = context.read<AppState>();
+        final (_, language, cardStyle) = key;
+        final entries = context.read<AppState>().logEntries;
         final scheme = Theme.of(context).colorScheme;
-        final cfg = state.config;
-        final entries = state.logEntries;
-        final isZh = language == 'zh';
-        final filtered = _filter == 'all' ? entries : entries.where((e) => e.category == _filter).toList();
+        final zh = language == 'zh';
+        final filtered = _filter == 'all'
+            ? entries
+            : entries.where((entry) => entry.category == _filter).toList();
+        // The bounded log can evict old rows while users are selecting them.
+        // Track entries by identity so eviction never selects a different row.
+        final selection = _selected.isEmpty
+            ? const <LogEntry>[]
+            : filtered.where(_selected.contains).toList(growable: false);
+        _selected.retainAll(selection);
 
-        // 日志页是通过 Navigator.push 推到根 Navigator 的新路由，不在 _buildRootStack
-        // 的壁纸 Stack 里。统一交给 withWallpaper 铺「主题底色 + 壁纸 + 遮罩」，
-        // 与其它二级页保持一致（内部只细粒度 select 壁纸路径/透明度）。
-        // Linux 客户端修饰（CSD）：路由页统一套 WindowChrome，且必须放在
-        // withWallpaper 的**内层**（标题栏玻璃要采样壁纸，见 window_chrome.dart）。
-        return withWallpaper(
-          context,
-          WindowChrome(
-            child: Scaffold(
-              backgroundColor: Colors.transparent,
-              // 移动端沉浸：顶栏与过滤条一起浮在内容上（同一个浮动层），
-              // 日志条目滚动时从底下穿过，不再被顶栏截断。
-              // 桌面端保持原 Column 布局（顶栏非浮动药丸，谈不上沉浸）。
-              body: isMobilePlatform
-                  ? ImmersiveTopBar(
-                      bar: Column(mainAxisSize: MainAxisSize.min, children: [
-                        _toolbar(scheme, cfg, entries, filtered, isZh),
-                        _filterBar(scheme, isZh),
-                      ]),
-                      child: filtered.isEmpty
-                          ? Center(child: Text(isZh ? '暂无日志' : 'No logs yet',
-                              style: TextStyle(color: scheme.outline, fontSize: 13)))
-                          : _buildList(filtered, scheme, cfg, isZh,
-                              topInset: ImmersiveTopBar.insetOf(context) +
-                                  _filterBarExtent),
-                    )
-                  : Column(children: [
-                      _toolbar(scheme, cfg, entries, filtered, isZh),
-                      _filterBar(scheme, isZh),
-                      Expanded(child: filtered.isEmpty
-                          ? Center(child: Text(isZh ? '暂无日志' : 'No logs yet',
-                              style: TextStyle(color: scheme.outline, fontSize: 13)))
-                          : _buildList(filtered, scheme, cfg, isZh)),
-                    ]),
-            ),
-          ),
+        final toolbar = _toolbar(scheme, filtered, selection, zh);
+        final filters = _filterBar(scheme, zh);
+        final Widget list = filtered.isEmpty
+            ? Center(
+                child: Text(
+                  _filter == 'trace'
+                      ? (zh ? '暂无探针日志' : 'No trace entries yet')
+                      : (zh ? '暂无日志' : 'No logs yet'),
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 13,
+                  ),
+                ),
+              )
+            : _buildList(
+                filtered,
+                scheme,
+                cardStyle,
+                zh,
+                topInset: isMobilePlatform
+                    ? ImmersiveTopBar.insetOf(context) + _filterBarExtent
+                    : 0,
+              );
+        final content = Scaffold(
+          backgroundColor: Colors.transparent,
+          body: isMobilePlatform
+              ? ImmersiveTopBar(
+                  bar: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [toolbar, filters],
+                  ),
+                  child: list,
+                )
+              : Column(
+                  children: [
+                    toolbar,
+                    filters,
+                    Expanded(child: list),
+                  ],
+                ),
         );
+        if (widget.embedded) return content;
+        return withWallpaper(context, WindowChrome(child: content));
       },
     );
   }
 
-  Widget _toolbar(ColorScheme scheme, AppConfig cfg, List<LogEntry> entries, List<LogEntry> filtered, bool isZh) {
-    final hasSelection = _selectedIndices.isNotEmpty;
-    final titleRow = Row(mainAxisSize: MainAxisSize.min, children: [
-      // 顶栏高度固定：标题单行省略，字号调大时不再折成两行顶出顶栏
-      Text(isZh ? '日志' : 'Logs', maxLines: 1, overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-      const SizedBox(width: 12),
-      // 变长文本用 Flexible + 省略号：标题药丸右侧还有操作药丸，宽度有限，
-      // 条数/多选计数较长时不能溢出（顶栏整体 maxLines:1 + ellipsis 收尾）。
-      Flexible(child: Text('${filtered.length} ${isZh ? '条' : 'entries'}',
-          maxLines: 1, overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 11, color: scheme.outline))),
-      if (hasSelection) ...[
-        const SizedBox(width: 8),
-        Flexible(child: Text('${isZh ? '已选' : 'Selected'} ${_selectedIndices.length}',
-            maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 11, color: scheme.primary))),
+  Widget _toolbar(
+    ColorScheme scheme,
+    List<LogEntry> filtered,
+    List<LogEntry> selection,
+    bool zh,
+  ) {
+    final title = Row(
+      mainAxisSize: MainAxisSize.min,
+      spacing: 8,
+      children: [
+        Text(
+          zh ? '日志' : 'Logs',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: scheme.onSurface,
+          ),
+        ),
+        Flexible(
+          child: Text(
+            '${filtered.length} ${zh ? '条' : 'entries'}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+          ),
+        ),
+        if (selection.isNotEmpty)
+          Flexible(
+            child: Text(
+              '${zh ? '已选' : 'Selected'} ${selection.length}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: scheme.primary),
+            ),
+          ),
       ],
-    ]);
-    final actionWidgets = <Widget>[
-      if (hasSelection) IconButton(
-        icon: const Icon(Icons.copy, size: 18), tooltip: isZh ? '复制选中' : 'Copy selected',
-        onPressed: () {
-          final selected = _selectedIndices.where((i) => i < filtered.length).map((i) => _fmt(filtered[i])).join('\n');
-          Clipboard.setData(ClipboardData(text: selected));
-          showToast(context, isZh ? '已复制 ${_selectedIndices.length} 条' : 'Copied ${_selectedIndices.length} entries');
-        },
-      ),
-      IconButton(
-        icon: const Icon(Icons.copy_all, size: 18), tooltip: isZh ? '复制全部' : 'Copy all',
-        onPressed: () {
-          Clipboard.setData(ClipboardData(text: filtered.map(_fmt).join('\n')));
-          showToast(context, isZh ? '已复制全部 ${filtered.length} 条' : 'Copied all ${filtered.length} entries');
-        },
-      ),
-      IconButton(
-        icon: const Icon(Icons.delete_outline, size: 18), tooltip: isZh ? '清空' : 'Clear',
-        onPressed: () { setState(() => _selectedIndices.clear()); context.read<AppState>().clearLogs(); },
-      ),
-    ];
-
-    if (isMobilePlatform) {
-      // 操作药丸内统一用 34×34 紧凑圆形按钮（MobileGlassPillAction），
-      // 不再用自带 48×48 最小尺寸、会撑高药丸的 Material IconButton。
-      final mobileActions = <Widget>[
-        if (hasSelection)
-          MobileGlassPillAction(
-            icon: Icons.copy, tooltip: isZh ? '复制选中' : 'Copy selected',
-            color: scheme.onSurface, onTap: () {
-              final selected = _selectedIndices.where((i) => i < filtered.length).map((i) => _fmt(filtered[i])).join('\n');
-              Clipboard.setData(ClipboardData(text: selected));
-              showToast(context, isZh ? '已复制 ${_selectedIndices.length} 条' : 'Copied ${_selectedIndices.length} entries');
+    );
+    final actions =
+        <({IconData icon, String label, Color color, VoidCallback run})>[
+          if (selection.isNotEmpty)
+            (
+              icon: Icons.copy,
+              label: zh ? '复制选中' : 'Copy selected',
+              color: scheme.onSurface,
+              run: () => _copyEntries(selection, zh),
+            ),
+          (
+            icon: Icons.copy_all,
+            label: zh ? '复制全部' : 'Copy all',
+            color: scheme.onSurface,
+            run: () => _copyEntries(filtered, zh),
+          ),
+          (
+            icon: Icons.delete_outline,
+            label: zh ? '清空' : 'Clear',
+            color: scheme.error,
+            run: () {
+              setState(_selected.clear);
+              context.read<AppState>().clearLogs();
             },
           ),
-        MobileGlassPillAction(
-          icon: Icons.copy_all, tooltip: isZh ? '复制全部' : 'Copy all',
-          color: scheme.onSurface, onTap: () {
-            Clipboard.setData(ClipboardData(text: filtered.map(_fmt).join('\n')));
-            showToast(context, isZh ? '已复制全部 ${filtered.length} 条' : 'Copied all ${filtered.length} entries');
-          },
-        ),
-        MobileGlassPillAction(
-          icon: Icons.delete_outline, tooltip: isZh ? '清空' : 'Clear',
-          color: scheme.error, onTap: () { setState(() => _selectedIndices.clear()); context.read<AppState>().clearLogs(); },
-        ),
-      ];
-      // 与其它二级页一致：统一顶栏（返回圆钮 + 标题药丸 + 操作药丸）。
+        ];
+    if (isMobilePlatform) {
       return MobileSubPageTopBar(
-        title: titleRow,
-        actions: mobileActions,
+        title: title,
+        actions: [
+          for (final action in actions)
+            MobileGlassPillAction(
+              icon: action.icon,
+              tooltip: action.label,
+              color: action.color,
+              onTap: action.run,
+            ),
+        ],
         onBack: () => Navigator.of(context).maybePop(),
       );
     }
-    return GlassTopBar(title: titleRow, actions: actionWidgets);
+    return GlassTopBar(
+      title: title,
+      actions: [
+        for (final action in actions)
+          IconButton(
+            icon: Icon(action.icon, size: 18),
+            tooltip: action.label,
+            onPressed: action.run,
+          ),
+      ],
+    );
   }
 
-  /// 过滤器：**移动端**改用统一分段药丸控件（原先用 Material FilterChip，
-  /// 与应用药丸语言脱节）；桌面端保持原有 FilterChip 外观逐像素不变。
-  Widget _filterBar(ColorScheme scheme, bool isZh) {
-    if (!isMobilePlatform) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(children: _filters.map((f) {
-            final sel = _filter == f;
-            return Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: FilterChip(
-                label: Text(_filterLabel(f, isZh),
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: sel ? scheme.onPrimaryContainer : scheme.onSurface)),
-                selected: sel,
-                onSelected: (v) => setState(() { _filter = f; _selectedIndices.clear(); }),
+  void _copyEntries(List<LogEntry> entries, bool zh) {
+    Clipboard.setData(
+      ClipboardData(text: entries.map(_formatEntry).join('\n')),
+    );
+    showToast(
+      context,
+      zh ? '已复制 ${entries.length} 条' : 'Copied ${entries.length} entries',
+    );
+  }
+
+  void _selectFilter(String category) => setState(() {
+    _filter = category;
+    _selected.clear();
+  });
+
+  Widget _filterBar(ColorScheme scheme, bool zh) {
+    if (isMobilePlatform) {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final tabWidth = MediaQuery.textScalerOf(context).scale(13) * 5.5;
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: math.max(
+                constraints.maxWidth,
+                tabWidth * _filters.length + 2 * MobileUi.subPagePaddingH,
+              ),
+              child: MobileSegmentedPills(
+                tabs: [
+                  for (final filter in _filters)
+                    MobilePillTab(_filterLabel(filter, zh)),
+                ],
+                selectedIndex: _filters.indexOf(_filter),
+                onSelected: (i) => _selectFilter(_filters[i]),
+                margin: const EdgeInsets.fromLTRB(
+                  MobileUi.subPagePaddingH,
+                  8,
+                  MobileUi.subPagePaddingH,
+                  8,
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          spacing: 6,
+          children: [
+            for (final filter in _filters)
+              FilterChip(
+                label: Text(_filterLabel(filter, zh)),
+                labelStyle: TextStyle(
+                  fontSize: 11,
+                  color: _filter == filter
+                      ? scheme.onPrimaryContainer
+                      : scheme.onSurface,
+                ),
+                selected: _filter == filter,
+                onSelected: (_) => _selectFilter(filter),
                 selectedColor: scheme.primaryContainer,
                 backgroundColor: scheme.surfaceContainerHighest,
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 visualDensity: VisualDensity.compact,
                 showCheckmark: false,
               ),
-            );
-          }).toList()),
-        ),
-      );
-    }
-    return MobileSegmentedPills(
-      tabs: [for (final f in _filters) MobilePillTab(_filterLabel(f, isZh))],
-      selectedIndex: _filters.indexOf(_filter),
-      onSelected: (i) => setState(() { _filter = _filters[i]; _selectedIndices.clear(); }),
-      margin: const EdgeInsets.fromLTRB(MobileUi.subPagePaddingH, 8, MobileUi.subPagePaddingH, 8),
-    );
-  }
-
-  /// 移动端过滤条总高度（外壳 40 + margin 上下各 8）：沉浸布局里顶栏与过滤条
-  /// 同层浮动，列表顶部要一起让出（见 body 的 ImmersiveTopBar）。
-  static const double _filterBarExtent = 56;
-
-  Widget _buildList(List<LogEntry> filtered, ColorScheme scheme, AppConfig cfg,
-      bool isZh, {double topInset = 0}) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12),
-      child: GlassPanel(
-        // 面板玻璃样式跟随「卡片样式」（用户反馈「日志面板的模糊样式好像跟随药丸的」）。
-        // 不传 style 时 GlassPanel 会落到全局 `glassEffect`（那是「弹窗 / 面板」的
-        // 通用设置），于是设置里改「卡片样式」时日志面板纹丝不动，观感上就跟错了对象。
-        // 日志面板语义上属于内容面板，与设置页卡片、其它内容面板保持一致。
-        style: cfg.cardStyle,
-        radius: 16,
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-        child: ListView.builder(
-          padding: EdgeInsets.fromLTRB(12, topInset + 4, 12, 4),
-          itemCount: filtered.length,
-          itemBuilder: (_, i) {
-        final entry = filtered[i];
-        final selected = _selectedIndices.contains(i);
-        final catColor = _catColor(entry.category, scheme);
-
-        final bgColor = selected
-            ? scheme.primaryContainer.withAlpha(100)
-            : scheme.primary.withAlpha(12);
-
-        Widget row = GestureDetector(
-          onTap: () => setState(() {
-            if (_selectedIndices.contains(i)) { _selectedIndices.remove(i); }
-            else { _selectedIndices.add(i); }
-          }),
-          onLongPress: () {
-            Clipboard.setData(ClipboardData(text: _fmt(entry)));
-            showToast(context, isZh ? '已复制' : 'Copied');
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(4),
-              border: selected ? Border.all(color: scheme.primary.withAlpha(100), width: 1) : null,
-            ),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Container(width: 6, height: 6, margin: const EdgeInsets.only(top: 5, right: 6),
-                  decoration: BoxDecoration(color: catColor, shape: BoxShape.circle)),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                margin: const EdgeInsets.only(right: 6),
-                decoration: BoxDecoration(color: catColor.withAlpha(30), borderRadius: BorderRadius.circular(3)),
-                child: Text(_catLabel(entry.category, isZh), style: TextStyle(fontSize: 8, fontWeight: FontWeight.w600, color: catColor)),
-              ),
-              Text(_ts(entry.timestamp), style: TextStyle(fontSize: 10, fontFamily: AppTheme.monoFont, color: scheme.outline)),
-              const SizedBox(width: 8),
-              Expanded(child: SelectableText(entry.message, style: TextStyle(fontSize: 11, fontFamily: AppTheme.monoFont,
-                  color: entry.category == 'error' ? scheme.error : scheme.onSurface))),
-            ]),
-          ),
-        );
-
-        // 内存优化：原来每一行日志都套一个 BackdropFilter(σ8) + RepaintBoundary。
-        // 列表已整体位于 GlassPanel 之上（背景已被模糊过一次），行级模糊视觉
-        // 贡献极小，却要按「可见行数 × 行尺寸」多分配大量离屏纹理——日志页
-        // 可见行数多时是隐藏内存大户。行外观由半透明底色 + 细边框承担即可。
-        row = Container(
-          decoration: BoxDecoration(
-            color: scheme.surface.withAlpha(60),
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: scheme.outlineVariant.withAlpha(30), width: 0.5),
-          ),
-          child: row,
-        );
-
-        return Padding(padding: const EdgeInsets.only(bottom: 2), child: row);
-      },
+          ],
         ),
       ),
     );
   }
 
-  String _fmt(LogEntry e) => '[${_ts(e.timestamp)}] [${e.category.toUpperCase()}] ${e.message}';
-  String _ts(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:${t.second.toString().padLeft(2, '0')}.${t.millisecond.toString().padLeft(3, '0')}';
-  Color _catColor(String cat, ColorScheme scheme) => switch (cat) {
-    // 日志分类色：原先 'ffmpeg' 用 Colors.teal、'progress' 用 Colors.blue，
-    // 都是与主题种子色无关的调色板原色（蓝色还和 primary 撞车）。
-    // 现在：info = primary、ffmpeg = tertiary（框架按种子色调和过的第三种色相）、
-    // progress = success（绿，读作「正常推进」）、error = danger、其余 = neutral。
-    'info' => scheme.sem.info, 'ffmpeg' => scheme.tertiary, 'progress' => scheme.sem.success, 'error' => scheme.sem.danger, _ => scheme.sem.neutral,
-  };
+  Widget _buildList(
+    List<LogEntry> entries,
+    ColorScheme scheme,
+    String cardStyle,
+    bool zh, {
+    required double topInset,
+  }) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 12),
+    child: GlassPanel(
+      style: cardStyle,
+      radius: 16,
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      child: ListView.builder(
+        padding: EdgeInsets.fromLTRB(12, topInset + 4, 12, 4),
+        itemCount: entries.length,
+        itemBuilder: (_, index) {
+          final entry = entries[index];
+          final selected = _selected.contains(entry);
+          final categoryColor = _categoryColor(entry.category, scheme);
+          return Padding(
+            key: ObjectKey(entry),
+            padding: const EdgeInsets.only(bottom: 2),
+            child: GestureDetector(
+              onTap: () => setState(() {
+                if (!_selected.add(entry)) _selected.remove(entry);
+              }),
+              onLongPress: () => _copyEntries([entry], zh),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: selected
+                      ? scheme.primaryContainer.withAlpha(100)
+                      : scheme.surface.withAlpha(75),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                    color: selected
+                        ? scheme.primary.withAlpha(100)
+                        : scheme.outlineVariant.withAlpha(30),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    spacing: 8,
+                    children: [
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: categoryColor.withAlpha(30),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
+                          child: Text(
+                            _categoryLabel(entry.category, zh),
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                              color: categoryColor,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Text(
+                        _timestamp(entry.timestamp),
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontFamily: AppTheme.monoFont,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                      Expanded(
+                        child: SelectableText(
+                          entry.message,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontFamily: AppTheme.monoFont,
+                            color: entry.category == 'error'
+                                ? scheme.error
+                                : scheme.onSurface,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    ),
+  );
+
+  String _formatEntry(LogEntry entry) =>
+      '[${_timestamp(entry.timestamp)}] [${entry.category.toUpperCase()}] ${entry.message}';
+
+  String _timestamp(DateTime time) {
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
+    final millis = time.millisecond.toString().padLeft(3, '0');
+    return '${twoDigits(time.hour)}:${twoDigits(time.minute)}:${twoDigits(time.second)}.$millis';
+  }
+
+  Color _categoryColor(String category, ColorScheme scheme) =>
+      switch (category) {
+        'info' => scheme.sem.info,
+        'progress' => scheme.sem.success,
+        'ffmpeg' => scheme.tertiary,
+        'error' => scheme.sem.danger,
+        'trace' => scheme.onSecondaryContainer,
+        _ => scheme.sem.neutral,
+      };
 }

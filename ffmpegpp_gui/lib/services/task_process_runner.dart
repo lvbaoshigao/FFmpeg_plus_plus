@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'diagnostic_trace.dart';
+
 /// Injectable process launch boundary; tests never launch an operating-system process.
 typedef TaskProcessStarter =
     Future<Process> Function(String executable, List<String> arguments);
@@ -21,6 +23,7 @@ class TaskProcessRunner {
     bool? windows,
     this.killDelay = const Duration(seconds: 2),
     this.captureLimit = 1024 * 1024,
+    this.trace,
   }) : _starter =
            starter ??
            ((executable, arguments) => Process.start(executable, arguments)),
@@ -30,6 +33,7 @@ class TaskProcessRunner {
   final bool _windows;
   final Duration killDelay;
   final int captureLimit;
+  final DiagnosticTrace? trace;
 
   TaskProcessRun createRun() => TaskProcessRun._(this);
 }
@@ -46,10 +50,9 @@ class TaskProcessRun {
   Completer<void>? _operation;
   Timer? _killTimer;
   bool _cancelled = false;
-  bool _paused = false;
+  DiagnosticSpan? _span;
 
   bool get isCancelled => _cancelled;
-  bool get isPaused => _paused;
   bool get isActive => _operation != null;
   Future<void> get idle => _operation?.future ?? Future<void>.value();
 
@@ -61,31 +64,51 @@ class TaskProcessRun {
   void cancel() {
     if (_cancelled) return;
     _cancelled = true;
+    _span?.record('ffmpeg.process.cancel');
     _terminate();
   }
 
-  bool pause() {
-    if (_cancelled || _runner._windows) return false;
-    final process = _process;
-    if (process == null || !_signal(process, ProcessSignal.sigstop)) {
-      return false;
-    }
-    _paused = true;
-    return true;
-  }
+  bool pause() => _control('ffmpeg.process.pause', ProcessSignal.sigstop);
 
-  bool resume() {
+  bool resume() => _control('ffmpeg.process.resume', ProcessSignal.sigcont);
+
+  bool _control(String event, ProcessSignal signal) {
     final process = _process;
-    if (process == null || _runner._windows || _cancelled) return false;
-    if (!_signal(process, ProcessSignal.sigcont)) return false;
-    _paused = false;
-    return true;
+    final failureKind = _cancelled
+        ? 'cancelled'
+        : _runner._windows
+        ? 'unsupported_platform'
+        : process == null
+        ? 'not_running'
+        : null;
+    final success = failureKind == null && _signal(process!, signal);
+    _span?.record(event, details: {
+      'signalSuccess': success,
+      if (!success) 'failureKind': failureKind ?? 'signal_failed',
+    });
+    return success;
   }
 
   bool _signal(Process process, ProcessSignal signal) {
+    final label = signal == ProcessSignal.sigstop
+        ? 'pause'
+        : signal == ProcessSignal.sigcont
+        ? 'resume'
+        : signal == ProcessSignal.sigkill
+        ? 'kill'
+        : 'terminate';
     try {
-      return process.kill(signal);
+      final success = process.kill(signal);
+      if (!success) {
+        _span?.record('ffmpeg.process.signal.failed', details: {
+          'signal': label, 'failureKind': 'signal_rejected',
+        });
+      }
+      return success;
     } catch (_) {
+      _span?.record('ffmpeg.process.signal.failed', details: {
+        'signal': label, 'failureKind': 'signal_exception',
+      });
       return false;
     }
   }
@@ -96,7 +119,10 @@ class TaskProcessRun {
     if (!_runner._windows) _signal(process, ProcessSignal.sigcont);
     _signal(process, ProcessSignal.sigterm);
     _killTimer ??= Timer(_runner.killDelay, () {
-      if (identical(_process, process)) _signal(process, ProcessSignal.sigkill);
+      if (identical(_process, process)) {
+        _span?.record('ffmpeg.process.kill');
+        _signal(process, ProcessSignal.sigkill);
+      }
     });
   }
 
@@ -112,25 +138,44 @@ class TaskProcessRun {
     if (_operation != null) {
       throw StateError('A process is already active in this run');
     }
+    final span = _runner.trace?.begin(
+      'ffmpeg.process',
+      details: {'argumentCount': arguments.length},
+    );
+    _span = span;
+    span?.record('ffmpeg.process.request', details: {'argumentCount': arguments.length});
     final operation = Completer<void>();
     _operation = operation;
+    var stdout = '';
+    var stderr = '';
+    int? exitCode;
+    var success = false;
+    var failureKind = 'start_failed';
+    var failureCount = 0;
+    var stdoutBytes = 0;
+    var stderrBytes = 0;
     try {
       final process = await _runner._starter(
         executable,
         List<String>.of(arguments),
       );
       _process = process;
+      failureKind = 'none';
+      span?.record('ffmpeg.process.started');
       // No await between registration and rechecking the latched cancellation.
       if (_cancelled) {
         _terminate();
       }
-      var stdout = '';
-      var stderr = '';
       Object? failure;
       StackTrace? failureStack;
-      void recordFailure(Object error, StackTrace stack) {
+      void recordFailure(Object error, StackTrace stack, String kind) {
+        failureCount++;
+        if (failure == null) failureKind = kind;
         failure ??= error;
         failureStack ??= stack;
+        span?.record('ffmpeg.process.failure', details: {
+          'failureKind': kind, 'failureCount': failureCount,
+        });
         _terminate();
       }
 
@@ -143,7 +188,15 @@ class TaskProcessRun {
 
       Future<void> consume(Stream<List<int>> stream, bool errorStream) async {
         try {
-          await for (final chunk in stream.transform(
+          final counted = span == null ? stream : stream.map((bytes) {
+            if (errorStream) {
+              stderrBytes += bytes.length;
+            } else {
+              stdoutBytes += bytes.length;
+            }
+            return bytes;
+          });
+          await for (final chunk in counted.transform(
             const Utf8Decoder(allowMalformed: true),
           )) {
             if (errorStream) {
@@ -152,7 +205,7 @@ class TaskProcessRun {
                 try {
                   onStderr(chunk);
                 } catch (error, stack) {
-                  recordFailure(error, stack);
+                  recordFailure(error, stack, 'callback_failed');
                 }
               }
             } else {
@@ -161,6 +214,7 @@ class TaskProcessRun {
                   recordFailure(
                     StateError('Task process stdout exceeded captureLimit'),
                     StackTrace.current,
+                    'stdout_overflow',
                   );
                 } else {
                   stdout += chunk;
@@ -169,16 +223,16 @@ class TaskProcessRun {
             }
           }
         } catch (error, stack) {
-          recordFailure(error, stack);
+          recordFailure(error, stack, errorStream ? 'stderr_read_failed' : 'stdout_read_failed');
         }
       }
 
-      var exitCode = -1;
       Future<void> waitExit() async {
         try {
           exitCode = await process.exitCode;
+          span?.record('ffmpeg.process.exit', details: {'exitCode': exitCode});
         } catch (error, stack) {
-          recordFailure(error, stack);
+          recordFailure(error, stack, 'exit_failed');
         }
       }
 
@@ -189,12 +243,30 @@ class TaskProcessRun {
       ]);
       throwIfCancelled();
       if (failure != null) Error.throwWithStackTrace(failure!, failureStack!);
-      return ProcessResult(process.pid, exitCode, stdout, stderr);
+      success = exitCode == 0;
+      if (!success) failureKind = 'exit_nonzero';
+      return ProcessResult(process.pid, exitCode ?? -1, stdout, stderr);
     } finally {
+      span?.finish(
+        success: success,
+        cancelled: _cancelled,
+        details: {
+          'stdoutChars': stdout.length,
+          'stderrChars': stderr.length,
+          'stdoutBytes': stdoutBytes,
+          'stderrBytes': stderrBytes,
+          'exitCode': ?exitCode,
+          if (_cancelled)
+            'failureKind': 'cancelled'
+          else if (failureKind != 'none')
+            'failureKind': failureKind,
+          'failureCount': failureCount,
+        },
+      );
+      _span = null;
       _killTimer?.cancel();
       _killTimer = null;
       _process = null;
-      _paused = false;
       _operation = null;
       operation.complete();
     }

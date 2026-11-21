@@ -3,6 +3,7 @@ import 'dart:ui' show Tristate;
 import 'package:ffmpegpp_gui/platform/app_platform.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
+import 'package:ffmpegpp_gui/theme/mobile_ui.dart';
 import 'package:ffmpegpp_gui/widgets/liquid_glass_mobile_nav.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_bottom_nav.dart';
 import 'package:ffmpegpp_gui/widgets/selection_highlight.dart';
@@ -106,6 +107,66 @@ const _items = [
 ];
 
 void main() {
+  testWidgets('scaled mobile list keeps its last row above the nav', (
+    tester,
+  ) async {
+    final previousMobile = debugIsMobilePlatformOverride;
+    debugIsMobilePlatformOverride = true;
+    addTearDown(() => debugIsMobilePlatformOverride = previousMobile);
+    final state = _state('liquid', shell: 'gray');
+    final scroll = ScrollController();
+    addTearDown(scroll.dispose);
+    late double clearance;
+    late double barClearance;
+    await _mount(
+      tester,
+      state,
+      Builder(
+        builder: (context) {
+          clearance = MobileUi.mainListPadding(context: context).bottom;
+          barClearance = AppLiquidTabBar.clearanceOf(context);
+          return Stack(
+            children: [
+              ListView(
+                controller: scroll,
+                padding: MobileUi.mainListPadding(context: context),
+                children: [
+                  for (var i = 0; i < 20; i++)
+                    SizedBox(
+                      key: ValueKey('clearance-row-$i'),
+                      height: 80,
+                      child: Text('Row $i'),
+                    ),
+                ],
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: LiquidGlassMobileNav(
+                  selectedIndex: 0,
+                  onSelected: (_) {},
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+      textScale: 2,
+      padding: const EdgeInsets.only(bottom: 34),
+    );
+    expect(clearance, closeTo(117.2, 0.01));
+    expect(clearance, closeTo(barClearance, 0.01));
+    scroll.jumpTo(scroll.position.maxScrollExtent);
+    await tester.pump();
+    final lastRow = tester.getRect(
+      find.byKey(const ValueKey('clearance-row-19')),
+    );
+    final nav = tester.getRect(find.byType(LiquidGlassMobileNav));
+    expect(lastRow.bottom, lessThanOrEqualTo(nav.top + 0.01));
+    expect(tester.takeException(), isNull);
+  });
+
   group('MobileNavRail selection highlight', () {
     for (final style in ['theme', 'liquid', 'blur', 'outline']) {
       testWidgets(
@@ -477,7 +538,10 @@ void main() {
             .hitTestable();
         expect(dragSurface, findsOneWidget);
         final navRect = tester.getRect(dragSurface);
-        final firstCenter = Offset(navRect.left + navRect.width / 4, navRect.center.dy);
+        final firstCenter = Offset(
+          navRect.left + navRect.width / 4,
+          navRect.center.dy,
+        );
         final gesture = await tester.startGesture(firstCenter);
         final delta = Offset(navRect.width / 2 / 32, 0);
         for (var frame = 0; frame < 32; frame++) {

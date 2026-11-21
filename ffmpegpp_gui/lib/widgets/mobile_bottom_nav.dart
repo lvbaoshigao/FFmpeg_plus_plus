@@ -5,6 +5,7 @@ import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_neutral_surface.dart';
 import '../theme/app_strings.dart';
+import '../theme/mobile_ui.dart';
 import 'app_card.dart' show SurfaceStyle;
 import 'liquid_glass_fallback.dart';
 import 'selection_highlight.dart';
@@ -147,6 +148,27 @@ NavGlassLook navGlassLook(ColorScheme scheme, bool isDark, NavGlassPal pal) {
           pal.follow && pal.useThemeColor,
           second: pal.useThemeColor ? pal.second : -1,
         );
+  if (isMobilePlatform) {
+    final neutral = AppNeutralSurface.card(scheme.brightness);
+    return NavGlassLook(
+      style: style,
+      solid: solid,
+      // The glass shell owns the tint and rim for both glass variants.
+      tint: solid
+          ? (style == SurfaceStyle.theme
+                ? Color.lerp(neutral, accent, 0.16)!
+                : neutral)
+          : Colors.transparent,
+      borderColor: scheme.onSurface.withValues(alpha: 0.16),
+      borderWidth: solid ? 1 : 0,
+      selectedColor: scheme.onSurface,
+      unselectedColor: Color.lerp(
+        scheme.onSurface,
+        scheme.onSurfaceVariant,
+        0.40,
+      )!,
+    );
+  }
   // 边缘光 → 描边的透明度/线宽缩放（基准 1.0 = 与改动前一致）
   final edgeBlur = edgeBorder(70 / 255, 0.5, pal.tuning.edge);
   final edgeWhite = edgeBorder(isDark ? 0.16 : 0.32, 0.7, pal.tuning.edge);
@@ -238,7 +260,7 @@ class NavGlassShell extends StatelessWidget {
 
   /// 外壳内边距。
   ///
-  /// * 底部形态：(14, 2, 14, **底部安全区 + 8**) —— 与改动前逐像素一致；
+  /// * 底部形态：左右安全区 + 24，上 6，底部安全区 + 8；
   /// * 左侧导轨：把「让出贴屏那一侧」的规则原样搬到左边 → (左安全区 + 8, 14, 8, 14)；
   /// * 右侧导轨：镜像到右边 → (8, 14, 右安全区 + 8, 14)。
   ///
@@ -255,7 +277,12 @@ class NavGlassShell extends StatelessWidget {
       case MobileNavPlacement.right:
         return EdgeInsets.fromLTRB(8, 14, safe.right + 8, 14);
       case MobileNavPlacement.bottom:
-        return EdgeInsets.fromLTRB(14, 2, 14, safe.bottom + 8);
+        return EdgeInsets.fromLTRB(
+          safe.left + MobileUi.navInsetH,
+          6,
+          safe.right + MobileUi.navInsetH,
+          safe.bottom + MobileUi.navBottomGap,
+        );
     }
   }
 
@@ -286,6 +313,22 @@ class NavGlassShell extends StatelessWidget {
     // theme/gray：纯色药丸（无玻璃光效）
     if (look.solid) {
       return Padding(padding: shellPad, child: borderedChild);
+    }
+
+    if (isMobilePlatform) {
+      return Padding(
+        padding: shellPad,
+        child: MobileGlassSurface(
+          borderRadius: BorderRadius.circular(radius),
+          tuning: tuning,
+          opacity: op,
+          liquid: look.style != SurfaceStyle.blur,
+          accent: pal.follow && pal.useThemeColor
+              ? themedGlassBase(scheme, pal.tone, true, second: pal.second)
+              : null,
+          child: borderedChild,
+        ),
+      );
     }
 
     // blur：扁平高斯模糊（无 3D 液态光效），遮罩为实心主题色
@@ -503,17 +546,22 @@ class _MobileNavRailState extends State<MobileNavRail> {
     const itemToPage = {0: 0, 1: 1, 2: 3, 3: 4};
     final itemIdx = pageToItem[widget.selectedIndex] ?? 0;
 
-    const barHeight = 60.0;
-    const radius = barHeight / 2;
+    final itemContentHeight =
+        27 + 1 + MediaQuery.textScalerOf(context).scale(9) * 1.1 + 8;
+    final barHeight = (itemContentHeight + 8).clamp(60.0, double.infinity);
+    final radius = barHeight / 2;
     final indicatorStyle = context.select<AppState, String>(
       (state) => state.config.selectionIndicatorStyle,
     );
-    final selectedColor = MediaQuery.highContrastOf(context)
+    final highContrast = MediaQuery.highContrastOf(context);
+    final selectedColor = highContrast || isMobilePlatform
         ? scheme.onSurface
         : indicatorStyle == 'theme'
         ? scheme.onSecondaryContainer
         : look.selectedColor;
-    final unselectedColor = look.unselectedColor;
+    final unselectedColor = highContrast
+        ? scheme.onSurface
+        : look.unselectedColor;
 
     // 药丸间距：每个药丸之间留 4px 间隔
     const pillGap = 4.0;
@@ -526,7 +574,9 @@ class _MobileNavRailState extends State<MobileNavRail> {
         decoration: BoxDecoration(
           color: style == SurfaceStyle.liquid ? Colors.transparent : look.tint,
           borderRadius: BorderRadius.circular(radius),
-          border: Border.all(color: look.borderColor, width: look.borderWidth),
+          border: look.borderWidth > 0
+              ? Border.all(color: look.borderColor, width: look.borderWidth)
+              : null,
         ),
         clipBehavior: Clip.antiAlias,
         child: LayoutBuilder(
@@ -534,7 +584,10 @@ class _MobileNavRailState extends State<MobileNavRail> {
             // Use the actual viewport after safe areas, the keyboard and the
             // glass shell. Keep the floating rail's regular size when it fits.
             const minItemExtent = 44.0;
-            const regularItemExtent = 54.0;
+            final regularItemExtent = itemContentHeight.clamp(
+              54.0,
+              double.infinity,
+            );
             final totalGap = pillGap * (items.length - 1);
             final itemExtent =
                 ((constraints.maxHeight - totalGap) / items.length)
@@ -672,7 +725,9 @@ class _MobileNavRailState extends State<MobileNavRail> {
         decoration: BoxDecoration(
           color: style == SurfaceStyle.liquid ? Colors.transparent : look.tint,
           borderRadius: BorderRadius.circular(radius),
-          border: Border.all(color: look.borderColor, width: look.borderWidth),
+          border: look.borderWidth > 0
+              ? Border.all(color: look.borderColor, width: look.borderWidth)
+              : null,
         ),
         clipBehavior: Clip.antiAlias,
         child: LayoutBuilder(
@@ -924,7 +979,9 @@ class _MobileNavRailState extends State<MobileNavRail> {
           ? Duration.zero
           : const Duration(milliseconds: 150),
       curve: Curves.easeOutBack,
-      child: const SelectionHighlight(radius: 22),
+      child: isMobilePlatform
+          ? const MobileGlassSelection(radius: 22)
+          : const SelectionHighlight(radius: 22),
     );
 
     // 退出「拖菜单栏松手后的吸附窗口」的条件：PageView 已停稳且停在选中项上
@@ -1016,7 +1073,9 @@ class _MobileNavRailState extends State<MobileNavRail> {
                 ? Duration.zero
                 : const Duration(milliseconds: 150),
             curve: Curves.easeOutBack,
-            child: const SelectionHighlight(radius: 22),
+            child: isMobilePlatform
+                ? const MobileGlassSelection(radius: 22)
+                : const SelectionHighlight(radius: 22),
           );
 
           // 退出「拖菜单栏松手后的吸附窗口」的判定与横排一致：页面已停稳且
@@ -1109,34 +1168,35 @@ class _NavItemState extends State<_NavItem> {
     final focusColor = highContrast
         ? (scheme.brightness == Brightness.dark ? Colors.white : Colors.black)
         : scheme.onSurface;
-    // Keep visible text within the item at large text scales. The semantics
-    // node retains the full label and the entire row's hit bounds.
-    final content = FittedBox(
-      fit: BoxFit.scaleDown,
-      child: SizedBox(
-        width: widget.maxWidth,
-        child: TweenAnimationBuilder<Color?>(
-          tween: ColorTween(end: color),
-          duration: duration,
-          builder: (context, color, _) => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TablerIcon(widget.glyph, size: 27, color: color),
-              const SizedBox(height: 1),
-              Text(
-                widget.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 9,
-                  fontWeight: widget.selected
-                      ? FontWeight.w600
-                      : FontWeight.w500,
-                  color: color,
-                  height: 1.1,
+    // Rail slots grow with text size; long labels truncate without shrinking.
+    final content = Tooltip(
+      message: widget.label,
+      child: Center(
+        child: SizedBox(
+          width: widget.maxWidth,
+          child: TweenAnimationBuilder<Color?>(
+            tween: ColorTween(end: color),
+            duration: duration,
+            builder: (context, color, _) => Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TablerIcon(widget.glyph, size: 27, color: color),
+                const SizedBox(height: 1),
+                Text(
+                  widget.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: widget.selected
+                        ? FontWeight.w600
+                        : FontWeight.w500,
+                    color: color,
+                    height: 1.1,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

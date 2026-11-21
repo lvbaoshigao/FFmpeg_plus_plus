@@ -7,7 +7,12 @@ import 'package:flutter/foundation.dart';
 /// 桌面端（Windows/Linux/macOS）行为完全不变。
 
 /// 是否为移动端（Android / iOS）。Web 上禁用 dart:io，先行短路。
-bool get isMobilePlatform => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+@visibleForTesting
+bool? debugIsMobilePlatformOverride;
+
+bool get isMobilePlatform =>
+    debugIsMobilePlatformOverride ??
+    (!kIsWeb && (Platform.isAndroid || Platform.isIOS));
 
 /// 是否为 Android。
 bool get isAndroidPlatform => !kIsWeb && Platform.isAndroid;

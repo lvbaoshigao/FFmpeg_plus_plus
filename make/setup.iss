@@ -10,7 +10,9 @@
 ; ============================================================
 
 #define MyAppName "FFmpeg++"
+#ifndef MyAppVersion
 #define MyAppVersion "6.0.0-beta2"
+#endif
 ; 纯数字版本号（Windows 版本资源要求 x.x.x.x，不能包含 beta 等字符）。
 ; 从 MyAppVersion 派生（单一版本源）：去掉 '-' 之后的预发布后缀，再补第四段 0：
 ;   6.0.0-beta2 → 6.0.0.0；6.1.0 → 6.1.0.0。

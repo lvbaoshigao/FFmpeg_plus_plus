@@ -2,11 +2,15 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../providers/app_state.dart';
 
 import '../services/ffmpeg_installer.dart';
 import '../services/shell_open.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
+import 'app_alert_dialog.dart';
 import 'app_slider.dart';
 
 const _ffmpegUrl = 'https://wwbrq.lanzouv.com/iTF9n3sb937c';
@@ -16,8 +20,11 @@ class FfmpegInstallDialog extends StatefulWidget {
   const FfmpegInstallDialog({super.key});
 
   static Future<bool?> show(BuildContext context) {
-    return showDialog<bool>(context: context, barrierDismissible: false,
-        builder: (_) => const FfmpegInstallDialog());
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const FfmpegInstallDialog(),
+    );
   }
 
   @override
@@ -42,44 +49,81 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
   }
 
   Future<void> _startPackageManager() async {
-    setState(() { _step = 'pkgmgr'; _status = '准备安装...'; _progress = 0; _error = null; });
+    setState(() {
+      _step = 'pkgmgr';
+      _status = '准备安装...';
+      _progress = 0;
+      _error = null;
+    });
     try {
       await FfmpegInstaller.installViaPackageManager(
-        onStatus: (s) { _log(s); if (mounted) setState(() => _status = s); },
-        onProgress: (p) { if (mounted) setState(() => _progress = p); },
+        trace: context.read<AppState>().diagnosticTrace,
+        onStatus: (s) {
+          _log(s);
+          if (mounted) setState(() => _status = s);
+        },
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
       );
       if (mounted) setState(() => _step = 'done');
     } catch (e) {
       _log('错误: $e');
-      if (mounted) setState(() { _step = 'error'; _error = '$e'; });
+      if (mounted)
+        setState(() {
+          _step = 'error';
+          _error = '$e';
+        });
     }
   }
 
   Future<void> _startWinget() async {
-    setState(() { _step = 'winget'; _status = '准备 winget...'; _progress = 0; _error = null; _slowWarning = false; });
+    setState(() {
+      _step = 'winget';
+      _status = '准备 winget...';
+      _progress = 0;
+      _error = null;
+      _slowWarning = false;
+    });
     try {
       await FfmpegInstaller.installViaWinget(
-        onStatus: (s) { _log(s); if (mounted) setState(() => _status = s); },
-        onProgress: (p) { if (mounted) setState(() => _progress = p); },
-        onSpeedWarning: (slow) { if (mounted) setState(() => _slowWarning = slow); },
+        trace: context.read<AppState>().diagnosticTrace,
+        onStatus: (s) {
+          _log(s);
+          if (mounted) setState(() => _status = s);
+        },
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
+        onSpeedWarning: (slow) {
+          if (mounted) setState(() => _slowWarning = slow);
+        },
       );
       if (mounted) setState(() => _step = 'done');
     } catch (e) {
       _log('错误: $e');
-      if (mounted) setState(() { _step = 'error'; _error = '$e'; });
+      if (mounted)
+        setState(() {
+          _step = 'error';
+          _error = '$e';
+        });
     }
   }
 
   void _startLanzou() {
-    setState(() { _step = 'lanzou'; _ffmpegZipPath = null; _ffprobeZipPath = null; });
+    setState(() {
+      _step = 'lanzou';
+      _ffmpegZipPath = null;
+      _ffprobeZipPath = null;
+    });
   }
 
   Future<void> _openBrowser(String url) => ShellOpen.url(url);
 
-
   Future<void> _pickFile(bool isFFmpeg) async {
     final picked = await FilePicker.pickFile(
-      type: FileType.custom, allowedExtensions: ['zip'],
+      type: FileType.custom,
+      allowedExtensions: ['zip'],
       dialogTitle: isFFmpeg ? '选择下载好的 ffmpeg.zip' : '选择下载好的 ffprobe.zip',
     );
     if (picked?.path == null) return;
@@ -87,57 +131,90 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
     final size = await File(path).length(); // 异步，避免阻塞 UI
     if (!mounted) return;
     if (size < 1000000) {
-      setState(() => _status = '文件太小 (${(size / 1024).toStringAsFixed(0)}KB)，请确认是否下载完整');
+      setState(
+        () =>
+            _status = '文件太小 (${(size / 1024).toStringAsFixed(0)}KB)，请确认是否下载完整',
+      );
       return;
     }
     setState(() {
       if (isFFmpeg) {
         _ffmpegZipPath = path;
-        _status = 'ffmpeg.zip 已选择 (${(size / 1024 / 1024).toStringAsFixed(1)}MB)';
+        _status =
+            'ffmpeg.zip 已选择 (${(size / 1024 / 1024).toStringAsFixed(1)}MB)';
       } else {
         _ffprobeZipPath = path;
-        _status = 'ffprobe.zip 已选择 (${(size / 1024 / 1024).toStringAsFixed(1)}MB)';
+        _status =
+            'ffprobe.zip 已选择 (${(size / 1024 / 1024).toStringAsFixed(1)}MB)';
       }
     });
   }
 
   Future<void> _doImport() async {
     if (_ffmpegZipPath == null || _ffprobeZipPath == null) return;
-    setState(() { _step = 'importing'; _status = '正在解压...'; _progress = 0; });
+    setState(() {
+      _step = 'importing';
+      _status = '正在解压...';
+      _progress = 0;
+    });
     try {
       await FfmpegInstaller.importFromZips(
+        trace: context.read<AppState>().diagnosticTrace,
         ffmpegZipPath: _ffmpegZipPath!,
         ffprobeZipPath: _ffprobeZipPath!,
-        onStatus: (s) { _log(s); if (mounted) setState(() => _status = s); },
-        onProgress: (p) { if (mounted) setState(() => _progress = p); },
+        onStatus: (s) {
+          _log(s);
+          if (mounted) setState(() => _status = s);
+        },
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
       );
       if (mounted) setState(() => _step = 'done');
     } catch (e) {
       _log('错误: $e');
-      if (mounted) setState(() { _step = 'error'; _error = '$e'; });
+      if (mounted)
+        setState(() {
+          _step = 'error';
+          _error = '$e';
+        });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Row(children: [
-        Icon(_titleIcon, size: 22, color: _titleColor(scheme)),
-        const SizedBox(width: 8),
-        Text(_title, style: TextStyle(fontSize: 16, color: scheme.onSurface)),
-      ]),
+    return AppAlertDialog(
+      title: Row(
+        children: [
+          Icon(_titleIcon, size: 22, color: _titleColor(scheme)),
+          const SizedBox(width: 8),
+          Text(_title, style: TextStyle(fontSize: 16, color: scheme.onSurface)),
+        ],
+      ),
       content: SizedBox(width: 480, child: _buildContent(scheme)),
       actions: _buildActions(scheme),
     );
   }
 
-  IconData get _titleIcon => switch (_step) { 'done' => Icons.check_circle, 'error' => Icons.error, _ => Icons.download };
-  Color _titleColor(ColorScheme s) => switch (_step) { 'done' => s.sem.success, 'error' => s.sem.danger, _ => s.sem.info };
+  IconData get _titleIcon => switch (_step) {
+    'done' => Icons.check_circle,
+    'error' => Icons.error,
+    _ => Icons.download,
+  };
+  Color _titleColor(ColorScheme s) => switch (_step) {
+    'done' => s.sem.success,
+    'error' => s.sem.danger,
+    _ => s.sem.info,
+  };
   String get _title => switch (_step) {
-    'choose' => '安装 FFmpeg', 'winget' || 'pkgmgr' => '正在安装...', 'lanzou' => '蓝奏云下载',
-    'importing' => '正在导入...', 'done' => '安装完成', 'error' => '安装失败', _ => '',
+    'choose' => '安装 FFmpeg',
+    'winget' || 'pkgmgr' => '正在安装...',
+    'lanzou' => '蓝奏云下载',
+    'importing' => '正在导入...',
+    'done' => '安装完成',
+    'error' => '安装失败',
+    _ => '',
   };
 
   Widget _buildContent(ColorScheme scheme) => switch (_step) {
@@ -150,142 +227,291 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
   };
 
   Widget _buildChoose(ColorScheme scheme) {
-    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('未检测到 FFmpeg，需要安装后才能处理视频。\n请选择安装方式：',
-          style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
-      const SizedBox(height: 16),
-      if (Platform.isLinux) ...[
-        _methodCard(scheme, Icons.terminal, '系统包管理器安装',
-            '通过 apt/dnf/pacman 自动安装\n需要输入管理员密码', '全自动', _startPackageManager),
-      ] else if (Platform.isMacOS) ...[
-        _methodCard(scheme, Icons.terminal, 'Homebrew 安装',
-            '通过 brew install ffmpeg 自动安装\n需要已安装 Homebrew', '全自动', _startPackageManager),
-      ] else ...[
-        _methodCard(scheme, Icons.terminal, 'Winget 自动安装',
-            '通过 Windows 包管理器自动下载安装\n自动配置环境变量，全局可用', '全自动', _startWinget),
-        const SizedBox(height: 8),
-        _methodCard(scheme, Icons.cloud_download, '蓝奏云手动下载',
-            '从国内蓝奏云网盘下载（速度快，无需梯子）\n需手动下载两个文件后导入', '国内推荐', _startLanzou),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '未检测到 FFmpeg，需要安装后才能处理视频。\n请选择安装方式：',
+          style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 16),
+        if (Platform.isLinux) ...[
+          _methodCard(
+            scheme,
+            Icons.terminal,
+            '系统包管理器安装',
+            '通过 apt/dnf/pacman 自动安装\n需要输入管理员密码',
+            '全自动',
+            _startPackageManager,
+          ),
+        ] else if (Platform.isMacOS) ...[
+          _methodCard(
+            scheme,
+            Icons.terminal,
+            'Homebrew 安装',
+            '通过 brew install ffmpeg 自动安装\n需要已安装 Homebrew',
+            '全自动',
+            _startPackageManager,
+          ),
+        ] else ...[
+          _methodCard(
+            scheme,
+            Icons.terminal,
+            'Winget 自动安装',
+            '通过 Windows 包管理器自动下载安装\n自动配置环境变量，全局可用',
+            '全自动',
+            _startWinget,
+          ),
+          const SizedBox(height: 8),
+          _methodCard(
+            scheme,
+            Icons.cloud_download,
+            '蓝奏云手动下载',
+            '从国内蓝奏云网盘下载（速度快，无需梯子）\n需手动下载两个文件后导入',
+            '国内推荐',
+            _startLanzou,
+          ),
+        ],
       ],
-    ]);
+    );
   }
 
-  Widget _methodCard(ColorScheme scheme, IconData icon, String title, String desc, String tag, VoidCallback onTap) {
+  Widget _methodCard(
+    ColorScheme scheme,
+    IconData icon,
+    String title,
+    String desc,
+    String tag,
+    VoidCallback onTap,
+  ) {
     return Material(
       color: scheme.surfaceContainerHighest.withAlpha(80),
       borderRadius: BorderRadius.circular(10),
-      child: InkWell(borderRadius: BorderRadius.circular(10), onTap: onTap,
-        child: Padding(padding: const EdgeInsets.all(12), child: Row(children: [
-          Container(width: 40, height: 40,
-            decoration: BoxDecoration(color: scheme.primaryContainer, borderRadius: BorderRadius.circular(8)),
-            child: Icon(icon, size: 20, color: scheme.onPrimaryContainer)),
-          const SizedBox(width: 12),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Text(title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-              const SizedBox(width: 6),
-              Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                decoration: BoxDecoration(color: scheme.primaryContainer, borderRadius: BorderRadius.circular(4)),
-                child: Text(tag, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: scheme.primary))),
-            ]),
-            const SizedBox(height: 4),
-            Text(desc, style: TextStyle(fontSize: 11, color: scheme.outline)),
-          ])),
-          Icon(Icons.arrow_forward_ios, size: 14, color: scheme.outline),
-        ]))),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, size: 20, color: scheme.onPrimaryContainer),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: scheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            tag,
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.primary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      desc,
+                      style: TextStyle(fontSize: 11, color: scheme.outline),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.arrow_forward_ios, size: 14, color: scheme.outline),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
   // ── 蓝奏云分步引导 ──
 
   Widget _buildLanzouGuide(ColorScheme scheme) {
-    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // 步骤指示器
-      _stepIndicator(scheme),
-      const SizedBox(height: 16),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 步骤指示器
+        _stepIndicator(scheme),
+        const SizedBox(height: 16),
 
-      // 第一步：下载 ffmpeg
-      _fileCard(scheme,
-        step: 1,
-        name: 'ffmpeg.zip',
-        desc: 'FFmpeg 视频处理核心程序（约 69MB）',
-        url: _ffmpegUrl,
-        selectedPath: _ffmpegZipPath,
-        onDownload: () => _openBrowser(_ffmpegUrl),
-        onPick: () => _pickFile(true),
-      ),
-      const SizedBox(height: 10),
+        // 第一步：下载 ffmpeg
+        _fileCard(
+          scheme,
+          step: 1,
+          name: 'ffmpeg.zip',
+          desc: 'FFmpeg 视频处理核心程序（约 69MB）',
+          url: _ffmpegUrl,
+          selectedPath: _ffmpegZipPath,
+          onDownload: () => _openBrowser(_ffmpegUrl),
+          onPick: () => _pickFile(true),
+        ),
+        const SizedBox(height: 10),
 
-      // 第二步：下载 ffprobe
-      _fileCard(scheme,
-        step: 2,
-        name: 'ffprobe.zip',
-        desc: 'FFprobe 视频信息探测工具（约 69MB）',
-        url: _ffprobeUrl,
-        selectedPath: _ffprobeZipPath,
-        onDownload: () => _openBrowser(_ffprobeUrl),
-        onPick: () => _pickFile(false),
-      ),
-      const SizedBox(height: 12),
+        // 第二步：下载 ffprobe
+        _fileCard(
+          scheme,
+          step: 2,
+          name: 'ffprobe.zip',
+          desc: 'FFprobe 视频信息探测工具（约 69MB）',
+          url: _ffprobeUrl,
+          selectedPath: _ffprobeZipPath,
+          onDownload: () => _openBrowser(_ffprobeUrl),
+          onPick: () => _pickFile(false),
+        ),
+        const SizedBox(height: 12),
 
-      // 状态
-      if (_status.isNotEmpty)
-        Padding(padding: const EdgeInsets.only(bottom: 8),
-          child: Text(_status, style: TextStyle(fontSize: 11, color: scheme.outline))),
+        // 状态
+        if (_status.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              _status,
+              style: TextStyle(fontSize: 11, color: scheme.outline),
+            ),
+          ),
 
-      // 导入按钮
-      SizedBox(width: double.infinity, child: FilledButton.icon(
-        onPressed: (_ffmpegZipPath != null && _ffprobeZipPath != null) ? _doImport : null,
-        icon: const Icon(Icons.install_desktop, size: 18),
-        label: Text(_ffmpegZipPath != null && _ffprobeZipPath != null
-            ? '安装到程序目录' : '请先下载并选择两个文件'),
-      )),
+        // 导入按钮
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: (_ffmpegZipPath != null && _ffprobeZipPath != null)
+                ? _doImport
+                : null,
+            icon: const Icon(Icons.install_desktop, size: 18),
+            label: Text(
+              _ffmpegZipPath != null && _ffprobeZipPath != null
+                  ? '安装到程序目录'
+                  : '请先下载并选择两个文件',
+            ),
+          ),
+        ),
 
-      const SizedBox(height: 8),
-      Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(color: scheme.surfaceContainerHighest.withAlpha(40), borderRadius: BorderRadius.circular(6)),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Icon(Icons.info_outline, size: 13, color: scheme.outline),
-          const SizedBox(width: 6),
-          Expanded(child: Text(
-            '下载页面点击「普通下载」或「立即下载」按钮即可\n安装后的文件可在设置中删除',
-            style: TextStyle(fontSize: 10, color: scheme.outline, height: 1.4),
-          )),
-        ]),
-      ),
-    ]);
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest.withAlpha(40),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.info_outline, size: 13, color: scheme.outline),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '下载页面点击「普通下载」或「立即下载」按钮即可\n安装后的文件可在设置中删除',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: scheme.outline,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _stepIndicator(ColorScheme scheme) {
     final step1Done = _ffmpegZipPath != null;
     final step2Done = _ffprobeZipPath != null;
-    return Row(children: [
-      _dot(scheme, step1Done, '1'),
-      Expanded(child: Container(height: 2, color: step1Done ? scheme.primary : scheme.outlineVariant.withAlpha(80))),
-      _dot(scheme, step2Done, '2'),
-      Expanded(child: Container(height: 2, color: step2Done ? scheme.primary : scheme.outlineVariant.withAlpha(80))),
-      _dot(scheme, step1Done && step2Done, '3'),
-    ]);
+    return Row(
+      children: [
+        _dot(scheme, step1Done, '1'),
+        Expanded(
+          child: Container(
+            height: 2,
+            color: step1Done
+                ? scheme.primary
+                : scheme.outlineVariant.withAlpha(80),
+          ),
+        ),
+        _dot(scheme, step2Done, '2'),
+        Expanded(
+          child: Container(
+            height: 2,
+            color: step2Done
+                ? scheme.primary
+                : scheme.outlineVariant.withAlpha(80),
+          ),
+        ),
+        _dot(scheme, step1Done && step2Done, '3'),
+      ],
+    );
   }
 
   Widget _dot(ColorScheme scheme, bool done, String label) {
     return Container(
-      width: 24, height: 24,
-      decoration: BoxDecoration(shape: BoxShape.circle,
+      width: 24,
+      height: 24,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
         color: done ? scheme.primary : scheme.surfaceContainerHighest,
-        border: Border.all(color: done ? scheme.primary : scheme.outlineVariant, width: 1.5)),
-      child: Center(child: done
-        ? Icon(Icons.check, size: 14, color: scheme.onPrimary)
-        : Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-            color: scheme.onSurfaceVariant))),
+        border: Border.all(
+          color: done ? scheme.primary : scheme.outlineVariant,
+          width: 1.5,
+        ),
+      ),
+      child: Center(
+        child: done
+            ? Icon(Icons.check, size: 14, color: scheme.onPrimary)
+            : Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+      ),
     );
   }
 
-  Widget _fileCard(ColorScheme scheme, {
-    required int step, required String name, required String desc,
-    required String url, required String? selectedPath,
-    required VoidCallback onDownload, required VoidCallback onPick,
+  Widget _fileCard(
+    ColorScheme scheme, {
+    required int step,
+    required String name,
+    required String desc,
+    required String url,
+    required String? selectedPath,
+    required VoidCallback onDownload,
+    required VoidCallback onPick,
   }) {
     final done = selectedPath != null;
     // 「已选择」态的整卡配色统一到 success（原先底色/描边是 primaryContainer +
@@ -294,145 +520,347 @@ class _FfmpegInstallDialogState extends State<FfmpegInstallDialog> {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: done ? scheme.sem.successContainer : scheme.surfaceContainerHighest.withAlpha(60),
+        color: done
+            ? scheme.sem.successContainer
+            : scheme.surfaceContainerHighest.withAlpha(60),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: accent.withAlpha(60)),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Icon(done ? Icons.check_circle : Icons.download, size: 16, color: accent),
-          const SizedBox(width: 6),
-          // 名称可能是较长的文件名 / 发行包名：用 Expanded 吃掉剩余宽度并省略，
-          // 右侧「已选择」仍靠右；原先裸 Text + Spacer 在长名称时会让本行溢出。
-          Expanded(child: Text(
-            name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: scheme.onSurface),
-          )),
-          if (done) ...[
-            const SizedBox(width: 8),
-            Text('已选择', style: TextStyle(fontSize: 10, color: accent, fontWeight: FontWeight.w600)),
-          ],
-        ]),
-        const SizedBox(height: 4),
-        Text(desc, style: TextStyle(fontSize: 11, color: scheme.outline)),
-        if (done)
-          Padding(padding: const EdgeInsets.only(top: 4),
-            child: Text(selectedPath, style: TextStyle(fontSize: 9, color: scheme.outline, fontFamily: AppTheme.monoFont),
-                maxLines: 1, overflow: TextOverflow.ellipsis)),
-        const SizedBox(height: 8),
-        // 两个按钮并排：窄对话框 / 放大字号时按比例收缩而不是顶出边界
-        // （Flexible 为 loose，宽度够时按钮仍按自身内容宽度排布）。
-        Row(children: [
-          Flexible(child: OutlinedButton.icon(
-            onPressed: onDownload,
-            icon: const Icon(Icons.open_in_browser, size: 16),
-            label: Text(done ? '重新下载' : '打开下载页',
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12)),
-            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8)),
-          )),
-          const SizedBox(width: 8),
-          Flexible(child: FilledButton.tonalIcon(
-            onPressed: onPick,
-            icon: const Icon(Icons.folder_open, size: 16),
-            label: Text(done ? '重新选择' : '选择已下载的文件',
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12)),
-            style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8)),
-          )),
-        ]),
-      ]),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                done ? Icons.check_circle : Icons.download,
+                size: 16,
+                color: accent,
+              ),
+              const SizedBox(width: 6),
+              // 名称可能是较长的文件名 / 发行包名：用 Expanded 吃掉剩余宽度并省略，
+              // 右侧「已选择」仍靠右；原先裸 Text + Spacer 在长名称时会让本行溢出。
+              Expanded(
+                child: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
+                ),
+              ),
+              if (done) ...[
+                const SizedBox(width: 8),
+                Text(
+                  '已选择',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: accent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(desc, style: TextStyle(fontSize: 11, color: scheme.outline)),
+          if (done)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                selectedPath,
+                style: TextStyle(
+                  fontSize: 9,
+                  color: scheme.outline,
+                  fontFamily: AppTheme.monoFont,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          const SizedBox(height: 8),
+          // 两个按钮并排：窄对话框 / 放大字号时按比例收缩而不是顶出边界
+          // （Flexible 为 loose，宽度够时按钮仍按自身内容宽度排布）。
+          Row(
+            children: [
+              Flexible(
+                child: OutlinedButton.icon(
+                  onPressed: onDownload,
+                  icon: const Icon(Icons.open_in_browser, size: 16),
+                  label: Text(
+                    done ? '重新下载' : '打开下载页',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: FilledButton.tonalIcon(
+                  onPressed: onPick,
+                  icon: const Icon(Icons.folder_open, size: 16),
+                  label: Text(
+                    done ? '重新选择' : '选择已下载的文件',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
   // ── 通用 ──
 
   Widget _buildProgress(ColorScheme scheme) {
-    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // 统一进度条（圆角/高度/配色与全局滑杆一致）
-      AppProgressBar(value: _progress),
-      const SizedBox(height: 8),
-      Row(children: [
-        Expanded(child: Text(_status, style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant), maxLines: 2, overflow: TextOverflow.ellipsis)),
-        Text('${(_progress * 100).toInt()}%', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.primary)),
-      ]),
-      if (_slowWarning) ...[
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 统一进度条（圆角/高度/配色与全局滑杆一致）
+        AppProgressBar(value: _progress),
         const SizedBox(height: 8),
-        // 原先用 `Colors.orange.withAlpha(30)` 底 + `Colors.orange.shade800` 字：
-        // 深色主题下橙色 30/255 的底几乎看不见，shade800 又是暗橙配暗底 → 读不清。
-        // 改为 M3 的 container / on-container 配对，明暗两套 tone 都由
-        // ColorScheme.fromSeed 保证对比度。
-        Container(padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(color: scheme.sem.warningContainer, borderRadius: BorderRadius.circular(6)),
-          child: Row(children: [
-            Icon(Icons.warning_amber, size: 14, color: scheme.sem.onWarningContainer),
-            const SizedBox(width: 6),
-            Expanded(child: Text('下载速度较慢，建议取消后切换到蓝奏云下载',
-                style: TextStyle(fontSize: 11, color: scheme.sem.onWarningContainer))),
-          ])),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                _status,
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Text(
+              '${(_progress * 100).toInt()}%',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: scheme.primary,
+              ),
+            ),
+          ],
+        ),
+        if (_slowWarning) ...[
+          const SizedBox(height: 8),
+          // 原先用 `Colors.orange.withAlpha(30)` 底 + `Colors.orange.shade800` 字：
+          // 深色主题下橙色 30/255 的底几乎看不见，shade800 又是暗橙配暗底 → 读不清。
+          // 改为 M3 的 container / on-container 配对，明暗两套 tone 都由
+          // ColorScheme.fromSeed 保证对比度。
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: scheme.sem.warningContainer,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.warning_amber,
+                  size: 14,
+                  color: scheme.sem.onWarningContainer,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '下载速度较慢，建议取消后切换到蓝奏云下载',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: scheme.sem.onWarningContainer,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 12),
+        Container(
+          height: 80,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest.withAlpha(60),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: ListView.builder(
+            reverse: true,
+            itemCount: _logs.length,
+            itemBuilder: (_, i) => Text(
+              _logs[_logs.length - 1 - i],
+              style: TextStyle(
+                fontSize: 10,
+                fontFamily: AppTheme.monoFont,
+                color: scheme.outline,
+              ),
+            ),
+          ),
+        ),
       ],
-      const SizedBox(height: 12),
-      Container(height: 80, padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(color: scheme.surfaceContainerHighest.withAlpha(60), borderRadius: BorderRadius.circular(8)),
-        child: ListView.builder(reverse: true, itemCount: _logs.length,
-          itemBuilder: (_, i) => Text(_logs[_logs.length - 1 - i],
-              style: TextStyle(fontSize: 10, fontFamily: AppTheme.monoFont, color: scheme.outline)))),
-    ]);
+    );
   }
 
   Widget _buildDone(ColorScheme scheme) {
-    return Column(mainAxisSize: MainAxisSize.min, children: [
-      Icon(Icons.check_circle, size: 48, color: scheme.sem.success),
-      const SizedBox(height: 12),
-      Text('FFmpeg 安装成功！', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-      const SizedBox(height: 8),
-      Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(color: scheme.surfaceContainerHighest.withAlpha(60), borderRadius: BorderRadius.circular(8)),
-        child: Column(children: [
-          _pathRow(scheme, 'ffmpeg', FfmpegInstaller.ffmpegPath),
-          const SizedBox(height: 4),
-          _pathRow(scheme, 'ffprobe', FfmpegInstaller.ffprobePath),
-        ]),
-      ),
-    ]);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.check_circle, size: 48, color: scheme.sem.success),
+        const SizedBox(height: 12),
+        Text(
+          'FFmpeg 安装成功！',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: scheme.onSurface,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest.withAlpha(60),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            children: [
+              _pathRow(scheme, 'ffmpeg', FfmpegInstaller.ffmpegPath),
+              const SizedBox(height: 4),
+              _pathRow(scheme, 'ffprobe', FfmpegInstaller.ffprobePath),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _pathRow(ColorScheme scheme, String label, String path) {
     final exists = File(path).existsSync();
-    return Row(children: [
-      Icon(exists ? Icons.check : Icons.close, size: 14, color: exists ? scheme.sem.success : scheme.sem.danger),
-      const SizedBox(width: 6),
-      Text('$label: ', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-      Expanded(child: Text(path, style: TextStyle(fontSize: 10, fontFamily: AppTheme.monoFont, color: scheme.outline),
-          overflow: TextOverflow.ellipsis)),
-    ]);
+    return Row(
+      children: [
+        Icon(
+          exists ? Icons.check : Icons.close,
+          size: 14,
+          color: exists ? scheme.sem.success : scheme.sem.danger,
+        ),
+        const SizedBox(width: 6),
+        Text(
+          '$label: ',
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: scheme.onSurface,
+          ),
+        ),
+        Expanded(
+          child: Text(
+            path,
+            style: TextStyle(
+              fontSize: 10,
+              fontFamily: AppTheme.monoFont,
+              color: scheme.outline,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildError(ColorScheme scheme) {
-    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Container(padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(color: scheme.errorContainer.withAlpha(60), borderRadius: BorderRadius.circular(8)),
-        child: Text(_error ?? '未知错误', style: TextStyle(fontSize: 12, color: scheme.onErrorContainer))),
-      const SizedBox(height: 12),
-      Text('• 尝试另一种安装方式\n• 手动安装 FFmpeg 并添加到 PATH',
-          style: TextStyle(fontSize: 12, color: scheme.outline)),
-    ]);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: scheme.errorContainer.withAlpha(60),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            _error ?? '未知错误',
+            style: TextStyle(fontSize: 12, color: scheme.onErrorContainer),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          '• 尝试另一种安装方式\n• 手动安装 FFmpeg 并添加到 PATH',
+          style: TextStyle(fontSize: 12, color: scheme.outline),
+        ),
+      ],
+    );
   }
 
   List<Widget> _buildActions(ColorScheme scheme) => switch (_step) {
-    'choose' => [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消'))],
-    'winget' || 'importing' || 'pkgmgr' => [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消'))],
-    'lanzou' => [
-      TextButton(onPressed: () => setState(() => _step = 'choose'), child: const Text('返回')),
-      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+    'choose' => [
+      AppDialogAction(
+        role: AppDialogActionRole.cancel,
+        child: TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('取消'),
+        ),
+      ),
     ],
-    'done' => [FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('完成'))],
+    'winget' || 'importing' || 'pkgmgr' => [
+      AppDialogAction(
+        role: AppDialogActionRole.cancel,
+        child: TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('取消'),
+        ),
+      ),
+    ],
+    'lanzou' => [
+      TextButton(
+        onPressed: () => setState(() => _step = 'choose'),
+        child: const Text('返回'),
+      ),
+      AppDialogAction(
+        role: AppDialogActionRole.cancel,
+        child: TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('取消'),
+        ),
+      ),
+    ],
+    'done' => [
+      FilledButton(
+        onPressed: () => Navigator.pop(context, true),
+        child: const Text('完成'),
+      ),
+    ],
     'error' => [
-      TextButton(onPressed: () => setState(() => _step = 'choose'), child: const Text('重试')),
-      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('关闭')),
+      AppDialogAction(
+        role: AppDialogActionRole.primary,
+        child: TextButton(
+          onPressed: () => setState(() => _step = 'choose'),
+          child: const Text('重试'),
+        ),
+      ),
+      AppDialogAction(
+        role: AppDialogActionRole.cancel,
+        child: TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('关闭'),
+        ),
+      ),
     ],
     _ => [],
   };

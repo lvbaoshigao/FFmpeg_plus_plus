@@ -128,12 +128,21 @@ void main(List<String> arguments) async {
     );
   });
 
+  AppState? diagnosticState;
   FlutterError.onError = (details) {
+    diagnosticState?.diagnosticTrace.record(
+      'app.flutter_error', error: details.exception,
+      details: {'hasStack': details.stack != null},
+    );
     _startupLog('FLUTTER ERROR: ${details.exceptionAsString()}');
     FlutterError.presentError(details);
     _logCrash(details.exceptionAsString(), details.stack?.toString() ?? '');
   };
   PlatformDispatcher.instance.onError = (error, stack) {
+    diagnosticState?.diagnosticTrace.record(
+      'app.platform_error', error: error,
+      details: {'hasStack': stack.toString().isNotEmpty},
+    );
     _startupLog('PLATFORM ERROR: $error');
     _logCrash(error.toString(), stack.toString());
     return true;
@@ -156,6 +165,7 @@ void main(List<String> arguments) async {
   _startupLog('4-window OK');
 
   final appState = AppState();
+  diagnosticState = appState;
   _startupLog('5-AppState created');
 
   _startupLog('7-calling runApp');

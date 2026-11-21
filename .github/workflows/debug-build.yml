@@ -102,7 +102,7 @@ jobs:
 
       - name: Pack portable bundle
         run: |
-          tar -czf "FFmpeg++_v$env:VER_windows-x64_portable.tar.gz" -C "ffmpegpp_gui/build/windows/x64/runner/Release" .
+          tar -czf "FFmpeg++_v$($env:VER)_windows-x64_portable.tar.gz" -C "ffmpegpp_gui/build/windows/x64/runner/Release" .
         shell: pwsh
         env:
           VER: ${{ inputs.version }}
@@ -119,8 +119,8 @@ jobs:
           Copy-Item "make\ChineseSimplified.isl" "$langDir\ChineseSimplified.isl" -Force
           Copy-Item "make\ChineseTraditional.isl" "$langDir\ChineseTraditional.isl" -Force
           New-Item -ItemType Directory -Force -Path build
-          tar -xzf "FFmpeg++_v$env:VER_windows-x64_portable.tar.gz" -C build
-          & $iscc make\setup.iss
+          tar -xzf "FFmpeg++_v$($env:VER)_windows-x64_portable.tar.gz" -C build
+          & $iscc "/DMyAppVersion=$env:VER" make\setup.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
         shell: pwsh
         env:
@@ -161,26 +161,7 @@ jobs:
           cache: true
           pub-cache: true
 
-      # key 不含源码哈希：稳定命中，源码改动由 CMake 依赖图做增量重编。
-      # 原先把 src/include 的 hash 放进 key，等于「源码一变就换一份缓存」，
-      # 精确 key 永不命中、缓存条目还会迅速膨胀把仓库 10GB 额度挤爆。
-      - name: Cache C++ backend build
-        uses: actions/cache@v5
-        with:
-          path: server_cpp/build_linux
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
-            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
-
-      - name: Build C++ backend (libffmpegpp.so)
-        run: |
-          cd server_cpp
-          mkdir -p build_linux
-          cd build_linux
-          cmake .. -DCMAKE_BUILD_TYPE=Release
-          make -j$(nproc)
-
+      # Flutter 的 Linux CMake 工程负责构建并安装 C++ 后端。
       - name: Build Flutter GUI
         run: |
           cd ffmpegpp_gui
@@ -191,7 +172,7 @@ jobs:
         run: |
           mkdir -p output
           cp -r ffmpegpp_gui/build/linux/x64/release/bundle/* output/
-          cp server_cpp/build_linux/libffmpegpp.so output/lib/
+          test -f output/lib/libffmpegpp.so
           tar -czf "FFmpeg++_v${VER}_linux-x64_portable.tar.gz" -C output .
         env:
           VER: ${{ inputs.version }}
@@ -312,26 +293,7 @@ jobs:
           restore-keys: |
             flutter-pub-${{ env.FLUTTER_VERSION }}-linux-arm64-
 
-      # key 不含源码哈希：稳定命中，源码改动由 CMake 依赖图做增量重编。
-      # 原先把 src/include 的 hash 放进 key，等于「源码一变就换一份缓存」，
-      # 精确 key 永不命中、缓存条目还会迅速膨胀把仓库 10GB 额度挤爆。
-      - name: Cache C++ backend build
-        uses: actions/cache@v5
-        with:
-          path: server_cpp/build_linux
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v2-${{ hashFiles('server_cpp/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-cpp-v2-
-            ${{ runner.os }}-${{ runner.arch }}-cpp-v1-
-
-      - name: Build C++ backend (libffmpegpp.so)
-        run: |
-          cd server_cpp
-          mkdir -p build_linux
-          cd build_linux
-          cmake .. -DCMAKE_BUILD_TYPE=Release
-          make -j$(nproc)
-
+      # Flutter 的 Linux CMake 工程负责构建并安装 C++ 后端。
       - name: Build Flutter GUI
         run: |
           cd ffmpegpp_gui
@@ -342,7 +304,7 @@ jobs:
         run: |
           mkdir -p output
           cp -r ffmpegpp_gui/build/linux/arm64/release/bundle/* output/
-          cp server_cpp/build_linux/libffmpegpp.so output/lib/
+          test -f output/lib/libffmpegpp.so
           tar -czf "FFmpeg++_v${VER}_linux-arm64_portable.tar.gz" -C output .
         env:
           VER: ${{ inputs.version }}

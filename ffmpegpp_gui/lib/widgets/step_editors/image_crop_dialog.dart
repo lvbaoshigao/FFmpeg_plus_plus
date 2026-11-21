@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../../platform/app_platform.dart';
 import '../../theme/app_control_size.dart';
+import '../app_alert_dialog.dart';
 
 /// 图片裁剪专用窗口。
 ///
@@ -170,18 +171,18 @@ class _ImageCropDialogState extends State<_ImageCropDialog> {
   // ---------- 坐标换算 ----------
 
   Rect _toDisplay(Rect imageRect, double scale, Offset off) => Rect.fromLTRB(
-        imageRect.left * scale + off.dx,
-        imageRect.top * scale + off.dy,
-        imageRect.right * scale + off.dx,
-        imageRect.bottom * scale + off.dy,
-      );
+    imageRect.left * scale + off.dx,
+    imageRect.top * scale + off.dy,
+    imageRect.right * scale + off.dx,
+    imageRect.bottom * scale + off.dy,
+  );
 
   Rect _toImage(Rect displayRect, double scale, Offset off) => Rect.fromLTRB(
-        (displayRect.left - off.dx) / scale,
-        (displayRect.top - off.dy) / scale,
-        (displayRect.right - off.dx) / scale,
-        (displayRect.bottom - off.dy) / scale,
-      );
+    (displayRect.left - off.dx) / scale,
+    (displayRect.top - off.dy) / scale,
+    (displayRect.right - off.dx) / scale,
+    (displayRect.bottom - off.dy) / scale,
+  );
 
   // ---------- 比例约束 ----------
 
@@ -301,8 +302,12 @@ class _ImageCropDialogState extends State<_ImageCropDialog> {
       // 自拖拽起点起的**绝对位移**（触摸多事件同帧时 d.delta 累积会丢位移）
       final dx = d.localPosition.dx - _dragStart!.dx;
       final dy = d.localPosition.dy - _dragStart!.dy;
-      final left = (r0.left + dx).clamp(imgMin.dx, math.max(imgMin.dx, imgMax.dx - r0.width)).toDouble();
-      final top = (r0.top + dy).clamp(imgMin.dy, math.max(imgMin.dy, imgMax.dy - r0.height)).toDouble();
+      final left = (r0.left + dx)
+          .clamp(imgMin.dx, math.max(imgMin.dx, imgMax.dx - r0.width))
+          .toDouble();
+      final top = (r0.top + dy)
+          .clamp(imgMin.dy, math.max(imgMin.dy, imgMax.dy - r0.height))
+          .toDouble();
       dispRect = Rect.fromLTWH(left, top, r0.width, r0.height);
     } else if (mv != null) {
       // 手柄改尺寸：被拖边取当前指针位置，其余边沿用起始快照
@@ -315,13 +320,16 @@ class _ImageCropDialogState extends State<_ImageCropDialog> {
       if (mv.contains('t')) top = clamped.dy;
       if (mv.contains('b')) bottom = clamped.dy;
       dispRect = Rect.fromLTRB(
-        math.min(left, right), math.min(top, bottom),
-        math.max(left, right), math.max(top, bottom),
+        math.min(left, right),
+        math.min(top, bottom),
+        math.max(left, right),
+        math.max(top, bottom),
       );
     } else {
       // 新建选区：从起点到当前点。跨度不足阈值视为误触，原矩形原地不动。
       final probe = Rect.fromPoints(_dragStart!, clamped);
-      if (probe.width < _kMinNewSelectionSpan || probe.height < _kMinNewSelectionSpan) {
+      if (probe.width < _kMinNewSelectionSpan ||
+          probe.height < _kMinNewSelectionSpan) {
         return;
       }
       dispRect = probe;
@@ -335,7 +343,10 @@ class _ImageCropDialogState extends State<_ImageCropDialog> {
     );
     var img = _toImage(normalized, scale, off);
     if (_ratio != null) {
-      final moving = mv ?? ((clamped.dx >= _dragStart!.dx ? 'r' : 'l') + (clamped.dy >= _dragStart!.dy ? 'b' : 't'));
+      final moving =
+          mv ??
+          ((clamped.dx >= _dragStart!.dx ? 'r' : 'l') +
+              (clamped.dy >= _dragStart!.dy ? 'b' : 't'));
       img = _constrainRatio(img, moving);
     }
     // 钳回图内
@@ -396,7 +407,12 @@ class _ImageCropDialogState extends State<_ImageCropDialog> {
     final int y = _rect.top.round().clamp(0, math.max(0, _imgH.toInt() - 1));
     final int w = _rect.width.round().clamp(1, math.max(1, _imgW.toInt() - x));
     final int h = _rect.height.round().clamp(1, math.max(1, _imgH.toInt() - y));
-    return Rect.fromLTWH(x.toDouble(), y.toDouble(), w.toDouble(), h.toDouble());
+    return Rect.fromLTWH(
+      x.toDouble(),
+      y.toDouble(),
+      w.toDouble(),
+      h.toDouble(),
+    );
   }
 
   void _close() => Navigator.of(context).pop();
@@ -408,6 +424,7 @@ class _ImageCropDialogState extends State<_ImageCropDialog> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final dialogTheme = DialogTheme.of(context);
     final zh = widget.isZh;
     final media = MediaQuery.of(context);
     // 版式按宽高比分流：横屏用侧栏，竖屏用底部工具条。
@@ -418,22 +435,29 @@ class _ImageCropDialogState extends State<_ImageCropDialog> {
     final canvas = Container(color: Colors.black, child: _buildCanvas(cs, zh));
 
     return Material(
-      color: cs.surface,
+      color: isMobilePlatform
+          ? cs.surface
+          : dialogTheme.backgroundColor ?? cs.surfaceContainerHigh,
+      surfaceTintColor: isMobilePlatform ? null : dialogTheme.surfaceTintColor,
       clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(isMobilePlatform ? 0 : 14),
-      ),
+      shape: isMobilePlatform
+          ? const RoundedRectangleBorder()
+          : dialogTheme.shape,
       child: SafeArea(
         child: landscape
-            ? Row(children: [
-                Expanded(child: canvas),
-                _buildSidePanel(cs, zh, media.size),
-              ])
-            : Column(children: [
-                _buildTitleBar(cs, zh),
-                Expanded(child: canvas),
-                _buildBottomBar(cs, zh),
-              ]),
+            ? Row(
+                children: [
+                  Expanded(child: canvas),
+                  _buildSidePanel(cs, zh, media.size),
+                ],
+              )
+            : Column(
+                children: [
+                  _buildTitleBar(cs, zh),
+                  Expanded(child: canvas),
+                  _buildBottomBar(cs, zh),
+                ],
+              ),
       ),
     );
   }
@@ -441,53 +465,64 @@ class _ImageCropDialogState extends State<_ImageCropDialog> {
   // ---------- 画布 ----------
 
   Widget _buildCanvas(ColorScheme cs, bool zh) {
-    return LayoutBuilder(builder: (ctx, constraints) {
-      final scale = math.min(constraints.maxWidth / _imgW, constraints.maxHeight / _imgH);
-      final dispW = _imgW * scale;
-      final dispH = _imgH * scale;
-      final off = Offset(
-        (constraints.maxWidth - dispW) / 2,
-        (constraints.maxHeight - dispH) / 2,
-      );
-      final dispRect = _toDisplay(_rect, scale, off);
-      final dpr = MediaQuery.devicePixelRatioOf(ctx);
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final scale = math.min(
+          constraints.maxWidth / _imgW,
+          constraints.maxHeight / _imgH,
+        );
+        final dispW = _imgW * scale;
+        final dispH = _imgH * scale;
+        final off = Offset(
+          (constraints.maxWidth - dispW) / 2,
+          (constraints.maxHeight - dispH) / 2,
+        );
+        final dispRect = _toDisplay(_rect, scale, off);
+        final dpr = MediaQuery.devicePixelRatioOf(ctx);
 
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanStart: (d) => _onPanStart(d, scale, off, Size(dispW, dispH)),
-        onPanUpdate: (d) => _onPanUpdate(d, scale, off, Size(dispW, dispH)),
-        onPanEnd: _onPanEnd,
-        onPanCancel: () {
-          if (_rectAtPanStart != null) _rect = _rectAtPanStart!;
-          _clearDragState();
-        },
-        child: Stack(children: [
-          Positioned(
-            left: off.dx,
-            top: off.dy,
-            width: dispW,
-            height: dispH,
-            // 按**显示**尺寸封顶解码（专用窗口里最大一屏，仍不该按原图
-            // 原始分辨率解码 24MP 照片）
-            child: Image.file(File(widget.imagePath),
-                fit: BoxFit.fill,
-                cacheWidth: (dispW * dpr).round().clamp(1, 4096)),
-          ),
-          Positioned.fill(
-            child: CustomPaint(
-              painter: _CropCanvasPainter(
-                cropRect: dispRect,
-                accent: cs.primary,
-                spec: _spec,
-                label: '${_rect.width.round()} × ${_rect.height.round()}',
-                hint: zh ? '拖动角点缩放 · 拖动框内移动 · 空白处拖出新选区' : 'Drag corners to resize · drag inside to move · drag outside for a new selection',
-                showHint: _moving == null && dispRect.width < dispW * 0.9,
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (d) => _onPanStart(d, scale, off, Size(dispW, dispH)),
+          onPanUpdate: (d) => _onPanUpdate(d, scale, off, Size(dispW, dispH)),
+          onPanEnd: _onPanEnd,
+          onPanCancel: () {
+            if (_rectAtPanStart != null) _rect = _rectAtPanStart!;
+            _clearDragState();
+          },
+          child: Stack(
+            children: [
+              Positioned(
+                left: off.dx,
+                top: off.dy,
+                width: dispW,
+                height: dispH,
+                // 按**显示**尺寸封顶解码（专用窗口里最大一屏，仍不该按原图
+                // 原始分辨率解码 24MP 照片）
+                child: Image.file(
+                  File(widget.imagePath),
+                  fit: BoxFit.fill,
+                  cacheWidth: (dispW * dpr).round().clamp(1, 4096),
+                ),
               ),
-            ),
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _CropCanvasPainter(
+                    cropRect: dispRect,
+                    accent: cs.primary,
+                    spec: _spec,
+                    label: '${_rect.width.round()} × ${_rect.height.round()}',
+                    hint: zh
+                        ? '拖动角点缩放 · 拖动框内移动 · 空白处拖出新选区'
+                        : 'Drag corners to resize · drag inside to move · drag outside for a new selection',
+                    showHint: _moving == null && dispRect.width < dispW * 0.9,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ]),
-      );
-    });
+        );
+      },
+    );
   }
 
   // ---------- 标题栏（竖屏） ----------
@@ -495,22 +530,30 @@ class _ImageCropDialogState extends State<_ImageCropDialog> {
   Widget _buildTitleBar(ColorScheme cs, bool zh) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(6, 2, 6, 0),
-      child: Row(children: [
-        IconButton(
-          icon: const Icon(Icons.close, size: 20),
-          visualDensity: VisualDensity.compact,
-          tooltip: zh ? '取消' : 'Cancel',
-          onPressed: _close,
-        ),
-        Expanded(
-          child: Text(zh ? '裁剪图片' : 'Crop Image',
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.close, size: 20),
+            constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+            tooltip: zh ? '取消' : 'Cancel',
+            onPressed: _close,
+          ),
+          Expanded(
+            child: Text(
+              zh ? '裁剪图片' : 'Crop Image',
               textAlign: TextAlign.center,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: cs.onSurface)),
-        ),
-        const SizedBox(width: 40),
-      ]),
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: cs.onSurface,
+              ),
+            ),
+          ),
+          const SizedBox(width: 40),
+        ],
+      ),
     );
   }
 
@@ -526,88 +569,124 @@ class _ImageCropDialogState extends State<_ImageCropDialog> {
     return Container(
       width: w,
       decoration: BoxDecoration(
-        color: cs.surfaceContainerLow,
-        border: Border(left: BorderSide(color: cs.outlineVariant.withAlpha(140))),
+        color: isMobilePlatform ? cs.surfaceContainerLow : Colors.transparent,
+        border: Border(
+          left: BorderSide(color: cs.outlineVariant.withAlpha(140)),
+        ),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
-          child: Row(children: [
-            Icon(Icons.crop_free, size: 18, color: cs.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(zh ? '裁剪图片' : 'Crop Image',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+              child: Row(
+                children: [
+                  Icon(Icons.crop_free, size: 18, color: cs.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      zh ? '裁剪图片' : 'Crop Image',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: cs.onSurface,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    constraints: const BoxConstraints(
+                      minWidth: 44,
+                      minHeight: 44,
+                    ),
+                    tooltip: zh ? '取消' : 'Cancel',
+                    onPressed: _close,
+                  ),
+                ],
+              ),
             ),
-            IconButton(
-              icon: const Icon(Icons.close, size: 18),
-              visualDensity: VisualDensity.compact,
-              tooltip: zh ? '取消' : 'Cancel',
-              onPressed: _close,
+            Divider(height: 1, color: cs.outlineVariant.withAlpha(120)),
+
+            // 选区尺寸：横屏下画布上的尺寸标签离视线很远，侧栏顶部固定一份更直观
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              child: _buildSizeReadout(cs),
             ),
-          ]),
-        ),
-        Divider(height: 1, color: cs.outlineVariant.withAlpha(120)),
+            const SizedBox(height: 12),
 
-        // 选区尺寸：横屏下画布上的尺寸标签离视线很远，侧栏顶部固定一份更直观
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-          child: _buildSizeReadout(cs)),
-        const SizedBox(height: 12),
-
-        // 比例芯片（竖排 Wrap）
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Text(zh ? '宽高比' : 'Aspect Ratio',
-              style: TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w600, color: cs.outline)),
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Wrap(spacing: 8, runSpacing: 8, children: _ratioChips(zh)),
-          ),
-        ),
-
-        // 底部固定操作区
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Row(children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  style: sz.buttonStyle(),
-                  onPressed: _selectAll,
-                  icon: Icon(Icons.select_all, size: sz.iconSize),
-                  label: Text(zh ? '全选' : 'All',
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
+            // 比例芯片（竖排 Wrap）
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                zh ? '宽高比' : 'Aspect Ratio',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: cs.outline,
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  style: sz.buttonStyle(),
-                  onPressed: _reset,
-                  icon: Icon(Icons.restart_alt, size: sz.iconSize),
-                  label: Text(zh ? '重置' : 'Reset',
-                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                ),
-              ),
-            ]),
+            ),
             const SizedBox(height: 8),
-            FilledButton.icon(
-              style: sz.buttonStyle(filled: true),
-              onPressed: _apply,
-              icon: Icon(Icons.check, size: sz.iconSize),
-              label: Text(zh ? '确定裁剪' : 'Apply Crop'),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Wrap(spacing: 8, runSpacing: 8, children: _ratioChips(zh)),
             ),
-          ]),
+
+            // 底部固定操作区
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: sz.buttonStyle().copyWith(
+                            minimumSize: const WidgetStatePropertyAll(
+                              Size(44, 44),
+                            ),
+                          ),
+                          onPressed: _selectAll,
+                          icon: Icon(Icons.select_all, size: sz.iconSize),
+                          label: Text(
+                            zh ? '全选' : 'All',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: sz.buttonStyle().copyWith(
+                            minimumSize: const WidgetStatePropertyAll(
+                              Size(44, 44),
+                            ),
+                          ),
+                          onPressed: _reset,
+                          icon: Icon(Icons.restart_alt, size: sz.iconSize),
+                          label: Text(
+                            zh ? '重置' : 'Reset',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _buildApplyActions(zh),
+                ],
+              ),
+            ),
+          ],
         ),
-      ]),
+      ),
     );
   }
 
@@ -617,82 +696,131 @@ class _ImageCropDialogState extends State<_ImageCropDialog> {
     const sz = AppControlSize.regular;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        // 芯片行：横向滚动，不占第二行
-        SizedBox(
-          height: 30,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            children: _ratioChips(zh),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 芯片行：横向滚动，不占第二行
+          SizedBox(
+            height: 30,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: _ratioChips(zh),
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        // 操作 + 确定并成一行：原来的三行（芯片 / 全选重置 / 确定按钮）在
-        // 竖屏手机上就把画布吃掉一大截，横屏更是直接压成一条缝。
-        Row(children: [
-          OutlinedButton(
-            style: sz.buttonStyle(),
-            onPressed: _selectAll,
-            child: Icon(Icons.select_all, size: sz.iconSize, semanticLabel: zh ? '全选' : 'All'),
+          const SizedBox(height: 8),
+          // 操作 + 确定并成一行：原来的三行（芯片 / 全选重置 / 确定按钮）在
+          // 竖屏手机上就把画布吃掉一大截，横屏更是直接压成一条缝。
+          Row(
+            children: [
+              OutlinedButton(
+                style: sz.buttonStyle().copyWith(
+                  minimumSize: const WidgetStatePropertyAll(Size(44, 44)),
+                ),
+                onPressed: _selectAll,
+                child: Icon(
+                  Icons.select_all,
+                  size: sz.iconSize,
+                  semanticLabel: zh ? '全选' : 'All',
+                ),
+              ),
+              const SizedBox(width: 6),
+              OutlinedButton(
+                style: sz.buttonStyle().copyWith(
+                  minimumSize: const WidgetStatePropertyAll(Size(44, 44)),
+                ),
+                onPressed: _reset,
+                child: Icon(
+                  Icons.restart_alt,
+                  size: sz.iconSize,
+                  semanticLabel: zh ? '重置' : 'Reset',
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: _buildSizeReadout(cs, dense: true)),
+            ],
           ),
-          const SizedBox(width: 6),
-          OutlinedButton(
-            style: sz.buttonStyle(),
-            onPressed: _reset,
-            child: Icon(Icons.restart_alt, size: sz.iconSize, semanticLabel: zh ? '重置' : 'Reset'),
-          ),
-          const SizedBox(width: 10),
-          Expanded(child: _buildSizeReadout(cs, dense: true)),
-          const SizedBox(width: 10),
-          FilledButton.icon(
-            style: sz.buttonStyle(filled: true),
-            onPressed: _apply,
-            icon: Icon(Icons.check, size: sz.iconSize),
-            label: Text(zh ? '确定' : 'Apply'),
-          ),
-        ]),
-      ]),
+          const SizedBox(height: 8),
+          _buildApplyActions(zh),
+        ],
+      ),
     );
   }
+
+  Widget _buildApplyActions(bool zh) => LayoutBuilder(
+    builder: (context, constraints) {
+      final cancel = AppDialogAction(
+        role: AppDialogActionRole.cancel,
+        child: TextButton(onPressed: _close, child: Text(zh ? '取消' : 'Cancel')),
+      );
+      final apply = AppDialogAction(
+        role: AppDialogActionRole.primary,
+        child: FilledButton(
+          onPressed: _apply,
+          child: Text(zh ? '确定' : 'Apply'),
+        ),
+      );
+      if (constraints.maxWidth >= 220 &&
+          MediaQuery.textScalerOf(context).scale(1) <= 1.3) {
+        return Row(
+          children: [
+            Expanded(child: cancel),
+            const SizedBox(width: 8),
+            Expanded(child: apply),
+          ],
+        );
+      }
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [cancel, const SizedBox(height: 8), apply],
+      );
+    },
+  );
 
   /// 「宽 × 高」读数：主色底 + 主色字，视觉上与两侧工具按钮区分开。
   Widget _buildSizeReadout(ColorScheme cs, {bool dense = false}) {
     final w = _rect.width.round();
     final h = _rect.height.round();
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: dense ? 8 : 10, vertical: dense ? 5 : 8),
+      padding: EdgeInsets.symmetric(
+        horizontal: dense ? 8 : 10,
+        vertical: dense ? 5 : 8,
+      ),
       decoration: BoxDecoration(
         color: cs.primary.withAlpha(18),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.aspect_ratio, size: 13, color: cs.primary),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            '$w × $h',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: cs.primary,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.aspect_ratio, size: 13, color: cs.primary),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              '$w × $h',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: cs.primary,
+              ),
             ),
           ),
-        ),
-      ]),
+        ],
+      ),
     );
   }
 
   List<Widget> _ratioChips(bool zh) => [
-        _ratioChip(0, null, zh ? '自由' : 'Free'),
-        _ratioChip(1, 1.0, '1:1'),
-        _ratioChip(2, 4 / 3, '4:3'),
-        _ratioChip(3, 3 / 4, '3:4'),
-        _ratioChip(4, 16 / 9, '16:9'),
-        _ratioChip(5, 9 / 16, '9:16'),
-        _ratioChip(6, _imgW / _imgH, zh ? '原始' : 'Original'),
-      ];
+    _ratioChip(0, null, zh ? '自由' : 'Free'),
+    _ratioChip(1, 1.0, '1:1'),
+    _ratioChip(2, 4 / 3, '4:3'),
+    _ratioChip(3, 3 / 4, '3:4'),
+    _ratioChip(4, 16 / 9, '16:9'),
+    _ratioChip(5, 9 / 16, '9:16'),
+    _ratioChip(6, _imgW / _imgH, zh ? '原始' : 'Original'),
+  ];
 
   Widget _ratioChip(int index, double? ratio, String label) {
     final selected = _ratioIndex == index;
@@ -742,19 +870,30 @@ class _CropCanvasPainter extends CustomPainter {
     canvas.drawRect(Rect.fromLTRB(r.right, r.top, size.width, r.bottom), dim);
 
     // 三分线
-    final third = Paint()..color = Colors.white.withAlpha(70)..strokeWidth = 0.8;
+    final third = Paint()
+      ..color = Colors.white.withAlpha(70)
+      ..strokeWidth = 0.8;
     for (var i = 1; i <= 2; i++) {
-      canvas.drawLine(Offset(r.left + r.width / 3 * i, r.top),
-          Offset(r.left + r.width / 3 * i, r.bottom), third);
-      canvas.drawLine(Offset(r.left, r.top + r.height / 3 * i),
-          Offset(r.right, r.top + r.height / 3 * i), third);
+      canvas.drawLine(
+        Offset(r.left + r.width / 3 * i, r.top),
+        Offset(r.left + r.width / 3 * i, r.bottom),
+        third,
+      );
+      canvas.drawLine(
+        Offset(r.left, r.top + r.height / 3 * i),
+        Offset(r.right, r.top + r.height / 3 * i),
+        third,
+      );
     }
 
     // 边框
-    canvas.drawRect(r, Paint()
-      ..color = accent
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2);
+    canvas.drawRect(
+      r,
+      Paint()
+        ..color = accent
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
 
     // 手柄：4 角 L 形角标（外白内彩，深色照片上也能看清）+ 4 边短条。
     // 旧实现是 8 个同样大小的圆点/短条，在手机上既小又分不清是角还是边；
@@ -791,7 +930,10 @@ class _CropCanvasPainter extends CustomPainter {
       final rect = horizontal
           ? Rect.fromCenter(center: c, width: spec.barLen, height: spec.barW)
           : Rect.fromCenter(center: c, width: spec.barW, height: spec.barLen);
-      canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(2)), edgePaint);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, const Radius.circular(2)),
+        edgePaint,
+      );
     }
 
     bar(Offset(r.center.dx, r.top), true);
@@ -833,7 +975,9 @@ class _CropCanvasPainter extends CustomPainter {
       maxLines: 1,
       ellipsis: '…',
     )..layout(maxWidth: math.max(40, size.width - 16));
-    final hy = r.bottom + 6 + hp.height > size.height ? r.top + 6 : r.bottom + 6;
+    final hy = r.bottom + 6 + hp.height > size.height
+        ? r.top + 6
+        : r.bottom + 6;
     hp.paint(canvas, Offset((size.width - hp.width) / 2, hy));
   }
 

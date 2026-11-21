@@ -1,6 +1,7 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../app_alert_dialog.dart';
 import '../app_slider.dart';
 import '../font_picker.dart';
 import 'editor_kit.dart';
@@ -20,13 +21,19 @@ class SubtitleStepEditor extends ParamsStepEditor {
   State<SubtitleStepEditor> createState() => _SubtitleStepEditorState();
 }
 
-class _SubtitleStepEditorState extends State<SubtitleStepEditor> with StepEditorState<SubtitleStepEditor> {
+class _SubtitleStepEditorState extends State<SubtitleStepEditor>
+    with StepEditorState<SubtitleStepEditor> {
   @override
   void initState() {
     super.initState();
     initDefaults(const {
-      'source': 'external', 'subtitle_index': 0, 'font_name': 'Arial',
-      'font_size': 24, 'font_color': '#FFFFFF', 'outline_width': 2, 'outline_color': '#000000',
+      'source': 'external',
+      'subtitle_index': 0,
+      'font_name': 'Arial',
+      'font_size': 24,
+      'font_color': '#FFFFFF',
+      'outline_width': 2,
+      'outline_color': '#000000',
     });
   }
 
@@ -40,7 +47,8 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> with StepEditor
     final r = (c.r * 255.0).round().clamp(0, 255);
     final g = (c.g * 255.0).round().clamp(0, 255);
     final b = (c.b * 255.0).round().clamp(0, 255);
-    return '#${r.toRadixString(16).padLeft(2, '0')}${g.toRadixString(16).padLeft(2, '0')}${b.toRadixString(16).padLeft(2, '0')}'.toUpperCase();
+    return '#${r.toRadixString(16).padLeft(2, '0')}${g.toRadixString(16).padLeft(2, '0')}${b.toRadixString(16).padLeft(2, '0')}'
+        .toUpperCase();
   }
 
   Future<void> _pickSubtitleFile() async {
@@ -57,9 +65,13 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> with StepEditor
     final current = _hexToColor(p[key] as String? ?? '#FFFFFF');
     showDialog(
       context: context,
-      builder: (ctx) => _ColorPickerDialog(initialColor: current, isZh: widget.isZh, onPicked: (color) {
-        update(key, _colorToHex(color));
-      }),
+      builder: (ctx) => _ColorPickerDialog(
+        initialColor: current,
+        isZh: widget.isZh,
+        onPicked: (color) {
+          update(key, _colorToHex(color));
+        },
+      ),
     );
   }
 
@@ -71,45 +83,80 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> with StepEditor
     return StepEditorScaffold(
       scrollable: true,
       children: [
-        _buildDropdown(label: zh ? '字幕来源' : 'Source', value: p['source'] as String? ?? 'external',
+        _buildDropdown(
+          label: zh ? '字幕来源' : 'Source',
+          value: p['source'] as String? ?? 'external',
           items: const ['external', 'embedded'],
-          itemLabels: zh ? const ['外挂字幕', '内嵌字幕'] : const ['External', 'Embedded'],
-          cs: cs, onChanged: (v) {
+          itemLabels: zh
+              ? const ['外挂字幕', '内嵌字幕']
+              : const ['External', 'Embedded'],
+          cs: cs,
+          onChanged: (v) {
             p['source'] = v;
             if (v == 'embedded' && subs.isNotEmpty) p['subtitle_index'] = 0;
-            setState(() {}); widget.onChanged();
-          }),
+            setState(() {});
+            widget.onChanged();
+          },
+        ),
         const SizedBox(height: 8),
 
         if (p['source'] == 'external') ...[
-          Row(children: [
-            Expanded(child: Text(
-              (p['subtitle_file'] as String?)?.split(RegExp(r'[/\\]')).last ?? (zh ? '未选择文件' : 'No file selected'),
-              style: TextStyle(fontSize: 13, color: cs.onSurface), overflow: TextOverflow.ellipsis,
-            )),
-            const SizedBox(width: 8),
-            FilledButton.tonalIcon(onPressed: _pickSubtitleFile, icon: const Icon(Icons.folder_open, size: 18), label: Text(zh ? '选择' : 'Browse')),
-          ]),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  (p['subtitle_file'] as String?)
+                          ?.split(RegExp(r'[/\\]'))
+                          .last ??
+                      (zh ? '未选择文件' : 'No file selected'),
+                  style: TextStyle(fontSize: 13, color: cs.onSurface),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.tonalIcon(
+                onPressed: _pickSubtitleFile,
+                icon: const Icon(Icons.folder_open, size: 18),
+                label: Text(zh ? '选择' : 'Browse'),
+              ),
+            ],
+          ),
           const SizedBox(height: 8),
         ],
 
         if (p['source'] == 'embedded') ...[
           if (subs.isEmpty)
-            Text(zh ? '此视频无内嵌字幕轨道' : 'No embedded subtitle tracks', style: TextStyle(fontSize: 13, color: cs.error))
+            Text(
+              zh ? '此视频无内嵌字幕轨道' : 'No embedded subtitle tracks',
+              style: TextStyle(fontSize: 13, color: cs.error),
+            )
           else
-            _buildDropdown(label: zh ? '字幕轨道' : 'Track', value: '${p['subtitle_index'] ?? 0}',
+            _buildDropdown(
+              label: zh ? '字幕轨道' : 'Track',
+              value: '${p['subtitle_index'] ?? 0}',
               items: List.generate(subs.length, (i) => '$i'),
               itemLabels: List.generate(subs.length, (i) {
                 final s = subs[i];
-                if (s is Map) return '#${s['index'] ?? i} [${s['codec'] ?? ''}] ${s['language'] ?? ''}';
+                if (s is Map)
+                  return '#${s['index'] ?? i} [${s['codec'] ?? ''}] ${s['language'] ?? ''}';
                 return '#$i';
-              }), cs: cs, onChanged: (v) => update('subtitle_index', int.tryParse(v) ?? 0)),
+              }),
+              cs: cs,
+              onChanged: (v) => update('subtitle_index', int.tryParse(v) ?? 0),
+            ),
           const SizedBox(height: 8),
         ],
 
         const Divider(),
         const SizedBox(height: 8),
-        Text(zh ? '字幕样式' : 'Subtitle Style', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: cs.onSurface)),
+        Text(
+          zh ? '字幕样式' : 'Subtitle Style',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: cs.onSurface,
+          ),
+        ),
         const SizedBox(height: 8),
 
         // 字体选择
@@ -136,7 +183,9 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> with StepEditor
               color: _hexToColor(p['font_color'] as String? ?? '#FFFFFF'),
               shadows: [
                 Shadow(
-                  color: _hexToColor(p['outline_color'] as String? ?? '#000000'),
+                  color: _hexToColor(
+                    p['outline_color'] as String? ?? '#000000',
+                  ),
                   blurRadius: (p['outline_width'] as int? ?? 2).toDouble(),
                 ),
               ],
@@ -149,7 +198,11 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> with StepEditor
         // 字号
         LabeledSlider(
           text: '${zh ? "字号" : "Size"}: ${p['font_size']}',
-          value: (p['font_size'] as num?)?.toDouble() ?? 24, min: 12, max: 72, divisions: 60, sliderLabel: '${p['font_size']}',
+          value: (p['font_size'] as num?)?.toDouble() ?? 24,
+          min: 12,
+          max: 72,
+          divisions: 60,
+          sliderLabel: '${p['font_size']}',
           onChanged: (v) => update('font_size', v.round()),
         ),
         const SizedBox(height: 8),
@@ -157,7 +210,11 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> with StepEditor
         // 描边宽度
         LabeledSlider(
           text: '${zh ? "描边" : "Outline"}: ${p['outline_width']}',
-          value: (p['outline_width'] as num?)?.toDouble() ?? 2, min: 0, max: 8, divisions: 8, sliderLabel: '${p['outline_width']}',
+          value: (p['outline_width'] as num?)?.toDouble() ?? 2,
+          min: 0,
+          max: 8,
+          divisions: 8,
+          sliderLabel: '${p['outline_width']}',
           onChanged: (v) => update('outline_width', v.round()),
         ),
         const SizedBox(height: 8),
@@ -174,34 +231,53 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor> with StepEditor
 
   Widget _colorRow(String label, String key, ColorScheme cs) {
     final hex = p[key] as String? ?? '#FFFFFF';
-    return Row(children: [
-      Text(label, style: TextStyle(fontSize: 13, color: cs.onSurface)),
-      const Spacer(),
-      Text(hex, style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant, fontFamily: 'monospace')),
-      const SizedBox(width: 8),
-      GestureDetector(
-        onTap: () => _pickColor(key),
-        child: Container(
-          width: 32, height: 32,
-          decoration: BoxDecoration(
-            color: _hexToColor(hex),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: cs.outline),
+    return Row(
+      children: [
+        Text(label, style: TextStyle(fontSize: 13, color: cs.onSurface)),
+        const Spacer(),
+        Text(
+          hex,
+          style: TextStyle(
+            fontSize: 12,
+            color: cs.onSurfaceVariant,
+            fontFamily: 'monospace',
           ),
-          child: const Icon(Icons.colorize, size: 14, color: Colors.white54),
         ),
-      ),
-    ]);
+        const SizedBox(width: 8),
+        GestureDetector(
+          onTap: () => _pickColor(key),
+          child: Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: _hexToColor(hex),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: cs.outline),
+            ),
+            child: const Icon(Icons.colorize, size: 14, color: Colors.white54),
+          ),
+        ),
+      ],
+    );
   }
 
-  Widget _buildDropdown({required String label, required String value, required List<String> items,
-      List<String>? itemLabels, required ColorScheme cs, required ValueChanged<String> onChanged}) {
+  Widget _buildDropdown({
+    required String label,
+    required String value,
+    required List<String> items,
+    List<String>? itemLabels,
+    required ColorScheme cs,
+    required ValueChanged<String> onChanged,
+  }) {
     final safe = items.contains(value) ? value : items.first;
     return EditorDropdown(
       label: label,
       value: safe,
       dense: false,
-      items: List.generate(items.length, (i) => (items[i], itemLabels != null ? itemLabels[i] : items[i])),
+      items: List.generate(
+        items.length,
+        (i) => (items[i], itemLabels != null ? itemLabels[i] : items[i]),
+      ),
       onChanged: onChanged,
     );
   }
@@ -213,7 +289,11 @@ class _ColorPickerDialog extends StatefulWidget {
   final Color initialColor;
   final ValueChanged<Color> onPicked;
   final bool isZh;
-  const _ColorPickerDialog({required this.initialColor, required this.onPicked, this.isZh = true});
+  const _ColorPickerDialog({
+    required this.initialColor,
+    required this.onPicked,
+    this.isZh = true,
+  });
   @override
   State<_ColorPickerDialog> createState() => _ColorPickerDialogState();
 }
@@ -226,12 +306,17 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
   void initState() {
     super.initState();
     final hsv = HSVColor.fromColor(widget.initialColor);
-    _hue = hsv.hue; _sat = hsv.saturation; _val = hsv.value;
+    _hue = hsv.hue;
+    _sat = hsv.saturation;
+    _val = hsv.value;
     _hexCtrl = TextEditingController(text: _currentHex());
   }
 
   @override
-  void dispose() { _hexCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    _hexCtrl.dispose();
+    super.dispose();
+  }
 
   Color get _color => HSVColor.fromAHSV(1, _hue, _sat, _val).toColor();
   String _currentHex() {
@@ -239,62 +324,139 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
     final r = (c.r * 255.0).round().clamp(0, 255);
     final g = (c.g * 255.0).round().clamp(0, 255);
     final b = (c.b * 255.0).round().clamp(0, 255);
-    return '#${r.toRadixString(16).padLeft(2, '0')}${g.toRadixString(16).padLeft(2, '0')}${b.toRadixString(16).padLeft(2, '0')}'.toUpperCase();
+    return '#${r.toRadixString(16).padLeft(2, '0')}${g.toRadixString(16).padLeft(2, '0')}${b.toRadixString(16).padLeft(2, '0')}'
+        .toUpperCase();
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final zh = widget.isZh;
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Text(zh ? '选择颜色' : 'Pick Color', style: TextStyle(fontSize: 16, color: cs.onSurface)),
+    return AppAlertDialog(
+      title: Text(
+        zh ? '选择颜色' : 'Pick Color',
+        style: TextStyle(fontSize: 16, color: cs.onSurface),
+      ),
       content: SizedBox(
         width: 280,
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          // 色相条：滑块本身就是颜色，所以用 color 覆盖主题色。
-          // 原来这里是就地包一层 SliderTheme 把轨道加厚到 16px；全应用统一为 6px 轨道后
-          // 该特例失去意义（外层的 24px 高度保留，避免对话框高度跳动）。
-          SizedBox(height: 24, child: AppSlider(
-            value: _hue, min: 0, max: 360,
-            color: HSVColor.fromAHSV(1, _hue, 1, 1).toColor(),
-            onChanged: (v) => setState(() { _hue = v; _hexCtrl.text = _currentHex(); }),
-          )),
-          const SizedBox(height: 8),
-          Row(children: [
-            Text(zh ? '饱和度' : 'Saturation', style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
-            Expanded(child: AppSlider(value: _sat, min: 0, max: 1, color: _color,
-              onChanged: (v) => setState(() { _sat = v; _hexCtrl.text = _currentHex(); }))),
-          ]),
-          Row(children: [
-            Text(zh ? '亮度' : 'Brightness', style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
-            Expanded(child: AppSlider(value: _val, min: 0, max: 1, color: _color,
-              onChanged: (v) => setState(() { _val = v; _hexCtrl.text = _currentHex(); }))),
-          ]),
-          const SizedBox(height: 8),
-          Row(children: [
-            Container(width: 40, height: 40, decoration: BoxDecoration(
-              color: _color, borderRadius: BorderRadius.circular(8), border: Border.all(color: cs.outline),
-            )),
-            const SizedBox(width: 12),
-            Expanded(child: TextField(
-              controller: _hexCtrl, decoration: const InputDecoration(isDense: true, labelText: 'HEX',
-                border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
-              onChanged: (v) {
-                final hex = v.replaceAll('#', '');
-                if (hex.length == 6) {
-                  final c = Color(int.tryParse('FF$hex', radix: 16) ?? 0xFFFFFFFF);
-                  final hsv = HSVColor.fromColor(c);
-                  setState(() { _hue = hsv.hue; _sat = hsv.saturation; _val = hsv.value; });
-                }
-              },
-            )),
-          ]),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 色相条：滑块本身就是颜色，所以用 color 覆盖主题色。
+            // 原来这里是就地包一层 SliderTheme 把轨道加厚到 16px；全应用统一为 6px 轨道后
+            // 该特例失去意义（外层的 24px 高度保留，避免对话框高度跳动）。
+            SizedBox(
+              height: 24,
+              child: AppSlider(
+                value: _hue,
+                min: 0,
+                max: 360,
+                color: HSVColor.fromAHSV(1, _hue, 1, 1).toColor(),
+                onChanged: (v) => setState(() {
+                  _hue = v;
+                  _hexCtrl.text = _currentHex();
+                }),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Text(
+                  zh ? '饱和度' : 'Saturation',
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                ),
+                Expanded(
+                  child: AppSlider(
+                    value: _sat,
+                    min: 0,
+                    max: 1,
+                    color: _color,
+                    onChanged: (v) => setState(() {
+                      _sat = v;
+                      _hexCtrl.text = _currentHex();
+                    }),
+                  ),
+                ),
+              ],
+            ),
+            Row(
+              children: [
+                Text(
+                  zh ? '亮度' : 'Brightness',
+                  style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                ),
+                Expanded(
+                  child: AppSlider(
+                    value: _val,
+                    min: 0,
+                    max: 1,
+                    color: _color,
+                    onChanged: (v) => setState(() {
+                      _val = v;
+                      _hexCtrl.text = _currentHex();
+                    }),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: _color,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: cs.outline),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: _hexCtrl,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: 'HEX',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                    ),
+                    onChanged: (v) {
+                      final hex = v.replaceAll('#', '');
+                      if (hex.length == 6) {
+                        final c = Color(
+                          int.tryParse('FF$hex', radix: 16) ?? 0xFFFFFFFF,
+                        );
+                        final hsv = HSVColor.fromColor(c);
+                        setState(() {
+                          _hue = hsv.hue;
+                          _sat = hsv.saturation;
+                          _val = hsv.value;
+                        });
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(zh ? '取消' : 'Cancel')),
-        FilledButton(onPressed: () { widget.onPicked(_color); Navigator.pop(context); }, child: Text(zh ? '确定' : 'OK')),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(zh ? '取消' : 'Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            widget.onPicked(_color);
+            Navigator.pop(context);
+          },
+          child: Text(zh ? '确定' : 'OK'),
+        ),
       ],
     );
   }

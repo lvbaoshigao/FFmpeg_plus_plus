@@ -1,6 +1,5 @@
 #include "ffmpegpp_exports.h"
 #include "subprocess.h"
-#include "message_queues.h"
 #include "nlohmann/json.hpp"
 #include <chrono>
 #include <cstdlib>
@@ -75,17 +74,16 @@ int main() {
     require(ffmpegpp_request("{\"id\":\"ping\",\"action\":\"ping\"}") == 0, "ping failed");
     auto messages = pollAll();
     require(messages.back()["data"]["pong"] == true, "ping protocol changed");
-    // Old output and queued requests must not cross a shutdown/init boundary.
+    // Old output must not cross an FFI shutdown/init boundary.
     ffmpegpp_request("{\"id\":\"old\",\"action\":\"ping\"}");
     ffmpegpp_request("{\"action\":\"shutdown\"}");
     require(ffmpegpp_request("{\"action\":\"ping\"}") == -1, "request accepted after shutdown signal");
     std::thread a(ffmpegpp_shutdown), b(ffmpegpp_shutdown);
     a.join(); b.join();
-    pushInput("{\"id\":\"stale\",\"action\":\"unknown\"}");
     ffmpegpp_init();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     messages = pollAll();
-    require(messages.size() == 1 && messages[0]["type"] == "ready", "stale queue survived FFI restart");
+    require(messages.size() == 1 && messages[0]["type"] == "ready", "FFI reinitialization did not publish a fresh ready event");
     for (int i = 0; i < 25; ++i) {
         ffmpegpp_request("{\"id\":\"aux\",\"action\":\"fppx2_import\"}");
         std::thread request([] { ffmpegpp_request("{\"action\":\"ping\"}"); });

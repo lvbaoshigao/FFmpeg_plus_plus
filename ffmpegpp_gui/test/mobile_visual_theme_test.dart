@@ -1,4 +1,6 @@
 import 'package:ffmpegpp_gui/models/models.dart';
+import 'package:ffmpegpp_gui/theme/app_neutral_surface.dart';
+import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/theme/mobile_visual_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -74,5 +76,23 @@ void main() {
       themed.colorScheme.surfaceContainerHigh,
       isNot(themed.colorScheme.surfaceContainerLow),
     );
+  });
+
+  test('miuix modal themes replace date and time picker surfaces', () {
+    final base = AppTheme.light();
+    final themed = resolveMobileVisualTheme(
+      'miuix',
+      isMobile: true,
+    ).applyTo(base);
+    final expected = AppNeutralSurface.cardHigh(
+      Brightness.light,
+    ).withAlpha(246);
+
+    expect(themed.dialogTheme.backgroundColor, expected);
+    expect(themed.datePickerTheme.backgroundColor, expected);
+    expect(themed.datePickerTheme.headerBackgroundColor, expected);
+    expect(themed.timePickerTheme.backgroundColor, expected);
+    expect(themed.datePickerTheme.shape, base.datePickerTheme.shape);
+    expect(themed.timePickerTheme.shape, base.timePickerTheme.shape);
   });
 }

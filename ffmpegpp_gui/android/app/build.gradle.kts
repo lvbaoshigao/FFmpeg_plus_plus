@@ -16,8 +16,19 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
+// OPPO issues these production values during integration. Keep them out of source control;
+// debug builds intentionally use the documented Example.Progress sample values in Kotlin.
+val oppoFluidCloudIntentName = providers.gradleProperty("oppoFluidCloudIntentName").orNull.orEmpty()
+val oppoFluidCloudLauncherServiceId = providers.gradleProperty("oppoFluidCloudLauncherServiceId").orNull.orEmpty()
+val oppoFluidCloudServiceId = providers.gradleProperty("oppoFluidCloudServiceId").orNull.orEmpty()
+fun buildConfigString(value: String): String = groovy.json.JsonOutput.toJson(value)
+
 android {
     namespace = "com.ffmpegpp.ffmpegpp_gui"
+    buildFeatures {
+        buildConfig = true
+    }
+
     compileSdk = flutter.compileSdkVersion
     // 与 Flutter 插件要求的 NDK 版本一致（本机 SDK 已安装）。
     // 原生库（libffmpegpp.so/ffmpeg/ffprobe）为预编译产物（jniLibs），
@@ -36,6 +47,9 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = "6.0.0-beta2"
+        buildConfigField("String", "OPPO_FLUID_CLOUD_INTENT_NAME", buildConfigString(oppoFluidCloudIntentName))
+        buildConfigField("String", "OPPO_FLUID_CLOUD_LAUNCHER_SERVICE_ID", buildConfigString(oppoFluidCloudLauncherServiceId))
+        buildConfigField("String", "OPPO_FLUID_CLOUD_SERVICE_ID", buildConfigString(oppoFluidCloudServiceId))
         ndk {
             // Flutter 插件在 apply 时会 clear() 并填入全部 ABI（armeabi-v7a/
             // arm64-v8a/x86_64），+= 会被其覆盖。这里必须 clear 后只保留 arm64：

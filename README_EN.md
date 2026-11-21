@@ -183,6 +183,7 @@ The same codebase also builds for Android (arm64-v8a, Android 8.0+) with touch a
   execution plan;
 - **Processing queue**: sequential batch execution, persisted results, per-task cancel and stop-all;
 - **App updates**: built-in update check, download and install (SHA-256 verified).
+- **Detailed diagnostics**: enable **Settings → Advanced → Debug → Very verbose logs** (off by default). The preference takes effect immediately and persists. Use the **Trace** filter in Logs for operation IDs, elapsed times, counts and failure types across startup, storage, media probing, tasks, pipeline steps, processes, previews, AI and MCP; ordinary Debug Mode is independent. To save these entries, also enable **Save Logs** and choose a directory (10 MiB per file, one rotated backup; the UI retains the latest 2000 entries). New trace events contain fixed labels and statistics, without request bodies, commands, file paths or credentials. MCP log reads exclude trace entries.
 
 ---
 

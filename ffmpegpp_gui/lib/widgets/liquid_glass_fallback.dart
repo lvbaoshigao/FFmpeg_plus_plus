@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import '../theme/app_neutral_surface.dart';
 import 'desktop_resize_scope.dart';
 
 /// 液态玻璃能力判定与 Skia 回退渲染。
@@ -119,8 +120,20 @@ const OCLiquidGlassSettings kLiquidGlassSettings = OCLiquidGlassSettings(
 ///
 /// 结论：桌面端要恢复 shader 玻璃，必须先把坐标系 / y 取向问题在桌面后端上修掉
 /// （需要能实机验证 Skia/ANGLE/Vulkan 各组合），在那之前不提供可用入口。
-bool gpuGlassEnabledOf(BuildContext context) {
-  return shaderGlassSupported && isMobilePlatform;
+bool gpuGlassEnabledOf(BuildContext context) =>
+    isMobilePlatform &&
+    shaderGlassSupported &&
+    !mobileGlassEffectsReducedOf(context);
+
+/// High contrast and reduced motion use the static mobile glass material.
+bool mobileGlassEffectsReducedOf(BuildContext context) =>
+    MediaQuery.disableAnimationsOf(context) ||
+    MediaQuery.highContrastOf(context);
+
+/// Keep the mobile Gaussian sampling footprint small even at maximum tuning.
+double mobileGlassSigma(double value) {
+  if (!value.isFinite || value <= 0) return 0;
+  return value.clamp(0.0, 8.0);
 }
 
 /// 按用户配置参数化的液态玻璃 settings（带实例缓存）。
@@ -129,26 +142,34 @@ bool gpuGlassEnabledOf(BuildContext context) {
 /// shader uniform，移动端表现为液态玻璃「来回跳跃」闪烁（历史踩坑）。
 /// 这里按参数哈希缓存同一个实例 —— 参数没变就复用同一对象；只有用户真的拖动
 /// 「玻璃细节」滑块时才产生新实例（此时本来就该重绘一次）。
-OCLiquidGlassSettings _cachedGlassSettings = kLiquidGlassSettings;
-int _cachedGlassSettingsHash = 0;
+final Map<(double, double, double, bool, bool), OCLiquidGlassSettings>
+_glassSettingsCache = {};
 
-OCLiquidGlassSettings liquidGlassSettingsFor(GlassTuning t) {
-  final int h = Object.hash(t.highlight, t.lightPos, t.blur);
-  if (_cachedGlassSettingsHash == h) return _cachedGlassSettings;
-  _cachedGlassSettingsHash = h;
+OCLiquidGlassSettings liquidGlassSettingsFor(
+  GlassTuning t, {
+  bool soft = false,
+}) {
+  final mobile = isMobilePlatform;
+  final key = (t.highlight, t.lightPos, t.blur, soft, mobile);
+  final cached = _glassSettingsCache[key];
+  if (cached != null) return cached;
+  if (_glassSettingsCache.length >= 64) _glassSettingsCache.clear();
   // 高光强度 → specStrength（基准 0.5）；高光位置 → specAngle（基准 4°）；
   // 模糊度 → blurRadiusPx，只取「超过基准」的部分（见 kGlassBlurBaseline）。
   // 边缘光在 shader 路径由上层容器的描边承担：shader 自带的 lightband 会画成
   // 一条横贯的亮带，在高卡片上像一条「分界线」，实测观感很差，故不启用。
-  return _cachedGlassSettings = OCLiquidGlassSettings(
-    refractStrength: kLiquidGlassSettings.refractStrength,
-    blurRadiusPx: t.shaderExtraBlur,
-    specStrength: (kLiquidGlassSettings.specStrength * t.highlight).clamp(
-      0.0,
-      2.0,
-    ),
+  return _glassSettingsCache[key] = OCLiquidGlassSettings(
+    refractStrength: mobile ? -0.045 : kLiquidGlassSettings.refractStrength,
+    blurRadiusPx: mobile
+        ? mobileGlassSigma(t.blur * (soft ? 0.30 : 0.22)).clamp(0.0, 6.0)
+        : soft
+        ? (t.blur * 0.30).clamp(0.0, 9.0)
+        : t.shaderExtraBlur,
+    specStrength: mobile
+        ? (0.12 * t.highlight).clamp(0.0, 0.18)
+        : (kLiquidGlassSettings.specStrength * t.highlight).clamp(0.0, 2.0),
     specPower: kLiquidGlassSettings.specPower,
-    specWidth: kLiquidGlassSettings.specWidth,
+    specWidth: mobile ? 3 : kLiquidGlassSettings.specWidth,
     specAngle: 4 + t.lightPos * 180,
     lightbandStrength: 0.0,
     lightbandColor: Colors.white,
@@ -579,9 +600,205 @@ class LiquidGlassPainter extends CustomPainter {
       old.edge != edge;
 }
 
-/// 液态玻璃兼容表面：桌面预热成功时使用 lightweight 标准 shader，
-/// 自带普通背景模糊，不捕获背景纹理、不提供任意底层内容折射。
-/// 未初始化、失败、高对比或非统一圆角保留旧模糊与倒角高光路径；移动端不变。
+/// Neutral glass shared by floating mobile pills and navigation tracks.
+/// The structural rim stays visible with decorative lighting turned off.
+class MobileGlassSurface extends StatelessWidget {
+  const MobileGlassSurface({
+    super.key,
+    required this.borderRadius,
+    required this.tuning,
+    required this.opacity,
+    required this.liquid,
+    this.accent,
+    required this.child,
+  });
+
+  final BorderRadius borderRadius;
+  final GlassTuning tuning;
+  final double opacity;
+  final bool liquid;
+  final Color? accent;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final dark = brightness == Brightness.dark;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final reduced = mobileGlassEffectsReducedOf(context);
+    final neutral = dark
+        ? AppNeutralSurface.darkBackground
+        : const Color(0xFFFAFAFA);
+    // A density floor keeps onSurface text readable over opposing backdrops.
+    final density = highContrast
+        ? 1.0
+        : ((dark ? 0.77 : 0.73) +
+                  (opacity.clamp(0.0, 1.0) - 0.7) * 0.12 +
+                  (tuning.tintScale - 1) * 0.07 +
+                  (reduced ? 0.08 : 0))
+              .clamp(dark ? 0.73 : 0.66, 0.94);
+    final tint =
+        (accent == null || highContrast
+                ? neutral
+                : Color.lerp(neutral, accent, 0.10)!)
+            .withValues(alpha: density);
+    final shadow = liquid && !reduced
+        ? BoxShadow(
+            color: Colors.black.withValues(alpha: dark ? 0.19 : 0.10),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          )
+        : null;
+    if (liquid && gpuGlassEnabledOf(context)) {
+      return CustomPaint(
+        foregroundPainter: _MobileGlassRimPainter(
+          borderRadius: borderRadius,
+          brightness: brightness,
+          highContrast: highContrast,
+          lighting: true,
+          tuning: tuning,
+          opacity: opacity,
+        ),
+        child: OCLiquidGlassGroup(
+          settings: liquidGlassSettingsFor(tuning, soft: true),
+          child: OCLiquidGlass(
+            color: tint,
+            shadow: shadow,
+            borderRadius: borderRadius.topLeft.x,
+            child: child,
+          ),
+        ),
+      );
+    }
+    return LiquidGlassBackdrop(
+      borderRadius: borderRadius,
+      sigma: tuning.blur * 0.5,
+      tuning: tuning,
+      opacity: opacity,
+      shadow: shadow,
+      child: DecoratedBox(
+        decoration: BoxDecoration(color: tint, borderRadius: borderRadius),
+        child: child,
+      ),
+    );
+  }
+}
+
+/// Draw the contour directly and leave the content area free of reflections.
+class _MobileGlassRimPainter extends CustomPainter {
+  const _MobileGlassRimPainter({
+    required this.borderRadius,
+    required this.brightness,
+    required this.highContrast,
+    required this.lighting,
+    required this.tuning,
+    required this.opacity,
+  });
+
+  final BorderRadius borderRadius;
+  final Brightness brightness;
+  final bool highContrast;
+  final bool lighting;
+  final GlassTuning tuning;
+  final double opacity;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.shortestSide < 8) return;
+    final rect = Offset.zero & size;
+    final shape = borderRadius.toRRect(rect).scaleRadii();
+    final dark = brightness == Brightness.dark;
+    final width = highContrast ? 1.5 : 1.0;
+    final ink = dark ? Colors.white : Colors.black;
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = width
+      ..color = ink.withValues(
+        alpha: highContrast ? 0.75 : (dark ? 0.19 : 0.16),
+      );
+    // Structural edge and directional light share one contour. A second inset
+    // stroke makes these small controls read as glossy nested capsules.
+    final shine = (tuning.highlight * tuning.edge * opacity).clamp(0.0, 1.0);
+    final angle = -3 * math.pi / 4 + tuning.lightPos.clamp(0.0, 1.0) * math.pi;
+    final light = Alignment(math.cos(angle), math.sin(angle));
+    final shader = lighting && shine >= 0.01
+        ? LinearGradient(
+            begin: light,
+            end: Alignment(-light.x, -light.y),
+            colors: [
+              Color.alphaBlend(
+                Colors.white.withValues(alpha: 0.12 * shine),
+                stroke.color,
+              ),
+              stroke.color.withValues(alpha: stroke.color.a * 0.65),
+            ],
+            stops: const [0, 0.80],
+          ).createShader(rect)
+        : null;
+    stroke.shader = shader;
+    canvas.drawRRect(shape.deflate(width / 2), stroke);
+    shader?.dispose();
+  }
+
+  @override
+  bool shouldRepaint(_MobileGlassRimPainter old) =>
+      old.borderRadius != borderRadius ||
+      old.brightness != brightness ||
+      old.highContrast != highContrast ||
+      old.lighting != lighting ||
+      old.tuning != tuning ||
+      old.opacity != opacity;
+}
+
+/// Selection on a mobile glass track uses one paint-only inset. The track
+/// already samples the backdrop, so the moving indicator never filters it again.
+class MobileGlassSelection extends StatelessWidget {
+  const MobileGlassSelection({super.key, required this.radius, this.style});
+
+  final double radius;
+  final String? style;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final style =
+        this.style ??
+        context.select<AppState?, String>(
+          (state) => state?.config.selectionIndicatorStyle ?? 'theme',
+        );
+    final highContrast = MediaQuery.highContrastOf(context);
+    final dark = scheme.brightness == Brightness.dark;
+    final neutral = dark ? const Color(0xFF474747) : const Color(0xFFE5E5E5);
+    final color = highContrast
+        ? neutral
+        : switch (style) {
+            'liquid' => neutral.withValues(alpha: 0.82),
+            'blur' => neutral.withValues(alpha: 0.95),
+            'outline' => null,
+            _ => Color.lerp(neutral, scheme.primary, dark ? 0.10 : 0.08),
+          };
+    final outlined = style == 'outline';
+    final border = Border.all(
+      color: scheme.onSurface.withValues(
+        alpha: highContrast ? 1 : (outlined ? 0.65 : 0.24),
+      ),
+      width: highContrast ? 2 : (outlined ? 1.25 : 1),
+    );
+    return IgnorePointer(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(radius),
+          border: border,
+        ),
+        child: const SizedBox.expand(),
+      ),
+    );
+  }
+}
+
+/// Desktop uses its prewarmed lightweight shader where available. Mobile uses
+/// a subdued rim and a single live, clipped blur when effects are enabled.
 class LiquidGlassBackdrop extends StatelessWidget {
   final BorderRadius borderRadius;
 
@@ -609,6 +826,7 @@ class LiquidGlassBackdrop extends StatelessWidget {
   Widget build(BuildContext context) {
     // 高光 / 位置 / 边缘光统一从配置读，调用方无需逐个透传。
     final tuning = this.tuning ?? glassTuningOf(context);
+    if (isMobilePlatform) return _buildMobile(context, tuning);
     final resizing = DesktopResizeScope.isResizingOf(context);
     final resolvedSigma = resizing
         ? 0.0
@@ -693,5 +911,50 @@ class LiquidGlassBackdrop extends StatelessWidget {
       );
     }
     return glass;
+  }
+
+  Widget _buildMobile(BuildContext context, GlassTuning tuning) {
+    final reduced = mobileGlassEffectsReducedOf(context);
+    final resolvedSigma = reduced
+        ? 0.0
+        : mobileGlassSigma(sigma ?? tuning.blur);
+    Widget surface = CustomPaint(
+      foregroundPainter: _MobileGlassRimPainter(
+        borderRadius: borderRadius,
+        brightness: Theme.of(context).brightness,
+        highContrast: MediaQuery.highContrastOf(context),
+        lighting: !reduced,
+        tuning: tuning,
+        opacity: opacity,
+      ),
+      child: child,
+    );
+    // Keep the live backdrop in its parent scene and clip filter sampling.
+    surface = ClipRRect(
+      borderRadius: borderRadius,
+      child: resolvedSigma == 0
+          ? surface
+          : BackdropFilter(
+              filter: cachedGlassBlur(resolvedSigma),
+              child: surface,
+            ),
+    );
+    final shadow = this.shadow;
+    if (reduced || shadow == null) return surface;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: borderRadius,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(
+              alpha: shadow.color.a.clamp(0.0, 0.20),
+            ),
+            blurRadius: shadow.blurRadius.clamp(0.0, 8.0),
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: surface,
+    );
   }
 }

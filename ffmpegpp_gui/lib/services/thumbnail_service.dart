@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../models/models.dart';
+import 'diagnostic_trace.dart';
 import 'ffmpeg_installer.dart';
 import 'task_process_runner.dart';
 
@@ -63,7 +64,8 @@ final class ThumbnailService {
     String filepath, {
     String? ffmpeg,
     bool? isAudio,
-  }) => _shared.requestThumbnail(filepath, ffmpeg: ffmpeg, isAudio: isAudio);
+    DiagnosticTrace? trace,
+  }) => _shared.requestThumbnail(filepath, ffmpeg: ffmpeg, isAudio: isAudio, trace: trace);
 
   /// Reuses a pending request for the same file and artwork mode.
   ///
@@ -72,10 +74,22 @@ final class ThumbnailService {
     String filepath, {
     String? ffmpeg,
     bool? isAudio,
+    DiagnosticTrace? trace,
   }) {
+    final span = trace?.begin('thumbnail');
     final audio = isAudio ?? detectMediaType(filepath) == MediaType.audio;
     final key = (filepath, audio);
-    if (_inFlight[key] case final pending?) return pending;
+    if (_inFlight[key] case final pending?) {
+      span?.record('thumbnail.coalesce', details: {'active': _active, 'queued': _queue.length});
+      if (span != null) {
+        unawaited(pending.then<void>((path) {
+          span.finish(success: path != null, details: {'coalesced': true});
+        }, onError: (Object error, StackTrace stack) {
+          span.finish(success: false, error: error, details: {'coalesced': true});
+        }));
+      }
+      return pending;
+    }
 
     final suffix = audio ? '_cover' : '';
     final cache = File(
@@ -83,15 +97,37 @@ final class ThumbnailService {
       'ffmpegpp_thumb_${stableHash(filepath)}$suffix.jpg',
     );
     final future = _cachedPath(cache);
-    if (_inFlight.length >= _maxConcurrent + _maxQueued) return future;
+    if (_inFlight.length >= _maxConcurrent + _maxQueued) {
+      return future.then((cached) {
+        span?.record(cached == null ? 'thumbnail.queue.reject' : 'thumbnail.cache.hit', details: {
+          'active': _active, 'queued': _queue.length, 'maxConcurrent': _maxConcurrent, 'maxQueued': _maxQueued,
+        });
+        span?.finish(success: cached != null, details: {if (cached == null) 'failureType': 'queue_full'});
+        return cached;
+      });
+    }
 
     final request = future
         .then((cached) {
-          if (cached != null) return Future<String?>.value(cached);
-          final job = _ThumbnailRequest(filepath, ffmpeg, audio, cache);
+          if (cached != null) {
+            span?.record('thumbnail.cache.hit');
+            return Future<String?>.value(cached);
+          }
+          span?.record('thumbnail.cache.miss');
+          final job = _ThumbnailRequest(filepath, ffmpeg, audio, cache, span);
           _queue.addLast(job);
+          span?.record('thumbnail.queue', details: {
+            'active': _active, 'queued': _queue.length, 'maxConcurrent': _maxConcurrent, 'maxQueued': _maxQueued,
+          });
           _pump();
           return job.result.future;
+        })
+        .then((path) {
+          span?.finish(success: path != null);
+          return path;
+        }, onError: (Object error, StackTrace stack) {
+          span?.finish(success: false, error: error);
+          Error.throwWithStackTrace(error, stack);
         })
         .whenComplete(() {
           _inFlight.remove(key);
@@ -116,6 +152,7 @@ final class ThumbnailService {
   }
 
   Future<void> _runNext(_ThumbnailRequest job) async {
+    job.span?.record('thumbnail.concurrency', details: {'active': _active, 'queued': _queue.length});
     try {
       job.result.complete(await _generate(job));
     } finally {
@@ -128,7 +165,10 @@ final class ThumbnailService {
     Directory? work;
     try {
       final cached = await _cachedPath(job.cache);
-      if (cached != null) return cached;
+      if (cached != null) {
+        job.span?.record('thumbnail.cache.hit');
+        return cached;
+      }
       // FFmpeg can leave partial output on failure. Publish only a complete
       // image and remove only the temporary directory this job owns.
       work = await _cacheDirectory.createTemp('ffmpegpp_thumbnail_work_');
@@ -157,23 +197,44 @@ final class ThumbnailService {
         output.path,
       ];
       final run = _runner.createRun();
-      final timer = Timer(_timeout, run.cancel);
+      var timedOut = false;
+      final processWatch = job.span == null ? null : (Stopwatch()..start());
+      final timer = Timer(_timeout, () {
+        timedOut = true;
+        job.span?.record('thumbnail.timeout', details: {'timeoutMs': _timeout.inMilliseconds});
+        run.cancel();
+      });
+      job.span?.record('thumbnail.ffmpeg.start', details: {'timeoutMs': _timeout.inMilliseconds});
       try {
         final result = await run.run(
           FfmpegInstaller.resolveFfmpeg(configured: job.ffmpeg),
           args,
         );
+        job.span?.record('thumbnail.ffmpeg.exit', details: {
+          'exitCode': result.exitCode, 'processMs': processWatch?.elapsedMilliseconds,
+          'stdoutChars': result.stdout.toString().length, 'stderrChars': result.stderr.toString().length,
+        });
         if (result.exitCode != 0 ||
             !await output.exists() ||
             await output.length() == 0) {
+          job.span?.finish(success: false, cancelled: timedOut, details: {
+            'exitCode': result.exitCode,
+            'failureType': timedOut ? 'timeout' : result.exitCode != 0 ? 'exit_code' : 'missing_output',
+          });
           return null;
         }
         return await _cachedPath(job.cache) ??
             (await output.rename(job.cache.path)).path;
+      } on TaskProcessCancelled catch (error) {
+        job.span?.finish(success: false, cancelled: true, error: error, details: {
+          'failureType': timedOut ? 'timeout' : 'cancelled', 'processMs': processWatch?.elapsedMilliseconds,
+        });
+        return null;
       } finally {
         timer.cancel();
       }
-    } catch (_) {
+    } catch (error) {
+      job.span?.finish(success: false, error: error, details: {'failureType': 'generation'});
       return null;
     } finally {
       if (work != null) {
@@ -188,11 +249,12 @@ final class ThumbnailService {
 }
 
 final class _ThumbnailRequest {
-  _ThumbnailRequest(this.filepath, this.ffmpeg, this.isAudio, this.cache);
+  _ThumbnailRequest(this.filepath, this.ffmpeg, this.isAudio, this.cache, this.span);
 
   final String filepath;
   final String? ffmpeg;
   final bool isAudio;
   final File cache;
+  final DiagnosticSpan? span;
   final result = Completer<String?>();
 }

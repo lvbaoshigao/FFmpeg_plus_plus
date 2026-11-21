@@ -171,6 +171,7 @@ class _QueuePageState extends State<QueuePage> with WidgetsBindingObserver {
                               // _WallpaperWindowPainter）
                               addRepaintBoundaries: false,
                               padding: MobileUi.mainListPadding(
+                                context: context,
                                 placement: MobileNavPlacementScope.of(context),
                               ),
                               itemCount: tasks.length,

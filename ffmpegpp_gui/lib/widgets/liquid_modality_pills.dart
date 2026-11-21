@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:provider/provider.dart';
 
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import 'liquid_glass_fallback.dart';
 import 'selection_highlight.dart';
@@ -349,7 +350,9 @@ class _ModalityPillSurface extends StatelessWidget {
     );
     final border = hovering
         ? scheme.primary
-        : scheme.outlineVariant.withValues(alpha: dragPlaceholder ? 0.25 : 0.60);
+        : scheme.outlineVariant.withValues(
+            alpha: dragPlaceholder ? 0.25 : 0.60,
+          );
     final edge = edgeBorder(border.a, hovering ? 1.4 : 0.7, tuning.edge);
     Widget surface = DecoratedBox(
       decoration: BoxDecoration(
@@ -374,7 +377,11 @@ class _ModalityPillSurface extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           if (selected && !dragPlaceholder)
-            Positioned.fill(child: SelectionHighlight(radius: radius)),
+            Positioned.fill(
+              child: isMobilePlatform
+                  ? MobileGlassSelection(radius: radius)
+                  : SelectionHighlight(radius: radius),
+            ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Row(
@@ -400,7 +407,9 @@ class _ModalityPillSurface extends StatelessWidget {
         ],
       ),
     );
-    if (liquid && !dragPlaceholder) {
+    // Mobile pills sit inside their shared track and use only paint-based
+    // selection. Keep per-item backdrop sampling for the standalone desktop UI.
+    if (liquid && !dragPlaceholder && !isMobilePlatform) {
       surface = LiquidGlassBackdrop(
         borderRadius: BorderRadius.circular(radius),
         sigma: tunedGlassSigma(16, tuning),

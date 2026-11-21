@@ -15,6 +15,7 @@ import '../services/quick_config_pipeline.dart';
 import '../services/quick_config_storage.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
+import '../widgets/app_alert_dialog.dart';
 import '../widgets/container_card.dart';
 import '../widgets/fppx_password.dart';
 import '../widgets/glass_panel.dart';
@@ -384,23 +385,29 @@ class ProjectPageState extends State<ProjectPage> {
     ColorScheme scheme, {
     Key key = const ValueKey('project_add_files'),
     bool compact = false,
-  }) => GlassPanel(
-    radius: 8,
-    style: compact ? state.config.pillStyle : state.config.menuStyle,
-    child: OutlinedButton.icon(
-      key: key,
-      onPressed: () => _pick(state),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: scheme.onSurface,
-        backgroundColor: Colors.transparent,
-        side: BorderSide.none,
-        minimumSize: const Size(0, 48),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+  }) {
+    const radius = 16.0;
+    return GlassPanel(
+      radius: radius,
+      style: compact ? state.config.pillStyle : state.config.menuStyle,
+      child: OutlinedButton.icon(
+        key: key,
+        onPressed: () => _pick(state),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: scheme.onSurface,
+          backgroundColor: Colors.transparent,
+          side: BorderSide.none,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(radius)),
+          ),
+          minimumSize: const Size(0, 48),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        ),
+        icon: const Icon(Icons.add, size: 20),
+        label: Text(s.addVideo, textAlign: TextAlign.center),
       ),
-      icon: const Icon(Icons.add, size: 20),
-      label: Text(s.addVideo, textAlign: TextAlign.center),
-    ),
-  );
+    );
+  }
 
   void _importOrExplain(AppState state, AppStrings s) {
     if (state.videos.isEmpty) {
@@ -416,7 +423,7 @@ class ProjectPageState extends State<ProjectPage> {
     }
   }
 
-  /// Keep search in its circular pill and let labeled actions wrap naturally.
+  /// Keeps mobile actions in the corner; desktop narrow windows retain labels.
   Widget _buildMobileTopBar(
     BuildContext context,
     AppState state,
@@ -426,6 +433,28 @@ class ProjectPageState extends State<ProjectPage> {
   ) {
     final inSelection = _selectionMode;
     final selectedCount = _selectedIds.length + _selectedContainerIds.length;
+    if (isMobilePlatform) {
+      return MobilePillTopBar(
+        title: Text(
+          inSelection
+              ? '${s.isZh ? '已选' : 'Selected'} $selectedCount'
+              : s.navProjects,
+        ),
+        actions: _buildMobilePillActions(context, state, s, scheme),
+        collapseActions: false,
+        searching: _searchVisible,
+        searchChild: MobileSearchPill(
+          controller: _searchController,
+          hint: s.searchVideos,
+          onChanged: (value) => setState(() => _searchQuery = value),
+          onClose: () => setState(() {
+            _searchVisible = false;
+            _searchQuery = '';
+            _searchController.clear();
+          }),
+        ),
+      );
+    }
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -480,6 +509,100 @@ class ProjectPageState extends State<ProjectPage> {
         ),
       ],
     );
+  }
+
+  List<Widget> _buildMobilePillActions(
+    BuildContext context,
+    AppState state,
+    AppStrings s,
+    ColorScheme scheme,
+  ) {
+    Widget action({
+      required String id,
+      required IconData icon,
+      required String label,
+      required VoidCallback onTap,
+      Color? color,
+      Color? background,
+    }) => Semantics(
+      button: true,
+      child: MobileGlassPillAction(
+        key: ValueKey(id),
+        icon: icon,
+        tooltip: label,
+        color: color ?? scheme.onSurface,
+        bg: background,
+        size: MobileUi.pillHeight,
+        padding: EdgeInsets.zero,
+        onTap: onTap,
+      ),
+    );
+
+    if (_selectionMode) {
+      return [
+        action(
+          id: 'project_exit_selection',
+          icon: Icons.close,
+          label: s.isZh ? '退出多选' : 'Exit selection',
+          onTap: _exitSelectionMode,
+        ),
+        action(
+          id: 'project_select_all',
+          icon: Icons.select_all,
+          label: s.selectAll,
+          onTap: () => setState(() {
+            _selectedIds.addAll(state.videos.map((video) => video.id));
+            _selectedContainerIds.addAll(
+              state.containers.map((container) => container.id),
+            );
+          }),
+        ),
+        action(
+          id: 'project_invert_selection',
+          icon: Icons.flip,
+          label: s.isZh ? '反选' : 'Invert',
+          onTap: () => _invertSelection(state),
+        ),
+        action(
+          id: 'project_delete_selected',
+          icon: Icons.delete_outline,
+          label: s.deleteSelected,
+          color: scheme.error,
+          onTap: () => _deleteSelected(state),
+        ),
+      ];
+    }
+
+    return [
+      // Keep the primary action initially visible when the pill scrolls.
+      action(
+        id: 'project_add_files',
+        icon: Icons.add,
+        label: s.addVideo,
+        color: scheme.onPrimaryContainer,
+        background: scheme.primaryContainer,
+        onTap: () => _pick(state),
+      ),
+      action(
+        id: 'project_search',
+        icon: Icons.search,
+        label: s.search,
+        onTap: openSearch,
+      ),
+      action(
+        id: 'project_import_config',
+        icon: Icons.file_download_outlined,
+        label: s.isZh ? '导入配置' : 'Import Config',
+        onTap: () => _importOrExplain(state, s),
+      ),
+      if (state.config.editMode != 1)
+        action(
+          id: 'project_container',
+          icon: Icons.create_new_folder_outlined,
+          label: s.container,
+          onTap: () => _showContainerMenu(context, state, s),
+        ),
+    ];
   }
 
   List<Widget> _buildMobileActions(
@@ -622,7 +745,11 @@ class ProjectPageState extends State<ProjectPage> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    s.clickAdd,
+                    isMobilePlatform
+                        ? (s.isZh
+                              ? '轻点右上角 ＋ 添加视频、音频或图片'
+                              : 'Tap + at the top right to add media')
+                        : s.clickAdd,
                     textAlign: TextAlign.center,
                     style: Theme.of(
                       context,
@@ -638,14 +765,16 @@ class ProjectPageState extends State<ProjectPage> {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 22),
-                  _addFilesButton(
-                    state,
-                    s,
-                    scheme,
-                    key: const ValueKey('project_empty_add_files'),
-                    compact: compact,
-                  ),
+                  if (!isMobilePlatform) ...[
+                    const SizedBox(height: 22),
+                    _addFilesButton(
+                      state,
+                      s,
+                      scheme,
+                      key: const ValueKey('project_empty_add_files'),
+                      compact: compact,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -683,6 +812,7 @@ class ProjectPageState extends State<ProjectPage> {
             // 让出 96px，左右竖排导轨只留 20px）；桌面端保持 16
             padding: compact
                 ? MobileUi.mainListPadding(
+                    context: context,
                     top: probingBanner != null ? 4 : 16,
                     placement: isMobilePlatform
                         ? MobileNavPlacementScope.of(context)
@@ -877,7 +1007,7 @@ class ProjectPageState extends State<ProjectPage> {
       final scheme = Theme.of(context).colorScheme;
       final goOn = await showDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
+        builder: (ctx) => AppAlertDialog(
           // 去掉 shape 覆盖：原来写死 radius 16 会把主题 dialogTheme 的
           // 圆角(22) 和 0.6px 细描边一起盖掉（RoundedRectangleBorder.side 默认 none），
           // 导致这个对话框比全局其他对话框「方一块、还没边框」。
@@ -947,10 +1077,7 @@ class ProjectPageState extends State<ProjectPage> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDlgState) {
-          return AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
+          return AppAlertDialog(
             title: Row(
               children: [
                 Icon(
@@ -1356,7 +1483,10 @@ class ProjectPageState extends State<ProjectPage> {
 
   /// Processes picker results without substituting previously cached content.
   @visibleForTesting
-  Future<void> importPickedFiles(AppState state, List<PlatformFile> files) async {
+  Future<void> importPickedFiles(
+    AppState state,
+    List<PlatformFile> files,
+  ) async {
     if (files.isEmpty) return;
     final paths = <String>[];
     for (final f in files) {
@@ -1500,10 +1630,7 @@ class ProjectPageState extends State<ProjectPage> {
       final ctrl = TextEditingController(text: defaultName);
       final name = await showDialog<String>(
         context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+        builder: (ctx) => AppAlertDialog(
           title: Text(
             zh ? '容器名称' : 'Container Name',
             style: TextStyle(color: scheme.onSurface),
@@ -1757,8 +1884,7 @@ class _QuickConfigPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    return AppAlertDialog(
       title: Row(
         children: [
           Icon(Icons.tune, size: 20, color: scheme.primary),
@@ -1846,17 +1972,20 @@ class _QuickConfigPicker extends StatelessWidget {
       actions: [
         // 快速模式「现场编辑」：不选预设直接进入节点编辑器（Bug 修复：
         // 之前快速模式只能选预设，无法对该文件做自由编辑）。
-        TextButton.icon(
-          onPressed: () => Navigator.pop(context, _quickPickLiveEdit),
-          icon: Icon(Icons.tune, size: 16, color: scheme.primary),
-          label: Text(
-            isZh ? '现场编辑' : 'Live Edit',
-            style: TextStyle(color: scheme.primary),
+        AppDialogAction(
+          role: AppDialogActionRole.primary,
+          child: TextButton.icon(
+            onPressed: () => Navigator.pop(context, _quickPickLiveEdit),
+            icon: const Icon(Icons.tune, size: 16),
+            label: Text(isZh ? '现场编辑' : 'Live Edit'),
           ),
         ),
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: Text(isZh ? '取消' : 'Cancel'),
+        AppDialogAction(
+          role: AppDialogActionRole.cancel,
+          child: TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(isZh ? '取消' : 'Cancel'),
+          ),
         ),
       ],
     );

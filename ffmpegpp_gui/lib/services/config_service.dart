@@ -5,23 +5,25 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/models.dart';
 import 'ai_credential_store.dart';
+import 'diagnostic_trace.dart';
 
 final _s = Platform.pathSeparator;
 
 class ConfigService {
   ConfigService({
     AiCredentialStore? credentialStore,
+    this._trace,
     Future<Directory> Function()? supportDirectory,
   }) : _credentialStore = credentialStore ?? AiCredentialStore(),
        _supportDirectory = supportDirectory ?? getApplicationSupportDirectory;
 
   final AiCredentialStore _credentialStore;
+  final DiagnosticTrace? _trace;
   final Future<Directory> Function() _supportDirectory;
+
   AppConfig? _pendingMigration;
   bool _settingsLoadFailed = false;
 
-  /// Non-null when a save was withheld to preserve unrecovered credentials.
-  String? get persistenceError => _persistenceError;
   String? _persistenceError;
 
   static const _filename = 'settings.json';
@@ -43,13 +45,16 @@ class ConfigService {
   int _editGeneration = 0;
 
   Future<void> load() async {
-    final dir = await _configDir();
-    final file = File('$dir$_s$_filename');
+    var span = _trace?.begin('storage.settings_load');
+    var fileExists = false;
     Map<String, dynamic> json = {};
     _settingsLoadFailed = true;
     _pendingMigration = null;
     try {
-      if (await file.exists()) {
+      final dir = await _configDir();
+      final file = File('$dir$_s$_filename');
+      fileExists = await file.exists();
+      if (fileExists) {
         final decoded = jsonDecode(await file.readAsString());
         if (decoded is! Map<String, dynamic>) {
           throw const FormatException(
@@ -61,26 +66,101 @@ class ConfigService {
       _config = AppConfig.fromJson(json);
       _settingsLoadFailed = false;
       _persistenceError = null;
-    } catch (_) {
+    } catch (error) {
       _persistenceError =
           'Settings could not be loaded; original file preserved.';
       debugPrint('[ConfigService] $_persistenceError');
       _config = AppConfig();
+      span?.finish(
+        success: false,
+        error: error,
+        details: {'reason': 'load_failed', 'responseFields': json.length},
+      );
       return;
     }
-    if (!json.containsKey('use_dynamic_color') && Platform.isAndroid) {
-      _config.useDynamicColor = true;
+
+    // The persisted setting controls diagnostics too. Do not activate it until
+    // the settings object has been parsed and accepted.
+    if (span != null && !_config.veryVerboseLogs) {
+      span.finish(
+        success: true,
+        details: {
+          'reason': fileExists ? 'loaded' : 'missing',
+          'responseFields': json.length,
+        },
+      );
+      span = null;
     }
-    await _credentialStore.restore(_config);
-    if (_containsLegacyAiKeys(json)) {
-      // Keep a separate snapshot: later UI edits must not discard a credential
-      // whose only persisted copy is still in the legacy settings file.
-      _pendingMigration = _snapshot(_config);
-      await save();
+    _trace?.setEnabled(_config.veryVerboseLogs);
+    span ??= _trace?.begin('storage.settings_load', details: {
+      'reason': fileExists ? 'loaded' : 'missing',
+    });
+
+    try {
+      if (!json.containsKey('use_dynamic_color') && Platform.isAndroid) {
+        _config.useDynamicColor = true;
+      }
+      final restoreSpan = _trace?.begin(
+        'storage.credential_restore',
+        details: {'profileCount': _config.aiProfiles.length},
+      );
+      try {
+        await _credentialStore.restore(_config);
+        restoreSpan?.finish(success: true);
+      } catch (error) {
+        restoreSpan?.finish(success: false, error: error);
+        rethrow;
+      }
+
+      final hasLegacyKeys = _containsLegacyAiKeys(json);
+      var migrationFailed = false;
+      if (hasLegacyKeys) {
+        final migrationSpan = _trace?.begin(
+          'storage.settings_migration',
+          details: {'reason': 'legacy_keys'},
+        );
+        // Keep a separate snapshot: later UI edits must not discard a credential
+        // whose only persisted copy is still in the legacy settings file.
+        _pendingMigration = _snapshot(_config);
+        try {
+          await save();
+          migrationFailed = _persistenceError != null;
+          migrationSpan?.finish(
+            success: !migrationFailed,
+            details: {
+              'reason': migrationFailed ? 'migration_failed' : 'migrated',
+            },
+          );
+        } catch (error) {
+          migrationSpan?.finish(
+            success: false,
+            error: error,
+            details: {'reason': 'migration_failed'},
+          );
+          rethrow;
+        }
+      }
+      span?.finish(
+        success: !migrationFailed,
+        details: {
+          'reason': migrationFailed
+              ? 'migration_failed'
+              : (fileExists ? 'loaded' : 'missing'),
+          'responseFields': json.length,
+          'migrated': hasLegacyKeys && !migrationFailed,
+        },
+      );
+    } catch (error) {
+      span?.finish(success: false, error: error);
+      rethrow;
     }
   }
 
   Future<void> save() async {
+    final span = _trace?.begin('storage.settings_save');
+    var completed = false;
+    var reason = 'saved';
+    Object? thrownError;
     _saveTimer?.cancel();
     _saveTimer = null;
     _dirty = true;
@@ -102,6 +182,7 @@ class ConfigService {
         _persistenceError =
             'Settings could not be loaded; original file preserved.';
         debugPrint('[ConfigService] $_persistenceError');
+        reason = 'settings_load_failed';
         return;
       }
       final generation = _editGeneration;
@@ -112,6 +193,7 @@ class ConfigService {
           _persistenceError =
               'Credentials were not saved; settings file preserved.';
           debugPrint('[ConfigService] $_persistenceError');
+          reason = 'migration_failed';
           return;
         }
         // Never replay an older credential after its migration succeeded.
@@ -121,6 +203,7 @@ class ConfigService {
         _persistenceError =
             'Credentials were not saved; settings file preserved.';
         debugPrint('[ConfigService] $_persistenceError');
+        reason = 'credential_save_failed';
         return;
       }
       final dir = await _configDir();
@@ -137,7 +220,17 @@ class ConfigService {
     _saveInFlight = next;
     try {
       await next;
+      completed = true;
+    } catch (error) {
+      thrownError = error;
+      reason = 'write_failed';
+      rethrow;
     } finally {
+      span?.finish(
+        success: completed && _persistenceError == null,
+        error: thrownError,
+        details: {'reason': reason},
+      );
       // 按引用清空，避免把后来者的 in-flight 引用抹掉。
       if (identical(_saveInFlight, next)) {
         _saveInFlight = null;
@@ -204,31 +297,67 @@ class ConfigService {
   // --- Config Library persistence ---
 
   Future<List<Map<String, dynamic>>> loadLibrary() async {
+    final span = _trace?.begin('storage.library_load');
     try {
       final dir = await _configDir();
       final file = File('$dir$_s$_libraryFilename');
-      if (await file.exists()) {
-        final list = jsonDecode(await file.readAsString()) as List<dynamic>;
-        // 逐个验证条目类型（cast 是懒加载的，坏条目会在首次使用时抛 TypeCastError）；
-        // 坏条目只跳过，不能因为一条损坏就把整个配置库丢光。
-        final entries = <Map<String, dynamic>>[];
-        for (final e in list) {
-          if (e is Map<String, dynamic>) entries.add(e);
-        }
-        return entries;
+      if (!await file.exists()) {
+        span?.finish(
+          success: true,
+          details: {'reason': 'missing', 'itemCount': 0, 'skippedCount': 0},
+        );
+        return [];
       }
-    } catch (_) {}
-    return [];
+      final list = jsonDecode(await file.readAsString()) as List<dynamic>;
+      // 逐个验证条目类型（cast 是懒加载的，坏条目会在首次使用时抛 TypeCastError）；
+      // 坏条目只跳过，不能因为一条损坏就把整个配置库丢光。
+      final entries = <Map<String, dynamic>>[];
+      var skippedCount = 0;
+      for (final entry in list) {
+        if (entry is Map<String, dynamic>) {
+          entries.add(entry);
+        } else {
+          skippedCount++;
+        }
+      }
+      span?.finish(
+        success: true,
+        details: {
+          'itemCount': entries.length,
+          'skippedCount': skippedCount,
+          'totalCount': list.length,
+        },
+      );
+      return entries;
+    } catch (error) {
+      span?.finish(
+        success: false,
+        error: error,
+        details: {'reason': 'read_failed'},
+      );
+      return [];
+    }
   }
 
   Future<void> saveLibrary(List<Map<String, dynamic>> entries) async {
+    final span = _trace?.begin(
+      'storage.library_save',
+      details: {'itemCount': entries.length},
+    );
     try {
       final dir = await _configDir();
       final file = File('$dir$_s$_libraryFilename');
       await file.writeAsString(
         const JsonEncoder.withIndent('  ').convert(entries),
       );
-    } catch (_) {}
+      span?.finish(success: true, details: {'itemCount': entries.length});
+    } catch (error) {
+      span?.finish(
+        success: false,
+        error: error,
+        details: {'reason': 'write_failed', 'itemCount': entries.length},
+      );
+    }
   }
 
   // --- 处理队列结果持久化 ---
@@ -236,28 +365,64 @@ class ConfigService {
   // 下次启动恢复展示；仅结构性变化（增删/状态终态）时写入，进度心跳不落盘。
 
   Future<List<Map<String, dynamic>>> loadTaskHistory() async {
+    final span = _trace?.begin('storage.task_history_load');
     try {
       final dir = await _configDir();
       final file = File('$dir$_s$_taskHistoryFilename');
-      if (await file.exists()) {
-        final list = jsonDecode(await file.readAsString()) as List<dynamic>;
-        final entries = <Map<String, dynamic>>[];
-        for (final e in list) {
-          if (e is Map<String, dynamic>) entries.add(e);
-        }
-        return entries;
+      if (!await file.exists()) {
+        span?.finish(
+          success: true,
+          details: {'reason': 'missing', 'itemCount': 0, 'skippedCount': 0},
+        );
+        return [];
       }
-    } catch (_) {}
-    return [];
+      final list = jsonDecode(await file.readAsString()) as List<dynamic>;
+      final entries = <Map<String, dynamic>>[];
+      var skippedCount = 0;
+      for (final entry in list) {
+        if (entry is Map<String, dynamic>) {
+          entries.add(entry);
+        } else {
+          skippedCount++;
+        }
+      }
+      span?.finish(
+        success: true,
+        details: {
+          'itemCount': entries.length,
+          'skippedCount': skippedCount,
+          'totalCount': list.length,
+        },
+      );
+      return entries;
+    } catch (error) {
+      span?.finish(
+        success: false,
+        error: error,
+        details: {'reason': 'read_failed'},
+      );
+      return [];
+    }
   }
 
   Future<void> saveTaskHistory(List<Map<String, dynamic>> entries) async {
+    final span = _trace?.begin(
+      'storage.task_history_save',
+      details: {'itemCount': entries.length},
+    );
     try {
       final dir = await _configDir();
       final file = File('$dir$_s$_taskHistoryFilename');
       // 紧凑 JSON（无缩进）：任务历史可能包含日志行，体积小一点是一点
       await file.writeAsString(jsonEncode(entries));
-    } catch (_) {}
+      span?.finish(success: true, details: {'itemCount': entries.length});
+    } catch (error) {
+      span?.finish(
+        success: false,
+        error: error,
+        details: {'reason': 'write_failed', 'itemCount': entries.length},
+      );
+    }
   }
 
   Future<String> _configDir() async {

@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../../providers/app_state.dart';
 
 import '../../services/frame_preview.dart';
 import '../app_slider.dart';
@@ -82,10 +85,12 @@ class _ClipStepEditorState extends State<ClipStepEditor> with StepEditorState<Cl
   }
 
   Future<void> _generatePreview() async {
+    if (!mounted) return;
     final path = await FramePreview.generatePreview(
       widget.videoPath,
       p['start_time'] as double? ?? 0.0,
       width: 480,
+      trace: context.read<AppState>().diagnosticTrace,
     );
     if (mounted) {
       setState(() => _previewPath = path);

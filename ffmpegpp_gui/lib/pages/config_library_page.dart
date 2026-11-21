@@ -14,6 +14,7 @@ import '../services/fppx2_service.dart';
 import '../services/quick_config_storage.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
+import '../widgets/app_alert_dialog.dart';
 import '../widgets/app_card.dart';
 import '../widgets/fppx_password.dart';
 import '../widgets/glass_panel.dart';
@@ -143,7 +144,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         // 新建时选择文件版本：新版为 v2 模块化二进制（Beta），旧版完全兼容历史行为
         var newFormat = false;
         return StatefulBuilder(
-          builder: (ctx, setDialogState) => AlertDialog(
+          builder: (ctx, setDialogState) => AppAlertDialog(
             scrollable: true,
             icon: Icon(Icons.add_circle_outline, color: scheme.primary),
             title: Text(zh ? '新建配置' : 'New Config'),
@@ -287,7 +288,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       final ids = result.unknownTypeIds.join(', ');
       final goOn = await showDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
+        builder: (ctx) => AppAlertDialog(
           // 同 project_page：不再覆盖 shape（否则会连主题的细描边一起丢掉）
           title: Row(
             children: [
@@ -328,7 +329,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     if (result.warnings.isNotEmpty) {
       final proceed = await showDialog<bool>(
         context: context,
-        builder: (ctx) => AlertDialog(
+        builder: (ctx) => AppAlertDialog(
           title: Row(
             children: [
               Icon(Icons.warning_amber, size: 20, color: scheme.sem.warning),
@@ -403,7 +404,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         await QuickConfigStorage.save(cfg);
       } catch (_) {
         if (mounted) {
-          showToast(context, zh ? '快捷配置保存失败，请重试' : 'Could not save quick config. Please retry.', type: ToastType.error);
+          showToast(
+            context,
+            zh ? '快捷配置保存失败，请重试' : 'Could not save quick config. Please retry.',
+            type: ToastType.error,
+          );
         }
         return;
       }
@@ -506,10 +511,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     showDialog(
       context: context,
       builder: (ctx) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+        return AppAlertDialog(
           title: Row(
             children: [
               Icon(Icons.error_outline, size: 20, color: scheme.error),
@@ -572,8 +574,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     final ctrl = TextEditingController(text: entry.name);
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      builder: (ctx) => AppAlertDialog(
         title: Text(
           zh ? '重命名' : 'Rename',
           style: TextStyle(color: scheme.onSurface),
@@ -727,7 +728,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           final width = MediaQuery.sizeOf(ctx).width;
-          return AlertDialog(
+          return AppAlertDialog(
             title: Row(
               children: [
                 Icon(
@@ -972,7 +973,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       context: context,
       builder: (ctx) {
         final colors = Theme.of(ctx).colorScheme;
-        return AlertDialog(
+        return AppAlertDialog(
           scrollable: true,
           icon: Icon(Icons.delete_outline, color: colors.error),
           title: Text(zh ? '确认删除' : 'Confirm Delete'),
@@ -1014,7 +1015,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       builder: (ctx) {
         var selected = QuickFileType.video;
         return StatefulBuilder(
-          builder: (ctx, setDialogState) => AlertDialog(
+          builder: (ctx, setDialogState) => AppAlertDialog(
             scrollable: true,
             icon: Icon(Icons.bolt_outlined, color: scheme.primary),
             title: Text(zh ? '新建快捷配置' : 'New Quick Config'),
@@ -1106,7 +1107,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       await QuickConfigStorage.save(cfg);
     } catch (_) {
       if (mounted) {
-        showToast(context, zh ? '快捷配置保存失败，请重试' : 'Could not save quick config. Please retry.', type: ToastType.error);
+        showToast(
+          context,
+          zh ? '快捷配置保存失败，请重试' : 'Could not save quick config. Please retry.',
+          type: ToastType.error,
+        );
       }
       return;
     }
@@ -1149,13 +1154,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       context: context,
       builder: (ctx) {
         final colors = Theme.of(ctx).colorScheme;
-        return AlertDialog(
+        return AppAlertDialog(
           scrollable: true,
           icon: Icon(Icons.delete_outline, color: colors.error),
           title: Text(zh ? '确认删除' : 'Confirm Delete'),
-          content: Text(
-            zh ? '确定要删除「${cfg.name}」吗？' : 'Delete "${cfg.name}"?',
-          ),
+          content: Text(zh ? '确定要删除「${cfg.name}」吗？' : 'Delete "${cfg.name}"?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -1178,7 +1181,11 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       await QuickConfigStorage.delete(cfg.id);
     } catch (_) {
       if (mounted) {
-        showToast(context, zh ? '快捷配置删除失败，请重试' : 'Could not delete quick config. Please retry.', type: ToastType.error);
+        showToast(
+          context,
+          zh ? '快捷配置删除失败，请重试' : 'Could not delete quick config. Please retry.',
+          type: ToastType.error,
+        );
       }
       return;
     }
@@ -1422,35 +1429,34 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                             // 两个选项各 76，总宽固定 152。
                             final selectorWidth =
                                 (constraints.maxWidth -
-                                        2 * kAppLiquidTabBarStyle.horizontalMargin)
+                                        2 *
+                                            kAppLiquidTabBarStyle
+                                                .horizontalMargin)
                                     .clamp(0.0, 152.0);
-                            // ⚠️ 盒子高度必须按组件的**真实**高度算，不能只给
-                            // capsuleHeight：LiquidGlassTabBarStyle.barHeight =
-                            // capsuleHeight + 2 × capsuleInset，且组件在 build 里
-                            // 另加了 6px 顶部余量（_topPadding，给投影与放大的
-                            // 液滴留空间）。旧值只给 44，组件内部再按
-                            // MediaQuery.padding.bottom 预留一次安全区，于是
-                            // Padding 把 50px 高的胶囊压成几十甚至十几 px
-                            // —— 这就是「切换器又扁又贴底」的根因。
-                            final selectorHeight =
-                                _kCompactMobileTabStyle.capsuleHeight +
-                                2 * _kCompactMobileTabStyle.capsuleInset +
-                                6;
+                            // Reserve the same geometry that AppLiquidTabBar
+                            // actually paints. This follows the active text scaler,
+                            // including the top droplet room and configured gap.
+                            final selectorHeight = AppLiquidTabBar.heightOf(
+                              context,
+                              _kCompactMobileTabStyle,
+                            );
                             final safeBottom = MediaQuery.paddingOf(
                               context,
                             ).bottom;
                             final selectorBottom =
                                 placement == MobileNavPlacement.bottom
-                                ? safeBottom +
-                                      kAppLiquidTabBarStyle.capsuleHeight +
-                                      (kAppLiquidTabBarStyle.bottomGap ?? 8) +
-                                      18
-                                // 侧边导航时底部同样有手势区：旧值只给 12，
-                                // 靠组件内部那次（错误的）安全区把它顶上来；
-                                // 现在内部安全区被移除（见下方 removePadding），
-                                // 必须在这里显式加上。
+                                // Keep a small breathing room after the main
+                                // navigation, whose height also grows with text.
+                                ? AppLiquidTabBar.clearanceOf(
+                                        context,
+                                        kAppLiquidTabBarStyle,
+                                      ) +
+                                      4
+                                // Side navigation does not cover the selector,
+                                // but the gesture area still needs clearance.
                                 : 12.0 + safeBottom;
                             final listPadding = MobileUi.mainListPadding(
+                              context: context,
                               placement: placement,
                             );
 
@@ -1460,7 +1466,8 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                                   child: ListView(
                                     addRepaintBoundaries: false,
                                     padding: listPadding.copyWith(
-                                      bottom: selectorBottom + selectorHeight + 12,
+                                      bottom:
+                                          selectorBottom + selectorHeight + 12,
                                     ),
                                     children: _buildTabContent(scheme, zh),
                                   ),

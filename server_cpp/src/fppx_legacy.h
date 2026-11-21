@@ -18,6 +18,5 @@ inline constexpr uint8_t LEGACY_MIN_SOFTWARE_MAJOR = 3;
 inline constexpr uint8_t LEGACY_COMPAT_MAJOR_COUNT = 2;
 inline constexpr int LEGACY_CURRENT_SOFTWARE_MAJOR = 5;
 inline constexpr uint8_t LEGACY_MODE_NODE_EDITOR = 0x01;
-inline constexpr uint8_t LEGACY_MODE_LEGACY = 0x02;
 
 } // namespace ffmpegpp

@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../app.dart';
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../services/image_memory_budget.dart';
 import '../theme/app_neutral_surface.dart';
@@ -720,7 +721,8 @@ class _WallpaperWindowScopeState extends State<WallpaperWindowScope> {
   /// σ 必须与 AppCard 开窗 painter 用的完全一致：
   /// `effectiveGlassSigma(glassTuningOf(context).blur)`（见 app_card.dart）。
   void _requestBlur() {
-    if (DesktopResizeScope.isResizingOf(context)) {
+    // Mobile cards sample their local backdrop and never use this desktop cache.
+    if (isMobilePlatform || DesktopResizeScope.isResizingOf(context)) {
       return;
     }
     final src = _window.value?.image;

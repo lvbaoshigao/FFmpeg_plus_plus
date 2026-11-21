@@ -53,7 +53,6 @@ target_include_directories(ffmpegpp PRIVATE
 )
 
 target_compile_definitions(ffmpegpp PRIVATE
-    FFMPEGPP_DLL_MODE
     FFMPEGPP_BUILDING_DLL
 )
 

@@ -11,6 +11,7 @@ import '../providers/app_state.dart';
 import '../theme/app_text_scale.dart';
 import '../theme/mobile_visual_theme.dart';
 import 'liquid_glass_fallback.dart';
+import '../platform/app_platform.dart';
 import 'selection_highlight.dart';
 
 /// 统一的「菜单栏选项」控件 —— 融合两处参考样式：
@@ -84,6 +85,7 @@ String _normalizeForSearch(String value) =>
 /// 菜单用中性材质承托文字，主题色仅用于状态标记。
 /// 液态档保留透射、方向性边缘光；毛玻璃偏哑光，高光档有柔和镜面。
 Widget optionMenuPanel({
+  required BuildContext context,
   required ColorScheme scheme,
   required Widget child,
   required String appearance,
@@ -92,15 +94,24 @@ Widget optionMenuPanel({
   bool gpuGlass = false,
 }) {
   final dark = scheme.brightness == Brightness.dark;
+  final mobile = isMobilePlatform;
+  final highContrast = MediaQuery.highContrastOf(context);
+  final effectsReduced = mobile && mobileGlassEffectsReducedOf(context);
   final liquid = appearance == 'liquid';
   final frosted = appearance == 'frosted';
   final highlight = appearance == 'highlight';
   final glass = liquid || frosted || highlight;
   final neutral = neutralGray(scheme.surface);
-  final sigma = liquid
+  final baseSigma = liquid
       ? tunedGlassSigma(6, tuning)
       : tunedGlassSigma(frosted ? 8 : (highlight ? 4 : 0), tuning);
-  final fill = liquid
+  final sigma = highContrast || effectsReduced
+      ? 0.0
+      : mobile
+      ? mobileGlassSigma(baseSigma)
+      : baseSigma;
+  final useGpuGlass = gpuGlass && !highContrast && !effectsReduced;
+  final baseFill = liquid
       ? neutral.withAlpha(tunedGlassAlpha(dark ? 108 : 128, tuning))
       : frosted
       ? Color.lerp(
@@ -113,13 +124,20 @@ Widget optionMenuPanel({
       : appearance == 'gray'
       ? neutral
       : scheme.surface;
+  final fill = mobile && glass
+      ? baseFill.withValues(
+          alpha: effectsReduced ? 1 : math.max(baseFill.a, 0.86),
+        )
+      : glass && highContrast
+      ? neutral
+      : baseFill;
   final r = BorderRadius.circular(radius);
   final light = tuning.highlight.clamp(0.0, 1.6);
   final position = tuning.lightPos.clamp(0.0, 1.0);
   final lightAngle = -3 * math.pi / 4 + position * math.pi;
   final begin = Alignment(math.cos(lightAngle), math.sin(lightAngle));
   final end = Alignment(-begin.x, -begin.y);
-  final sheen = liquid || highlight
+  final sheen = !mobile && (liquid || highlight)
       ? LinearGradient(
           begin: begin,
           end: end,
@@ -134,15 +152,20 @@ Widget optionMenuPanel({
       : null;
   // Material is the tint layer and ink host; the rim never paints over text.
   Widget panel = Material(
-    color: gpuGlass && liquid ? Colors.transparent : fill,
+    color: useGpuGlass && liquid ? Colors.transparent : fill,
     child: DecoratedBox(
       decoration: BoxDecoration(gradient: sheen),
       child: CustomPaint(
         foregroundPainter: _MenuRimPainter(
           radius: radius,
           glass: glass,
-          color: glass ? Colors.white : scheme.outlineVariant,
-          strength: glass ? tuning.edge.clamp(0.0, 2.0) : 1,
+          highContrast: highContrast,
+          color: highContrast
+              ? scheme.onSurface
+              : (glass ? Colors.white : scheme.outlineVariant),
+          strength: highContrast
+              ? 1
+              : (glass ? tuning.edge.clamp(0.0, 2.0) : 1),
           begin: begin,
           end: end,
         ),
@@ -150,11 +173,18 @@ Widget optionMenuPanel({
       ),
     ),
   );
-  if (gpuGlass && liquid) {
+  if (useGpuGlass && liquid) {
     panel = OCLiquidGlassGroup(
       settings: liquidGlassSettingsFor(tuning),
       child: OCLiquidGlass(borderRadius: radius, color: fill, child: panel),
     );
+  } else if (liquid && mobile) {
+    if (sigma > 0) {
+      panel = ClipRRect(
+        borderRadius: r,
+        child: BackdropFilter(filter: cachedGlassBlur(sigma), child: panel),
+      );
+    }
   } else if (liquid) {
     panel = LiquidGlassBackdrop(
       borderRadius: r,
@@ -186,6 +216,7 @@ class _MenuRimPainter extends CustomPainter {
   const _MenuRimPainter({
     required this.radius,
     required this.glass,
+    required this.highContrast,
     required this.color,
     required this.strength,
     required this.begin,
@@ -193,6 +224,7 @@ class _MenuRimPainter extends CustomPainter {
   });
   final double radius;
   final bool glass;
+  final bool highContrast;
   final Color color;
   final double strength;
   final Alignment begin;
@@ -204,8 +236,10 @@ class _MenuRimPainter extends CustomPainter {
     final rect = (Offset.zero & size).deflate(0.5);
     final paint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = glass ? 0.85 : 0.6;
-    if (glass) {
+      ..strokeWidth = highContrast ? 1.5 : (glass ? 0.85 : 0.6);
+    if (highContrast) {
+      paint.color = color;
+    } else if (glass) {
       paint.shader = LinearGradient(
         begin: begin,
         end: end,
@@ -229,6 +263,7 @@ class _MenuRimPainter extends CustomPainter {
   bool shouldRepaint(_MenuRimPainter old) =>
       old.radius != radius ||
       old.glass != glass ||
+      old.highContrast != highContrast ||
       old.color != color ||
       old.strength != strength ||
       old.begin != begin ||
@@ -1182,6 +1217,7 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
       ),
     );
     final panel = optionMenuPanel(
+      context: overlayContext,
       scheme: scheme,
       appearance: MediaQuery.highContrastOf(overlayContext)
           ? 'theme'
@@ -1410,9 +1446,10 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: sel
-                              ? FontWeight.values[
-                                  (weight.value ~/ 100).clamp(0, 8)
-                                ]
+                              ? FontWeight.values[(weight.value ~/ 100).clamp(
+                                  0,
+                                  8,
+                                )]
                               : weight,
                           color: sel ? scheme.primary : scheme.onSurfaceVariant,
                         ),
@@ -1656,6 +1693,7 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
     final maxHeight = math.min(320.0, openUp ? above : below);
     final panelDy = openUp ? aboveEnd - triggerTop : belowStart - triggerBottom;
     final panel = optionMenuPanel(
+      context: overlayContext,
       scheme: scheme,
       tuning: glassTuningOf(overlayContext),
       radius: visual.menuRadius,

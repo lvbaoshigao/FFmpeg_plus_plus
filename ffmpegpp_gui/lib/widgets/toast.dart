@@ -1,85 +1,164 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
+
+import '../platform/app_platform.dart';
 import '../theme/app_semantic_colors.dart';
+import 'liquid_glass_fallback.dart'
+    show cachedGlassBlur, mobileGlassEffectsReducedOf, mobileGlassSigma;
 
 enum ToastType { success, error, warning, info }
 
-void showToast(BuildContext context, String message, {ToastType type = ToastType.info}) {
+void showToast(
+  BuildContext context,
+  String message, {
+  ToastType type = ToastType.info,
+}) {
   final overlay = Overlay.of(context);
+  final mobile = isMobilePlatform;
+  final reduceMotion = mobile && MediaQuery.disableAnimationsOf(context);
+  final duration = reduceMotion
+      ? Duration.zero
+      : const Duration(milliseconds: 250);
   late OverlayEntry entry;
-  final controller = AnimationController(vsync: overlay, duration: const Duration(milliseconds: 250));
-  final animation = CurvedAnimation(parent: controller, curve: Curves.easeOut, reverseCurve: Curves.easeIn);
+  final controller = AnimationController(vsync: overlay, duration: duration);
+  final animation = CurvedAnimation(
+    parent: controller,
+    curve: Curves.easeOut,
+    reverseCurve: Curves.easeIn,
+  );
 
-  entry = OverlayEntry(builder: (ctx) {
-    final scheme = Theme.of(ctx).colorScheme;
-    // 语义色走 AppSemantic（随主题种子色调和），不再写死 Material 调色板原色：
-    // 原先 Colors.green/#4CAF50、Colors.red/#F44336、Colors.orange/#FF9800 完全不
-    // 跟随主题 —— 换主题色（含 Android Monet 动态取色）后只有 toast 图标纹丝不动，
-    // 且这三个 tone 50 的饱和色是为浅色底设计的，在深色玻璃面上过亮。
-    final sem = scheme.sem;
-    final (icon, color) = switch (type) {
-      ToastType.success => (Icons.check_circle_rounded, sem.success),
-      ToastType.error => (Icons.cancel_rounded, sem.danger),
-      ToastType.warning => (Icons.warning_rounded, sem.warning),
-      ToastType.info => (Icons.info_rounded, sem.info),
-    };
+  entry = OverlayEntry(
+    builder: (ctx) {
+      final scheme = Theme.of(ctx).colorScheme;
+      final isDark = scheme.brightness == Brightness.dark;
+      final highContrast = MediaQuery.highContrastOf(ctx);
+      final radius = BorderRadius.circular(100);
+      final effectsReduced = mobileGlassEffectsReducedOf(ctx);
+      final sigma = mobile ? mobileGlassSigma(8) : 8.0;
+      final top = mobile ? MediaQuery.paddingOf(ctx).top + 8 : 48.0;
+      final sem = scheme.sem;
+      final (icon, color) = switch (type) {
+        ToastType.success => (Icons.check_circle_rounded, sem.success),
+        ToastType.error => (Icons.cancel_rounded, sem.danger),
+        ToastType.warning => (Icons.warning_rounded, sem.warning),
+        ToastType.info => (Icons.info_rounded, sem.info),
+      };
 
-    return Positioned(
-      top: 48,
-      left: 0,
-      right: 0,
-      child: Center(
-        child: FadeTransition(
-          opacity: animation,
-          child: SlideTransition(
-            position: Tween<Offset>(begin: const Offset(0, -0.3), end: Offset.zero).animate(animation),
-            child: Material(
-              color: Colors.transparent,
-              child: Container(
-                constraints: const BoxConstraints(maxWidth: 420),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                decoration: BoxDecoration(
-                  color: scheme.surface.withAlpha(240),
-                  borderRadius: BorderRadius.circular(100),
-                  border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-                  boxShadow: [
-                    BoxShadow(color: Colors.black.withAlpha(30), blurRadius: 20, offset: const Offset(0, 4)),
-                  ],
-                ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(icon, size: 18, color: color),
-                  const SizedBox(width: 10),
-                  Flexible(child: Text(message,
-                    style: TextStyle(fontSize: 13, color: scheme.onSurface, fontWeight: FontWeight.w500),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 2,
-                  )),
-                ]),
-              ),
-            ),
+      Widget surface = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              scheme.surface.withAlpha(isDark ? 200 : 225),
+              scheme.surface.withAlpha(isDark ? 165 : 190),
+            ],
+          ),
+          border: Border.all(
+            color: highContrast
+                ? scheme.onSurface
+                : Colors.white.withAlpha(isDark ? 40 : 140),
+            width: highContrast ? 1.5 : 0.7,
           ),
         ),
-      ),
-    );
-  });
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: color),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                message,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: scheme.onSurface,
+                  fontWeight: FontWeight.w500,
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+              ),
+            ),
+          ],
+        ),
+      );
+      surface = ClipRRect(
+        borderRadius: radius,
+        child: effectsReduced || sigma <= 0
+            ? surface
+            : BackdropFilter(
+                filter: cachedGlassBlur(sigma),
+                // 淡入淡出的离屏图层使用 src，避免背景被重复混合。
+                blendMode: BlendMode.src,
+                child: surface,
+              ),
+      );
+      Widget toast = Material(
+        color: Colors.transparent,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 420),
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(30),
+                blurRadius: 20,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: surface,
+        ),
+      );
+      if (!reduceMotion) {
+        toast = FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -0.3),
+              end: Offset.zero,
+            ).animate(animation),
+            child: toast,
+          ),
+        );
+      }
+      return Positioned(
+        top: top,
+        left: 0,
+        right: 0,
+        child: Center(child: toast),
+      );
+    },
+  );
 
   overlay.insert(entry);
   controller.forward();
 
-  // 拆卸只能发生一次：定时器到点、以及 overlay 被提前销毁，两条路径都会走到这里。
-  // 原先没有这层保护——若在 2 秒内切页/退出，overlay 先没了，
-  // 定时器仍会在已 dispose 的 controller 上调 reverse()，抛异常。
+  // Dispose once whether timeout or an overlay teardown wins the race.
   var dismissed = false;
   void dismiss() {
     if (dismissed) return;
     dismissed = true;
-    try { entry.remove(); } catch (_) {}
-    try { controller.dispose(); } catch (_) {}
+    try {
+      entry.remove();
+    } catch (_) {}
+    try {
+      controller.dispose();
+    } catch (_) {}
   }
 
   Timer(const Duration(seconds: 2), () {
     if (dismissed) return;
-    if (!overlay.mounted) { dismiss(); return; }
-    controller.reverse().whenComplete(dismiss);
+    if (!overlay.mounted) {
+      dismiss();
+      return;
+    }
+    if (reduceMotion) {
+      dismiss();
+    } else {
+      controller.reverse().whenComplete(dismiss);
+    }
   });
 }

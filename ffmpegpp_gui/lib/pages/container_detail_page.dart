@@ -12,6 +12,7 @@ import '../services/saved_config_application.dart';
 import '../services/thumbnail_service.dart';
 import '../theme/app_strings.dart';
 import '../widgets/animated_popup.dart';
+import '../widgets/app_alert_dialog.dart';
 import '../widgets/app_card.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
@@ -517,7 +518,7 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
       context: context,
       builder: (ctx) {
         final cs = Theme.of(ctx).colorScheme;
-        return AlertDialog(
+        return AppAlertDialog(
           title: Text(
             s.isZh ? '重命名容器' : 'Rename Container',
             style: TextStyle(color: cs.onSurface),
@@ -641,6 +642,7 @@ class _ThumbState extends State<_Thumb> {
     final p = await ThumbnailService.ensureThumbnail(
       widget.filepath,
       ffmpeg: widget.ffmpeg,
+      trace: context.read<AppState>().diagnosticTrace,
       isAudio: widget.isAudio,
     );
     if (mounted && p != null) setState(() => _path = p);

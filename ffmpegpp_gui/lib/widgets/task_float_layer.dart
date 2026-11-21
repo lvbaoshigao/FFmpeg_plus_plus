@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -22,6 +23,9 @@ String taskDockInitial(String filename) {
 /// 暂停文案（与队列卡片同词；主题文案层不在本次改动范围）。
 String _pausedLabel(bool zh) => zh ? '已暂停' : 'Paused';
 
+const int _maxVisibleTaskCards = 3;
+const int _maxVisibleDockItems = 4;
+
 /// Global desktop task overlays, mounted last in a bounded shell [Stack].
 ///
 /// Use Positioned.fill(child: TaskFloatLayer()) below the AppState provider.
@@ -38,7 +42,7 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
   final Map<String, Offset> _positions = {};
   final Set<String> _minimized = {};
   final Set<String> _hidden = {};
-  final List<String> _order = [];
+  final LinkedHashSet<String> _order = LinkedHashSet<String>();
 
   Offset _clamp(Offset position, Size bounds, Size card) => Offset(
     position.dx.clamp(0.0, math.max(0.0, bounds.width - card.width)),
@@ -46,8 +50,9 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
   );
 
   void _raise(String id) {
-    _order.remove(id);
-    _order.add(id);
+    _order
+      ..remove(id)
+      ..add(id);
   }
 
   @override
@@ -70,12 +75,9 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
         _positions.removeWhere((id, _) => !tasks.containsKey(id));
         _hidden.removeWhere((id) => !tasks.containsKey(id));
         _minimized.removeWhere((id) => !tasks.containsKey(id));
-        _order.removeWhere((id) => !tasks.containsKey(id));
-        for (final id in tasks.keys) {
-          if (!_order.contains(id)) {
-            _order.add(id);
-          }
-        }
+        _order
+          ..removeWhere((id) => !tasks.containsKey(id))
+          ..addAll(tasks.keys);
         final s = AppStrings.of(state.config.language);
         return LayoutBuilder(
           builder: (context, constraints) {
@@ -86,17 +88,51 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
             final width = math.min(320.0, bounds.width);
             final height = math.min(204.0, bounds.height);
             final cardSize = Size(width, height);
-            final dock = _order
-                .where((id) => _minimized.contains(id) && !_hidden.contains(id))
+            final activeIds = tasks.keys
+                .where(
+                  (id) => !_hidden.contains(id) && !_minimized.contains(id),
+                )
                 .toList();
+            // Keep running and paused tasks visible before waiting tasks.
+            final prioritizedIds = <String>[
+              for (final id in activeIds)
+                if (tasks[id]!.status == TaskStatus.processing ||
+                    tasks[id]!.status == TaskStatus.paused)
+                  id,
+              for (final id in activeIds)
+                if (tasks[id]!.status == TaskStatus.pending) id,
+            ];
+            final visibleCardIds = prioritizedIds
+                .take(_maxVisibleTaskCards)
+                .toSet();
+            final cardIds = _order
+                .where(visibleCardIds.contains)
+                .toList();
+            final dockIds = <String>[];
+            var dockItemCount = 0;
+            for (final id in _order) {
+              if (_minimized.contains(id) && !_hidden.contains(id)) {
+                dockItemCount++;
+                if (dockIds.length < _maxVisibleDockItems) {
+                  dockIds.add(id);
+                }
+              }
+            }
+            final overflowCount =
+                prioritizedIds.length - cardIds.length +
+                dockItemCount - dockIds.length;
             return Stack(
               clipBehavior: Clip.hardEdge,
               children: [
-                for (final id in _order.where(
-                  (id) => !_hidden.contains(id) && !_minimized.contains(id),
-                ))
-                  _positionedCard(tasks[id]!, bounds, cardSize, s),
-                if (dock.isNotEmpty)
+                for (var index = 0; index < cardIds.length; index++)
+                  _positionedCard(
+                    tasks[cardIds[index]]!,
+                    bounds,
+                    cardSize,
+                    s,
+                    index,
+                  ),
+                if (dockIds.isNotEmpty || overflowCount > 0)
                   Positioned(
                     right: 12,
                     bottom: 12,
@@ -111,7 +147,7 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
                           spacing: 8,
                           runSpacing: 8,
                           children: [
-                            for (final id in dock)
+                            for (final id in dockIds)
                               GlassPanel(
                                 radius: 28,
                                 child: SizedBox.square(
@@ -134,6 +170,24 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
                                   ),
                                 ),
                               ),
+                            if (overflowCount > 0)
+                              GlassPanel(
+                                radius: 28,
+                                child: SizedBox.square(
+                                  dimension: 52,
+                                  child: IconButton(
+                                    key: const ValueKey('task-float-queue'),
+                                    tooltip: '${s.navQueue}: $overflowCount',
+                                    onPressed: () => state.selectNav(1),
+                                    icon: Badge(
+                                      label: Text(
+                                        overflowCount > 99 ? '99+' : '$overflowCount',
+                                      ),
+                                      child: const Icon(Icons.queue_outlined),
+                                    ),
+                                  ),
+                                ),
+                              ),
                           ],
                         ),
                       ),
@@ -147,8 +201,13 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
     );
   }
 
-  Widget _positionedCard(TaskInfo task, Size bounds, Size size, AppStrings s) {
-    final index = _order.indexOf(task.id);
+  Widget _positionedCard(
+    TaskInfo task,
+    Size bounds,
+    Size size,
+    AppStrings s,
+    int index,
+  ) {
     final position = _clamp(
       _positions[task.id] ??
           Offset(

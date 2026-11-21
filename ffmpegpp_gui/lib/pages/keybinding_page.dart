@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
+import '../widgets/app_alert_dialog.dart';
 
 Future<void> showKeybindingDialog(BuildContext context, {required bool isZh}) {
   return showDialog(
@@ -32,7 +33,10 @@ String _normalizeBinding(List<String> keys) {
   return sorted.join('+').toLowerCase();
 }
 
-Set<String> _findConflictsInGroup(List<String> group, Map<String, List<String>> bindings) {
+Set<String> _findConflictsInGroup(
+  List<String> group,
+  Map<String, List<String>> bindings,
+) {
   final seen = <String, String>{};
   final conflicts = <String>{};
   for (final id in group) {
@@ -73,7 +77,8 @@ class _KeybindingDialog extends StatefulWidget {
 class _KeybindingDialogState extends State<_KeybindingDialog> {
   bool get isZh => widget.isZh;
 
-  String _formatBinding(List<String> keys) => keys.isEmpty ? (isZh ? '(未设置)' : '(none)') : keys.join(' + ');
+  String _formatBinding(List<String> keys) =>
+      keys.isEmpty ? (isZh ? '(未设置)' : '(none)') : keys.join(' + ');
 
   Future<void> _editBinding(String actionId, String actionLabel) async {
     final state = context.read<AppState>();
@@ -115,14 +120,17 @@ class _KeybindingDialogState extends State<_KeybindingDialog> {
 
     final conflicts = _findAllConflicts(config.keyBindings);
 
-    return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Row(children: [
-        Icon(Icons.keyboard, size: 20, color: scheme.primary),
-        const SizedBox(width: 8),
-        Text(isZh ? '快捷键配置' : 'Keyboard Shortcuts',
-            style: TextStyle(fontSize: 16, color: scheme.onSurface)),
-      ]),
+    return AppAlertDialog(
+      title: Row(
+        children: [
+          Icon(Icons.keyboard, size: 20, color: scheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            isZh ? '快捷键配置' : 'Keyboard Shortcuts',
+            style: TextStyle(fontSize: 16, color: scheme.onSurface),
+          ),
+        ],
+      ),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
@@ -139,43 +147,121 @@ class _KeybindingDialogState extends State<_KeybindingDialog> {
                     color: scheme.errorContainer,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Row(children: [
-                    Icon(Icons.warning_amber_rounded, size: 16, color: scheme.error),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(
-                      isZh ? '存在快捷键冲突，请修改重复的快捷键' : 'Shortcut conflicts detected, please fix duplicates',
-                      style: TextStyle(fontSize: 12, color: scheme.error, fontWeight: FontWeight.w600),
-                    )),
-                  ]),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        size: 16,
+                        color: scheme.error,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          isZh
+                              ? '存在快捷键冲突，请修改重复的快捷键'
+                              : 'Shortcut conflicts detected, please fix duplicates',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: scheme.error,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
 
               _sectionHeader(Icons.keyboard, isZh ? '基本' : 'Basic', scheme),
               const SizedBox(height: 4),
-              _shortcutTile(actionId: 'project_select_all', label: isZh ? '全选视频' : 'Select All Videos',
-                  keys: config.keyBindings['project_select_all'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'queue_add_all', label: isZh ? '快速添加所有到队列' : 'Add All to Queue',
-                  keys: config.keyBindings['queue_add_all'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'queue_start_all', label: isZh ? '快速开始所有任务' : 'Start All Tasks',
-                  keys: config.keyBindings['queue_start_all'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'project_clear_all', label: isZh ? '删除所有项目' : 'Delete All Projects',
-                  keys: config.keyBindings['project_clear_all'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'queue_stop_all', label: isZh ? '停止所有任务' : 'Stop All Tasks',
-                  keys: config.keyBindings['queue_stop_all'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
+              _shortcutTile(
+                actionId: 'project_select_all',
+                label: isZh ? '全选视频' : 'Select All Videos',
+                keys: config.keyBindings['project_select_all'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
+              _shortcutTile(
+                actionId: 'queue_add_all',
+                label: isZh ? '快速添加所有到队列' : 'Add All to Queue',
+                keys: config.keyBindings['queue_add_all'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
+              _shortcutTile(
+                actionId: 'queue_start_all',
+                label: isZh ? '快速开始所有任务' : 'Start All Tasks',
+                keys: config.keyBindings['queue_start_all'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
+              _shortcutTile(
+                actionId: 'project_clear_all',
+                label: isZh ? '删除所有项目' : 'Delete All Projects',
+                keys: config.keyBindings['project_clear_all'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
+              _shortcutTile(
+                actionId: 'queue_stop_all',
+                label: isZh ? '停止所有任务' : 'Stop All Tasks',
+                keys: config.keyBindings['queue_stop_all'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
               const SizedBox(height: 16),
 
-              _sectionHeader(Icons.explore_outlined, isZh ? '导航' : 'Navigation', scheme),
+              _sectionHeader(
+                Icons.explore_outlined,
+                isZh ? '导航' : 'Navigation',
+                scheme,
+              ),
               const SizedBox(height: 4),
-              _shortcutTile(actionId: 'nav_projects', label: isZh ? '跳转项目页' : 'Go to Projects',
-                  keys: config.keyBindings['nav_projects'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'nav_queue', label: isZh ? '跳转队列页' : 'Go to Queue',
-                  keys: config.keyBindings['nav_queue'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'nav_command', label: isZh ? '跳转命令页' : 'Go to Command',
-                  keys: config.keyBindings['nav_command'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'nav_settings', label: isZh ? '跳转设置页' : 'Go to Settings',
-                  keys: config.keyBindings['nav_settings'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'project_search', label: isZh ? '搜索项目' : 'Search Projects',
-                  keys: config.keyBindings['project_search'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
+              _shortcutTile(
+                actionId: 'nav_projects',
+                label: isZh ? '跳转项目页' : 'Go to Projects',
+                keys: config.keyBindings['nav_projects'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
+              _shortcutTile(
+                actionId: 'nav_queue',
+                label: isZh ? '跳转队列页' : 'Go to Queue',
+                keys: config.keyBindings['nav_queue'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
+              _shortcutTile(
+                actionId: 'nav_command',
+                label: isZh ? '跳转命令页' : 'Go to Command',
+                keys: config.keyBindings['nav_command'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
+              _shortcutTile(
+                actionId: 'nav_settings',
+                label: isZh ? '跳转设置页' : 'Go to Settings',
+                keys: config.keyBindings['nav_settings'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
+              _shortcutTile(
+                actionId: 'project_search',
+                label: isZh ? '搜索项目' : 'Search Projects',
+                keys: config.keyBindings['project_search'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
               const SizedBox(height: 16),
 
               _sectionHeader(Icons.gesture, isZh ? '画布' : 'Canvas', scheme),
@@ -183,64 +269,126 @@ class _KeybindingDialogState extends State<_KeybindingDialog> {
 
               ListTile(
                 dense: true,
-                title: Text(isZh ? '拖动画布按键' : 'Pan Canvas Button', style: TextStyle(color: clr, fontSize: 13)),
+                title: Text(
+                  isZh ? '拖动画布按键' : 'Pan Canvas Button',
+                  style: TextStyle(color: clr, fontSize: 13),
+                ),
                 subtitle: Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: SegmentedButton<String>(
                     segments: [
-                      ButtonSegment(value: 'left', label: Text(isZh ? '左键' : 'Left')),
-                      ButtonSegment(value: 'right', label: Text(isZh ? '右键' : 'Right')),
+                      ButtonSegment(
+                        value: 'left',
+                        label: Text(isZh ? '左键' : 'Left'),
+                      ),
+                      ButtonSegment(
+                        value: 'right',
+                        label: Text(isZh ? '右键' : 'Right'),
+                      ),
                     ],
                     selected: {panButton.first},
                     onSelectionChanged: (v) {
                       final newPan = v.first;
                       final newSelect = newPan == 'left' ? 'right' : 'left';
-                      state.updateConfig((c) => c
-                        ..keyBindings['canvas_pan_button'] = [newPan]
-                        ..keyBindings['canvas_select_button'] = [newSelect]);
+                      state.updateConfig(
+                        (c) => c
+                          ..keyBindings['canvas_pan_button'] = [newPan]
+                          ..keyBindings['canvas_select_button'] = [newSelect],
+                      );
                       setState(() {});
                     },
-                    style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                    style: const ButtonStyle(
+                      visualDensity: VisualDensity.compact,
+                    ),
                   ),
                 ),
               ),
 
               ListTile(
                 dense: true,
-                title: Text(isZh ? '框选按键' : 'Box Select Button', style: TextStyle(color: clr, fontSize: 13)),
+                title: Text(
+                  isZh ? '框选按键' : 'Box Select Button',
+                  style: TextStyle(color: clr, fontSize: 13),
+                ),
                 subtitle: Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: SegmentedButton<String>(
                     segments: [
-                      ButtonSegment(value: 'left', label: Text(isZh ? '左键' : 'Left')),
-                      ButtonSegment(value: 'right', label: Text(isZh ? '右键' : 'Right')),
+                      ButtonSegment(
+                        value: 'left',
+                        label: Text(isZh ? '左键' : 'Left'),
+                      ),
+                      ButtonSegment(
+                        value: 'right',
+                        label: Text(isZh ? '右键' : 'Right'),
+                      ),
                     ],
                     selected: {selectButton.first},
                     onSelectionChanged: (v) {
                       final newSelect = v.first;
                       final newPan = newSelect == 'left' ? 'right' : 'left';
-                      state.updateConfig((c) => c
-                        ..keyBindings['canvas_select_button'] = [newSelect]
-                        ..keyBindings['canvas_pan_button'] = [newPan]);
+                      state.updateConfig(
+                        (c) => c
+                          ..keyBindings['canvas_select_button'] = [newSelect]
+                          ..keyBindings['canvas_pan_button'] = [newPan],
+                      );
                       setState(() {});
                     },
-                    style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                    style: const ButtonStyle(
+                      visualDensity: VisualDensity.compact,
+                    ),
                   ),
                 ),
               ),
 
-              _shortcutTile(actionId: 'canvas_select_all', label: isZh ? '选中所有元素' : 'Select All Elements',
-                  keys: config.keyBindings['canvas_select_all'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'canvas_delete_selected', label: isZh ? '删除选中元素' : 'Delete Selected Elements',
-                  keys: config.keyBindings['canvas_delete_selected'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'canvas_undo', label: isZh ? '撤销（默认 Ctrl+Z）' : 'Undo (Ctrl+Z)',
-                  keys: config.keyBindings['canvas_undo'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'canvas_redo', label: isZh ? '重做（默认 Ctrl+Shift+Z）' : 'Redo (Ctrl+Shift+Z)',
-                  keys: config.keyBindings['canvas_redo'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'canvas_probe_mode', label: isZh ? '探测模式（未配置）' : 'Probe Mode (unset)',
-                  keys: config.keyBindings['canvas_probe_mode'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
-              _shortcutTile(actionId: 'canvas_hide_logic', label: isZh ? '隐藏逻辑部分（未配置）' : 'Hide Logic (unset)',
-                  keys: config.keyBindings['canvas_hide_logic'] ?? [], scheme: scheme, clr: clr, conflicts: conflicts),
+              _shortcutTile(
+                actionId: 'canvas_select_all',
+                label: isZh ? '选中所有元素' : 'Select All Elements',
+                keys: config.keyBindings['canvas_select_all'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
+              _shortcutTile(
+                actionId: 'canvas_delete_selected',
+                label: isZh ? '删除选中元素' : 'Delete Selected Elements',
+                keys: config.keyBindings['canvas_delete_selected'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
+              _shortcutTile(
+                actionId: 'canvas_undo',
+                label: isZh ? '撤销（默认 Ctrl+Z）' : 'Undo (Ctrl+Z)',
+                keys: config.keyBindings['canvas_undo'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
+              _shortcutTile(
+                actionId: 'canvas_redo',
+                label: isZh ? '重做（默认 Ctrl+Shift+Z）' : 'Redo (Ctrl+Shift+Z)',
+                keys: config.keyBindings['canvas_redo'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
+              _shortcutTile(
+                actionId: 'canvas_probe_mode',
+                label: isZh ? '探测模式（未配置）' : 'Probe Mode (unset)',
+                keys: config.keyBindings['canvas_probe_mode'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
+              _shortcutTile(
+                actionId: 'canvas_hide_logic',
+                label: isZh ? '隐藏逻辑部分（未配置）' : 'Hide Logic (unset)',
+                keys: config.keyBindings['canvas_hide_logic'] ?? [],
+                scheme: scheme,
+                clr: clr,
+                conflicts: conflicts,
+              ),
             ],
           ),
         ),
@@ -257,11 +405,20 @@ class _KeybindingDialogState extends State<_KeybindingDialog> {
   Widget _sectionHeader(IconData icon, String title, ColorScheme scheme) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(children: [
-        Icon(icon, size: 18, color: scheme.primary),
-        const SizedBox(width: 8),
-        Text(title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: scheme.onSurface)),
-      ]),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: scheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: scheme.onSurface,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -278,36 +435,49 @@ class _KeybindingDialogState extends State<_KeybindingDialog> {
       dense: true,
       visualDensity: VisualDensity.compact,
       contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-      title: Text(label, style: TextStyle(
-        color: hasConflict ? scheme.error : clr,
-        fontSize: 12,
-        fontWeight: hasConflict ? FontWeight.w600 : null,
-      )),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: hasConflict ? scheme.error : clr,
+          fontSize: 12,
+          fontWeight: hasConflict ? FontWeight.w600 : null,
+        ),
+      ),
       subtitle: Text(
         hasConflict
             ? '${_formatBinding(keys)}  ${isZh ? "(冲突!)" : "(conflict!)"}'
             : _formatBinding(keys),
-        style: TextStyle(fontSize: 11, color: hasConflict ? scheme.error : scheme.outline),
+        style: TextStyle(
+          fontSize: 11,
+          color: hasConflict ? scheme.error : scheme.outline,
+        ),
       ),
-      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-        if (keys.isNotEmpty)
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (keys.isNotEmpty)
+            IconButton(
+              icon: Icon(Icons.close, size: 14, color: scheme.outline),
+              tooltip: isZh ? '清空' : 'Clear',
+              onPressed: () => _clearBinding(actionId),
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              padding: EdgeInsets.zero,
+            ),
           IconButton(
-            icon: Icon(Icons.close, size: 14, color: scheme.outline),
-            tooltip: isZh ? '清空' : 'Clear',
-            onPressed: () => _clearBinding(actionId),
+            icon: Icon(
+              Icons.edit,
+              size: 14,
+              color: hasConflict ? scheme.error : scheme.outline,
+            ),
+            tooltip: isZh ? '编辑' : 'Edit',
+            onPressed: () => _editBinding(actionId, label),
             visualDensity: VisualDensity.compact,
             constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             padding: EdgeInsets.zero,
           ),
-        IconButton(
-          icon: Icon(Icons.edit, size: 14, color: hasConflict ? scheme.error : scheme.outline),
-          tooltip: isZh ? '编辑' : 'Edit',
-          onPressed: () => _editBinding(actionId, label),
-          visualDensity: VisualDensity.compact,
-          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-          padding: EdgeInsets.zero,
-        ),
-      ]),
+        ],
+      ),
       onTap: () => _editBinding(actionId, label),
     );
   }
@@ -384,10 +554,17 @@ class _KeyCaptureDialogState extends State<_KeyCaptureDialog> {
   }
 
   String _keyLabel(LogicalKeyboardKey key) {
-    if (key == LogicalKeyboardKey.controlLeft || key == LogicalKeyboardKey.controlRight) return 'Control';
-    if (key == LogicalKeyboardKey.shiftLeft || key == LogicalKeyboardKey.shiftRight) return 'Shift';
-    if (key == LogicalKeyboardKey.altLeft || key == LogicalKeyboardKey.altRight) return 'Alt';
-    if (key == LogicalKeyboardKey.metaLeft || key == LogicalKeyboardKey.metaRight) return 'Meta';
+    if (key == LogicalKeyboardKey.controlLeft ||
+        key == LogicalKeyboardKey.controlRight)
+      return 'Control';
+    if (key == LogicalKeyboardKey.shiftLeft ||
+        key == LogicalKeyboardKey.shiftRight)
+      return 'Shift';
+    if (key == LogicalKeyboardKey.altLeft || key == LogicalKeyboardKey.altRight)
+      return 'Alt';
+    if (key == LogicalKeyboardKey.metaLeft ||
+        key == LogicalKeyboardKey.metaRight)
+      return 'Meta';
     return key.keyLabel.isNotEmpty ? key.keyLabel : key.debugName ?? '?';
   }
 
@@ -437,14 +614,20 @@ class _KeyCaptureDialogState extends State<_KeyCaptureDialog> {
     final scheme = Theme.of(context).colorScheme;
     final hasConflict = _conflictWith != null;
 
-    return AlertDialog(
-      title: Text(widget.isZh ? '按下快捷键...' : 'Press shortcut...', style: TextStyle(fontSize: 16, color: scheme.onSurface)),
+    return AppAlertDialog(
+      title: Text(
+        widget.isZh ? '按下快捷键...' : 'Press shortcut...',
+        style: TextStyle(fontSize: 16, color: scheme.onSurface),
+      ),
       content: SizedBox(
         width: 300,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(widget.actionLabel, style: TextStyle(fontSize: 13, color: scheme.outline)),
+            Text(
+              widget.actionLabel,
+              style: TextStyle(fontSize: 13, color: scheme.outline),
+            ),
             const SizedBox(height: 16),
             KeyboardListener(
               focusNode: _focusNode,
@@ -454,7 +637,9 @@ class _KeyCaptureDialogState extends State<_KeyCaptureDialog> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  border: Border.all(color: hasConflict ? scheme.error : scheme.outlineVariant),
+                  border: Border.all(
+                    color: hasConflict ? scheme.error : scheme.outlineVariant,
+                  ),
                   borderRadius: BorderRadius.circular(8),
                   color: hasConflict
                       ? scheme.errorContainer.withAlpha(60)
@@ -470,31 +655,55 @@ class _KeyCaptureDialogState extends State<_KeyCaptureDialog> {
                         spacing: 6,
                         runSpacing: 6,
                         alignment: WrapAlignment.center,
-                        children: _capturedLabels.map((label) => Chip(
-                          label: Text(label, style: TextStyle(fontSize: 12,
-                              color: hasConflict ? scheme.error : null)),
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          side: hasConflict ? BorderSide(color: scheme.error) : null,
-                        )).toList(),
+                        children: _capturedLabels
+                            .map(
+                              (label) => Chip(
+                                label: Text(
+                                  label,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: hasConflict ? scheme.error : null,
+                                  ),
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                side: hasConflict
+                                    ? BorderSide(color: scheme.error)
+                                    : null,
+                              ),
+                            )
+                            .toList(),
                       ),
               ),
             ),
             if (_tooMany) ...[
               const SizedBox(height: 8),
-              Text(widget.isZh ? '最多5个按键' : 'Max 5 keys',
-                style: TextStyle(fontSize: 12, color: scheme.error)),
+              Text(
+                widget.isZh ? '最多5个按键' : 'Max 5 keys',
+                style: TextStyle(fontSize: 12, color: scheme.error),
+              ),
             ],
             if (hasConflict) ...[
               const SizedBox(height: 8),
-              Row(children: [
-                Icon(Icons.warning_amber_rounded, size: 14, color: scheme.error),
-                const SizedBox(width: 4),
-                Expanded(child: Text(
-                  widget.isZh ? '与「$_conflictWith」冲突' : 'Conflicts with "$_conflictWith"',
-                  style: TextStyle(fontSize: 12, color: scheme.error),
-                )),
-              ]),
+              Row(
+                children: [
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    size: 14,
+                    color: scheme.error,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      widget.isZh
+                          ? '与「$_conflictWith」冲突'
+                          : 'Conflicts with "$_conflictWith"',
+                      style: TextStyle(fontSize: 12, color: scheme.error),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ],
         ),
@@ -509,7 +718,9 @@ class _KeyCaptureDialogState extends State<_KeyCaptureDialog> {
           child: Text(widget.isZh ? '取消' : 'Cancel'),
         ),
         FilledButton(
-          onPressed: (_capturedLabels.isEmpty || hasConflict) ? null : () => Navigator.pop(context, _capturedLabels),
+          onPressed: (_capturedLabels.isEmpty || hasConflict)
+              ? null
+              : () => Navigator.pop(context, _capturedLabels),
           child: Text(widget.isZh ? '确认' : 'Confirm'),
         ),
       ],

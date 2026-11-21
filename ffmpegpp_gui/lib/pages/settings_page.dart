@@ -23,8 +23,10 @@ import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 // ColorOS 流体云进度开关的能力判定（Android 专用，见 ColorOsFluidCloud.kt）
 import '../services/android_platform.dart';
+import '../services/diagnostic_trace.dart';
 import '../services/directory_picker.dart';
 import '../services/ffmpeg_installer.dart';
+import '../services/progress_feature_availability.dart';
 // 高刷新率开关的即时生效（Android 专用，见 services/refresh_rate.dart）
 import '../services/refresh_rate.dart';
 import '../services/shell_open.dart';
@@ -35,6 +37,7 @@ import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_text_scale.dart';
 import '../theme/settings_typography.dart';
+import '../widgets/app_alert_dialog.dart';
 import '../widgets/app_card.dart';
 import '../widgets/app_slider.dart';
 import '../widgets/font_picker.dart';
@@ -435,7 +438,11 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       hits.sort((a, b) {
         final byScore = b.$2.compareTo(a.$2);
-        return byScore != 0 ? byScore : a.$1.id.compareTo(b.$1.id);
+        return byScore != 0
+            ? byScore
+            : section.cards
+                  .indexOf(a.$1)
+                  .compareTo(section.cards.indexOf(b.$1));
       });
       groups.add((section, [for (final hit in hits) hit.$1], hits.first.$2));
     }
@@ -681,8 +688,10 @@ class _SettingsPageState extends State<SettingsPage> {
   double get _sectionNavRowHeight =>
       math.max(40, MediaQuery.textScalerOf(context).scale(12.5) * 1.4 + 18);
 
+  // Desktop, mobile and search share this order: general preferences first,
+  // feature-specific options next, then diagnostics, maintenance and About.
+  // Within each section, show common controls before overrides and fine tuning.
   static final List<_SectionDef> _sections = [
-    // 「通用」收纳不属于视觉外观的全局项（语言），与「外观」解耦。
     _SectionDef(
       id: 'general',
       title: (s) => s.secGeneral,
@@ -712,8 +721,6 @@ class _SettingsPageState extends State<SettingsPage> {
       title: (s) => s.secAppearance,
       icon: Icons.palette_outlined,
       cards: [
-        // 「外观」原为单张巨型「主题」卡（模式+主题色+背景+样式+画布 全塞一起），
-        // 现按关注点拆成 4 张分层卡片，各自独立可搜索、移动端不再长滑。
         _CardDef(
           id: 'theme',
           title: (s) => s.cardTheme,
@@ -759,80 +766,113 @@ class _SettingsPageState extends State<SettingsPage> {
           build: _buildBackgroundCard,
         ),
         _CardDef(
+          id: 'font',
+          title: (s) => s.font,
+          icon: Icons.text_fields,
+          keywords: [
+            '字体',
+            '字号',
+            '字重',
+            'font',
+            'size',
+            'weight',
+            'typeface',
+            '导入',
+            'import',
+            '大小',
+          ],
+          build: _buildFont,
+        ),
+        _CardDef(
           id: 'surfaceStyle',
-          title: (s) => s.styleLabel,
+          title: (s) => s.isZh ? '界面材质与动效' : 'Surfaces & effects',
           icon: Icons.style_outlined,
           keywords: [
-            '样式', 'style', '卡片', 'card', '液态玻璃', 'liquid',
-            '玻璃', 'glass', '模糊', 'blur', '灰色', 'gray',
-            '底部', 'bottom', 'nav', '导航', '药丸', 'pill', '表面', 'surface',
-            '菜单', 'menu', '侧边栏', 'sidebar', '顶栏', 'topbar', '顶部菜单',
-            '毛玻璃', 'frosted', '透明度', '不透明度', 'opacity', 'alpha',
-            '下拉菜单', 'dropdown', 'highlight glass',
-            '边框', '描边', '线条', 'border', 'outline', 'stroke', '颜色', '宽度',
-            '跟随主题色', 'follow', 'gpu', '实验',
-            // 拆卡后的三张卡标题也要能被搜到（预设 / 玻璃与材质 / 特效）
-            '预设', 'preset', '方案', '材质', 'material',
-            '粒子', 'particle', '特效', 'effect', '动效', '动画',
+            '样式',
+            'style',
+            '预设',
+            'preset',
+            '材质',
+            'material',
+            '表面',
+            'surface',
+            '卡片',
+            'card',
+            '弹窗',
+            'popup',
+            '面板',
+            'panel',
+            '下拉菜单',
+            'dropdown',
+            '液态玻璃',
+            'liquid',
+            '毛玻璃',
+            'frosted',
+            '玻璃细节',
+            'glass details',
+            '模糊度',
+            'blur',
+            '通透度',
+            'clarity',
+            '高光',
+            'highlight',
+            '光斑',
+            '边缘光',
+            'edge light',
+            '灰色',
+            'gray',
+            '边框',
+            '描边',
+            'border',
+            'outline',
+            '跟随主题色',
+            'theme tint',
+            '彗星拖尾',
+            '粒子',
+            '动效',
+            '特效',
+            'particle',
+            'comet',
+            'effects',
           ],
           build: _buildSurfaceStyleCard,
         ),
-        const _CardDef(
-          id: 'selectionIndicatorStyle',
-          title: _selectionIndicatorTitle,
-          icon: Icons.highlight_alt_outlined,
+        _CardDef(
+          id: 'navigationStyle',
+          title: (s) => s.isZh ? '导航与选中样式' : 'Navigation & selection',
+          icon: Icons.view_sidebar_outlined,
           keywords: [
+            '菜单样式',
+            'menu style',
+            '导航',
+            'navigation',
+            '侧边栏',
+            'sidebar',
+            '底部',
+            'bottom',
+            '顶栏',
+            'top bar',
+            '药丸',
+            'pill',
+            '位置',
+            'placement',
+            '自动收起',
+            'auto-hide',
             '选中高亮',
             '选中指示器',
+            '选中遮罩',
             '选中框',
             '导航遮罩',
-            '主题色',
-            '液态玻璃',
-            '毛玻璃',
-            '描边',
             'selection mask',
             'selection indicator',
-            'navigation highlight',
+            'selection highlight',
             'theme accent',
             'liquid glass',
             'frosted glass',
             'outline',
           ],
-          build: _buildSelectionIndicatorStyle,
+          build: _buildNavigationAppearance,
         ),
-        // 玻璃细节：桌面端独立成卡（右侧面板没有三级页机制，一屏平铺得下）。
-        // 移动端已下沉为「外观 → 样式 → 玻璃细节」三级页 —— 用户要求
-        // 「玻璃细节放到样式里面（就是玻璃细节成三级菜单）」。
-        if (!isMobilePlatform)
-          _CardDef(
-            id: 'glassDetail',
-            title: (s) => s.isZh ? '玻璃细节' : 'Glass details',
-            icon: Icons.blur_on_outlined,
-            keywords: [
-              '玻璃',
-              'glass',
-              '模糊',
-              'blur',
-              '模糊度',
-              '通透',
-              'clarity',
-              '透明',
-              '高光',
-              'highlight',
-              'specular',
-              '光斑',
-              '位置',
-              'position',
-              '边缘光',
-              'edge',
-              'rim',
-              '描边',
-              '细节',
-              'detail',
-              '微调',
-            ],
-            build: _buildGlassDetailCard,
-          ),
         _CardDef(
           id: 'nodeEditorStyle',
           title: (s) => s.nodeEditorStyleLabel,
@@ -851,24 +891,6 @@ class _SettingsPageState extends State<SettingsPage> {
             'traditional', 'list',
           ],
           build: _buildNodeEditorStyleCard,
-        ),
-        _CardDef(
-          id: 'font',
-          title: (s) => s.font,
-          icon: Icons.text_fields,
-          keywords: [
-            '字体',
-            '字号',
-            '字重',
-            'font',
-            'size',
-            'weight',
-            'typeface',
-            '导入',
-            'import',
-            '大小',
-          ],
-          build: _buildFont,
         ),
       ],
     ),
@@ -1182,6 +1204,11 @@ class _SettingsPageState extends State<SettingsPage> {
             'debug',
             'log',
             'logs',
+            '非常详细的日志',
+            '详细日志',
+            '探针',
+            'trace',
+            'very verbose logs',
             'verbose',
             'diagnostic',
             '保存',
@@ -1361,6 +1388,7 @@ class _SettingsPageState extends State<SettingsPage> {
         state.config.highRefreshRate,
         state.config.noPreload,
         state.config.debugMode,
+        state.config.veryVerboseLogs,
         state.config.saveLogs,
         state.config.logSavePath,
         state.config.autoCheckUpdate,
@@ -1420,7 +1448,10 @@ class _SettingsPageState extends State<SettingsPage> {
                       top: MobileUi.pageTopPadding(context),
                       bottom: MediaQuery.viewInsetsOf(context).bottom > 0
                           ? 0
-                          : MobileUi.navClearanceFor(MobileNavPlacementScope.of(context)),
+                          : MobileUi.navClearanceFor(
+                              MobileNavPlacementScope.of(context),
+                              context: context,
+                            ),
                     ),
                     child: _emptyState(scheme, s),
                   )
@@ -1438,6 +1469,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       0,
                       MobileUi.navClearanceFor(
                         MobileNavPlacementScope.of(context),
+                        context: context,
                       ),
                     ),
                     children: [
@@ -1594,7 +1626,9 @@ class _SettingsPageState extends State<SettingsPage> {
                         padding: const EdgeInsets.only(bottom: 4),
                         child: Tooltip(
                           message: _sectionNavCollapsed
-                              ? (s.isZh ? '展开设置导航' : 'Expand settings navigation')
+                              ? (s.isZh
+                                    ? '展开设置导航'
+                                    : 'Expand settings navigation')
                               : (s.isZh
                                     ? '收起设置导航'
                                     : 'Collapse settings navigation'),
@@ -1602,7 +1636,8 @@ class _SettingsPageState extends State<SettingsPage> {
                             key: const ValueKey('settings_section_nav_toggle'),
                             borderRadius: BorderRadius.circular(12),
                             onTap: () => setState(
-                              () => _sectionNavCollapsed = !_sectionNavCollapsed,
+                              () =>
+                                  _sectionNavCollapsed = !_sectionNavCollapsed,
                             ),
                             child: Container(
                               height: _sectionNavRowHeight,
@@ -2343,7 +2378,11 @@ class _SettingsPageState extends State<SettingsPage> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.search_off, size: 44, color: scheme.outline.withAlpha(140)),
+          Icon(
+            Icons.search_off,
+            size: 44,
+            color: scheme.outline.withAlpha(140),
+          ),
           const SizedBox(height: 12),
           Text(
             s.setNoMatch,
@@ -2791,6 +2830,7 @@ class _SettingSlider extends StatefulWidget {
   final bool liveCommit;
 
   const _SettingSlider({
+    super.key,
     required this.value,
     required this.min,
     required this.max,
@@ -2939,8 +2979,12 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
           OptionMenuBar<String>(
             value: cfg.mobileTheme,
             triggerHeight: 44,
-            items: [OptionItem('follow', s.isZh ? '跟随现有主题' : 'Follow existing theme'), const OptionItem('miuix', 'ZeroUI / Miuix-inspired')],
-            onChanged: (value) => state.updateConfig((c) => c..mobileTheme = value),
+            items: [
+              OptionItem('follow', s.isZh ? '跟随现有主题' : 'Follow existing theme'),
+              const OptionItem('miuix', 'ZeroUI / Miuix-inspired'),
+            ],
+            onChanged: (value) =>
+                state.updateConfig((c) => c..mobileTheme = value),
           ),
         ]),
         const SizedBox(height: 8),
@@ -3121,73 +3165,97 @@ Widget _buildBackgroundCard(BuildContext ctx, AppState state) {
   ]);
 }
 
-/// 「外观 → 表面样式」二级页。
-///
-/// **按主题拆成 4 张卡**（用户反馈「二级菜单卡片给我分开，按主题分开不要合并到
-/// 一块」——此前 预设 / 表面样式 / 面板玻璃 / 开关们 / 边框 / 粒子 全挤在同一张卡里，
-/// 找不到东西）：
-/// ① 样式预设（整套外观一键切换）
-/// ② 表面样式（卡片 / 菜单 / 底部菜单栏 / 顶部药丸，逐项调 + 模糊度）
-/// ③ 玻璃与材质（面板玻璃 / 玻璃底色 / 设置卡片玻璃 / GPU / 添加边框）
-/// ④ 特效（滑块粒子）
-///
-/// 返回 Column 是安全的：桌面端本函数被塞进 MasonryGrid 的单元格里，一个 Column
-/// 就等价于「同一列的 4 张卡」，MasonryGrid 不会再包一层 AppCard（不会套娃）；
-/// 移动端二级页把它放进 ListView，同样是 4 张独立的卡。
+/// General surface controls, per-component overrides and fine tuning.
 Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
   final cfg = state.config;
   final s = AppStrings.of(cfg.language);
   final zh = s.isZh;
   final scheme = Theme.of(ctx).colorScheme;
-  final clr = scheme.onSurface;
-
-  // 只有真的有表面样式选了「模糊」，才需要那颗模糊度滑块（见下）。
-  final bool anyBlur =
-      cfg.cardStyle == SurfaceStyle.blur ||
-      cfg.navStyle == SurfaceStyle.blur ||
-      cfg.pillStyle == SurfaceStyle.blur ||
-      (!isMobilePlatform && cfg.menuStyle == SurfaceStyle.blur);
-
-  // 二级页也「一主题一张卡」。
-  //
-  // 口径变更史（改前必读）：**一级菜单**要求「一个分区一张卡」（整合成一张），
-  // **二级页**反过来 —— 用户原话「你设置界面分的很好，但是二级菜单比如样式界面
-  // (样式预设与表面样式等等)没有进行分开，而是集中在一个卡片内」。所以本页返回
-  // **4 张独立卡**：样式预设 / 表面样式 / 玻璃与材质 / 特效，各自带自己的卡标题。
-  // 桌面端这个返回值被放进 MasonryGrid 单元格，所以**绝不能在外面再包 AppCard**。
   return Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
+    spacing: 8,
     children: [
-      // ① 样式预设
       _glass(
         ctx,
         state,
         zh ? '样式预设' : 'Style presets',
         _buildStylePresets(ctx, state),
       ),
-      const SizedBox(height: 8),
-
-      // ② 表面样式
-      _glass(ctx, state, zh ? '表面样式' : 'Surface style', [
+      _glass(ctx, state, zh ? '卡片与弹窗' : 'Cards and popups', [
+        _styleRow(
+          ctx,
+          icon: Icons.view_carousel_outlined,
+          label: s.cardStyleLabel,
+          scope: s.cardStyleScope,
+          value: cfg.cardStyle,
+          onSelected: (v) => state.updateConfig((c) => c..cardStyle = v),
+        ),
+        _optionRow(
+          ctx,
+          icon: Icons.dashboard_customize_outlined,
+          label: zh ? '设置卡片样式' : 'Settings card style',
+          scope: zh ? '覆盖设置页的卡片样式' : 'Overrides the card style in Settings',
+          value: cfg.settingsGlassMode,
+          items: [
+            OptionItem(
+              'follow',
+              zh ? '跟随卡片样式' : 'Follow card style',
+              icon: Icons.link,
+            ),
+            OptionItem(
+              'frosted',
+              zh ? '毛玻璃' : 'Frosted glass',
+              icon: Icons.blur_on_outlined,
+            ),
+            OptionItem(
+              'solid',
+              zh ? '主题色实心' : 'Solid theme color',
+              icon: Icons.format_color_fill,
+            ),
+          ],
+          onSelected: (v) =>
+              state.updateConfig((c) => c..settingsGlassMode = v),
+        ),
+        _optionRow(
+          ctx,
+          icon: Icons.blur_on_outlined,
+          label: zh ? '弹窗与面板样式' : 'Popup and panel style',
+          scope: zh
+              ? '应用于遵循全局样式的弹窗和面板'
+              : 'Applies to popups and panels using the global style',
+          value: switch (cfg.glassEffect) {
+            'blur' || 'none' => cfg.glassEffect,
+            _ => 'liquid',
+          },
+          items: [
+            OptionItem(
+              'liquid',
+              s.surfaceStyleLiquid,
+              icon: Icons.water_drop_outlined,
+            ),
+            OptionItem('blur', s.glassBlur, icon: Icons.blur_on_outlined),
+            OptionItem(
+              'none',
+              s.surfaceStyleTheme,
+              icon: Icons.format_color_fill,
+            ),
+          ],
+          onSelected: (v) => state.updateConfig((c) => c..glassEffect = v),
+        ),
         _optionRow(
           ctx,
           icon: Icons.arrow_drop_down_circle_outlined,
-          label: zh ? '下拉菜单外观' : 'Dropdown appearance',
-          scope: zh
-              ? '统一应用于桌面端和移动端的下拉菜单'
-              : 'Applies to dropdown menus on desktop and mobile',
+          label: zh ? '下拉菜单样式' : 'Dropdown style',
           value: cfg.dropdownAppearance,
           items: [
             OptionItem(
               'theme',
-              // 「当前外观」太含糊：这一档的实质是「不透明、不模糊、只跟主题色」，
-              // 标签直接写清楚，免得用户选了之后发现「说好的玻璃呢」。
               zh ? '跟随主题（不透明）' : 'Follow theme (opaque)',
               icon: Icons.palette_outlined,
             ),
             OptionItem(
               'liquid',
-              zh ? '液态玻璃' : 'Liquid glass',
+              s.surfaceStyleLiquid,
               icon: Icons.water_drop_outlined,
             ),
             OptionItem(
@@ -3209,417 +3277,77 @@ Widget _buildSurfaceStyleCard(BuildContext ctx, AppState state) {
           onSelected: (v) =>
               state.updateConfig((c) => c..dropdownAppearance = v),
         ),
-        // 布局统一：左 = 图标 + 文字（含作用范围说明），右 = 下拉菜单（展开动画）
-        _styleRow(
-          ctx,
-          icon: Icons.view_carousel_outlined,
-          label: s.cardStyleLabel,
-          scope: s.cardStyleScope,
-          value: cfg.cardStyle,
-          onSelected: (v) => state.updateConfig((c) => c..cardStyle = v),
-        ),
-        // 桌面端：左侧菜单栏 + 各页顶部菜单栏的表面样式（原来固定液态玻璃）
-        if (!isMobilePlatform)
-          _styleRow(
-            ctx,
-            icon: Icons.view_sidebar_outlined,
-            label: s.isZh ? '菜单样式' : 'Menu Style',
-            scope: s.isZh
-                ? '作用于 左侧菜单栏 和 各页顶部菜单栏（仅桌面端）'
-                : 'Applies to the sidebar and page top bars (desktop only)',
-            value: cfg.menuStyle,
-            onSelected: (v) => state.updateConfig((c) => c..menuStyle = v),
-          ),
-        if (isMobilePlatform) ...[
-          _styleRow(
-            ctx,
-            icon: Icons.menu,
-            label: s.navStyleLabel,
-            value: cfg.navStyle,
-            onSelected: (v) => state.updateConfig((c) => c..navStyle = v),
-          ),
-          // 菜单栏位置（仅移动端）：自动（宽屏 → 左侧竖排导轨）/ 底部 / 左侧 / 右侧。
-          // 「自动」按屏幕横纵比判定，判定逻辑全应用只有一份
-          // （platform/app_platform.dart 的 resolveMobileNavPlacement），
-          // 这里只负责把用户的选择写进配置。
-          _optionRow(
-            ctx,
-            icon: Icons.vertical_split_outlined,
-            label: s.navPlacementLabel,
-            scope: s.navPlacementScope,
-            value: cfg.mobileNavPlacement,
-            items: [
-              OptionItem('auto', s.navPlacementAuto, icon: Icons.auto_mode),
-              OptionItem(
-                'bottom',
-                s.navPlacementBottom,
-                icon: Icons.align_vertical_bottom,
-              ),
-              OptionItem(
-                'left',
-                s.navPlacementLeft,
-                icon: Icons.align_horizontal_left,
-              ),
-              OptionItem(
-                'right',
-                s.navPlacementRight,
-                icon: Icons.align_horizontal_right,
-              ),
-            ],
-            onSelected: (v) =>
-                state.updateConfig((c) => c..mobileNavPlacement = v),
-          ),
-          // 底部动作按钮所在侧（仅移动端）：与菜单栏位置解耦 —— 典型场景
-          // 「AI 提供商详情页」底部胶囊切换栏与「获取模型 / 添加模型」两颗
-          // 圆形动作按钮分开摆放，本项只决定这两颗按钮靠左还是靠右。
-          _optionRow(
-            ctx,
-            icon: Icons.swap_horiz,
-            label: s.bottomActionSideLabel,
-            scope: s.bottomActionSideScope,
-            value: cfg.mobileBottomActionSide,
-            items: [
-              OptionItem(
-                'left',
-                s.bottomActionSideLeft,
-                icon: Icons.align_horizontal_left,
-              ),
-              OptionItem(
-                'right',
-                s.bottomActionSideRight,
-                icon: Icons.align_horizontal_right,
-              ),
-            ],
-            onSelected: (v) =>
-                state.updateConfig((c) => c..mobileBottomActionSide = v),
-          ),
-          // 滑动自动收起（仅移动端 + 底部形态生效）：内容上滑收起菜单栏、
-          // 下滑展开；底部液态玻璃栏由 LiquidGlassMobileNav 动画收起，
-          // 内容区滚动监听仍由 app.dart 提供。
-          SwitchListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: Text(
-              zh ? '滑动时自动收起菜单栏' : 'Auto-hide nav bar on scroll',
-              style: TextStyle(fontSize: 13, color: clr),
-            ),
-            subtitle: Text(
-              zh
-                  ? '上滑收起、下滑展开；仅作用于底部菜单栏'
-                  : 'Swipe up to hide, swipe down to show; bottom nav only',
-              style: SettingsTypography.description.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            value: cfg.navAutoHide,
-            onChanged: (v) => state.updateConfig((c) => c..navAutoHide = v),
-          ),
-          _styleRow(
-            ctx,
-            icon: Icons.crop_landscape_outlined,
-            label: s.pillStyleLabel,
-            value: cfg.pillStyle,
-            onSelected: (v) => state.updateConfig((c) => c..pillStyle = v),
-          ),
-        ],
-        // ── 「模糊」样式的模糊度 ──
-        //
-        // 用户要求：「如果样式选了模糊，那么下面的滑块就要能调节它的模糊度」。
-        // 四个表面样式（卡片 / 侧边导轨 / 顶部药丸 / 面板）的 blur 分支都从同一个
-        // `glassBlur` 取 σ（AppCard / MobileNavRail / MobileGlassPill / GlassPanel），
-        // 所以这颗滑块直接绑 `glassBlur` 就对全部「模糊」表面生效。它与「玻璃细节 →
-        // 玻璃模糊度」是**同一个参数**，这里只是把它放到真正需要它的地方：
-        // 仅当确实有表面选了「模糊」时才出现，因此不会多出一个常年可见的重复项。
-        if (anyBlur) ...[
-          const SizedBox(height: 6),
-          _SettingSlider(
-            value: cfg.glassBlur,
-            min: 0,
-            max: 30,
-            divisions: 30,
-            // 拖动过程中就写回配置：模糊度改的是整块卡片的模糊程度，若松手才生效，
-            // 拖动时看着毫无变化，会被判定成「滑块坏了」（与字号滑块同一个坑）。
-            liveCommit: true,
-            label: (v) => '${zh ? '模糊度' : 'Blur'}: ${v.round()}',
-            labelStyle: TextStyle(color: clr, fontSize: 12),
-            onCommit: (v) => state.updateConfig((c) => c..glassBlur = v),
-          ),
-          Text(
-            zh
-                ? '即时作用于所有「模糊」表面（卡片 / 菜单 / 底部菜单栏 / 药丸）；'
-                      '与「玻璃细节 → 玻璃模糊度」是同一个参数'
-                : 'Applies live to every "Blur" surface; same value as '
-                      'Glass details → Blur',
-            style: SettingsTypography.description.copyWith(
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
-        ],
       ]),
-      const SizedBox(height: 8),
-
-      // ③ 玻璃与材质
-      _glass(ctx, state, zh ? '玻璃与材质' : 'Glass & material', [
-        // ── 玻璃与材质各项（面板玻璃 / 玻璃底色 / 设置卡片玻璃 / GPU / 边框）──
-        ..._buildGlassMaterialItems(ctx, state),
-
-        // ── 玻璃细节入口（放在卡末：下行导航行按惯例排最后）──
-        if (isMobilePlatform) ...[
-          const SizedBox(height: 6),
-          Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
+      _glass(ctx, state, zh ? '玻璃与边框' : 'Glass and borders', [
+        SwitchListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: Text(zh ? '玻璃使用主题色' : 'Tint glass with theme color'),
+          subtitle: Text(zh ? '关闭时使用表面灰' : 'Uses surface gray when off'),
+          value: cfg.glassFollowTheme,
+          onChanged: (v) => state.updateConfig((c) => c..glassFollowTheme = v),
+        ),
+        _SettingSlider(
+          key: const ValueKey('settings_surface_blur'),
+          value: cfg.glassBlur,
+          min: 0,
+          max: 30,
+          divisions: 30,
+          liveCommit: true,
+          label: (v) =>
+              '${zh ? '玻璃与表面模糊度' : 'Glass and surface blur'}: ${v.round()}',
+          labelStyle: TextStyle(color: scheme.onSurface, fontSize: 12),
+          onCommit: (v) => state.updateConfig((c) => c..glassBlur = v),
+        ),
+        Text(
+          zh ? '玻璃样式与模糊样式共用此强度。' : 'Shared by glass and blur styles.',
+          style: SettingsTypography.description.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 6),
+        ..._buildBorderItems(ctx, state),
+        if (isMobilePlatform)
           _subPageEntry(
             ctx,
             scheme,
-            clr,
+            scheme.onSurface,
             icon: Icons.blur_on_outlined,
             label: zh ? '玻璃细节' : 'Glass details',
-            scope: zh
-                ? '模糊度 / 通透度 / 高光强度与位置 / 边缘光'
-                : 'Blur, clarity, highlight position, edge light',
+            scope: zh ? '通透度、高光与边缘光' : 'Clarity, highlights and edge light',
             onTap: () => _pushSettingsSubPage(
               ctx,
               zh ? '玻璃细节' : 'Glass details',
               _buildGlassDetailCard,
             ),
+          )
+        else
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: Text(zh ? '玻璃细节' : 'Glass details'),
+            subtitle: Text(
+              zh ? '通透度、高光与边缘光' : 'Clarity, highlights and edge light',
+            ),
+            children: _glassDetailItems(ctx, state),
           ),
-        ],
       ]),
-      const SizedBox(height: 8),
-
-      // ④ 特效
-      _glass(ctx, state, zh ? '特效' : 'Effects', _buildEffectItems(ctx, state)),
+      _glass(ctx, state, zh ? '动效' : 'Effects', _buildEffectItems(ctx, state)),
     ],
   );
 }
 
-/// 「玻璃与材质」卡的内容：面板玻璃效果 + 玻璃底色遵循主题色 + 设置卡片玻璃 +
-/// GPU 液态玻璃 + 「添加边框」。
-///
-/// 2026-09-14 拆分：原先这些项与「样式预设 / 表面样式 / 滑块粒子」同挤在一张卡里
-/// （用户反馈「二级菜单卡片给我分开，按主题分开不要合并到一块」），现已按主题拆开 ——
-/// 本函数只保留「玻璃与材质」，预设与特效分别移到 [_buildStylePresets]（在
-/// [_buildSurfaceStyleCard] 里单独成卡）与 [_buildEffectItems]。
-///
-/// 用户反馈与对应做法：
-/// * 「液态玻璃效果选项放进样式里面」→ 原独立卡片并入「样式」二级页；
-/// * 「模糊强度不管用…下面三个选项也不管用，而且也没有存在的必要」→ 删除折射强度/镜面高光/
-///   模糊强度三个数值项（只作用于桌面 GPU shader 路径与模糊 σ，实测无感；σ 已回到各调用点常量）；
-/// * 「样式里面增加『添加边框选项』，开启后为所有卡片以及药丸添加有线的边框，可改颜色和宽度」→
-///   新增 borderEnabled/borderColor/borderWidth，由 widgets/liquid_glass_fallback.dart 的
-///   withConfigurableBorder 统一叠加到所有卡片与药丸上。
-///
-/// 移动端可用性修复（用户反馈「设置-样式 里的玻璃效果与下面三个开关无效」）：
-/// 这三个开关与「玻璃效果」此前只被桌面端的 [GlassPanel] 读取，而移动端的
-/// 卡片 / 药丸 / 侧边导轨走的是 AppCard、MobileGlassPill、MobileNavRail，
-/// 它们完全不读这些字段 —— 于是开关拨动后界面毫无变化。现在语义已经接通：
-/// * glassFollowTheme → AppCard / MobileGlassPill / MobileNavRail 的玻璃 tint；
-/// * settingsFrostedGlass → AppCard 的「液态玻璃改走扁平模糊」分支；
-/// * noCardGlass → AppCard 退回主题色实心；
-/// * glassEffect → GlassPanel 系面板（弹窗 / 命令页 / 日志页 / 节点编辑器等）。
-/// 底部栏使用 liquid_glass_tab_bar 模块的固定液态玻璃外观，不受上述细节参数控制。
-/// 三者默认均为 false，默认观感与修复前保持一致。
-List<Widget> _buildGlassMaterialItems(BuildContext ctx, AppState state) {
+List<Widget> _buildBorderItems(BuildContext ctx, AppState state) {
   final cfg = state.config;
-  final s = AppStrings.of(cfg.language);
   final scheme = Theme.of(ctx).colorScheme;
   final clr = scheme.onSurface;
-  final zh = s.isZh;
-
+  final zh = cfg.language == 'zh';
   return [
-    // ── 玻璃效果（非卡片表面：弹窗 / 面板；桌面端另含顶栏与侧边栏）──
-    //
-    // 与上面三行同构：左 = 图标 + 文字（+ 作用范围说明），右 = 固定宽度下拉。
-    // 旧实现把「液态玻璃 / 模糊 / 跟随主题色」三个选项硬塞进右侧 _kMenuWidth
-    // 宽的小框里，每项只剩约 40px，文字全部被截断、只剩三个图标 —— 即用户
-    // 反馈的「玻璃效果的具体设置项未显示」「字体都显示不全」。改成下拉后：
-    // 当前值在框内完整显示，展开列表里三个选项也都带完整文字。
-    Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        children: [
-          Icon(Icons.blur_on_outlined, size: 15, color: scheme.primary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  zh ? '面板玻璃效果' : 'Panel glass effect',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: clr, fontSize: 12),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  zh
-                      ? (isMobilePlatform
-                            ? '作用于 弹窗 / 面板'
-                            : '作用于 顶栏 / 侧边栏 / 弹窗菜单')
-                      : (isMobilePlatform
-                            ? 'Applies to popups & panels'
-                            : 'Applies to bars, sidebar and menus'),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: SettingsTypography.description.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: _kMenuWidth,
-            child: OptionMenuBar<String>(
-              expandable: true,
-              value: (cfg.glassEffect == 'blur' || cfg.glassEffect == 'none')
-                  ? cfg.glassEffect
-                  : 'liquid',
-              items: [
-                OptionItem(
-                  'liquid',
-                  s.surfaceStyleLiquid,
-                  icon: Icons.water_drop_outlined,
-                ),
-                OptionItem('blur', s.glassBlur, icon: Icons.blur_on_outlined),
-                OptionItem(
-                  'none',
-                  s.surfaceStyleTheme,
-                  icon: Icons.format_color_fill,
-                ),
-              ],
-              onChanged: (v) => state.updateConfig((c) => c..glassEffect = v),
-            ),
-          ),
-        ],
-      ),
-    ),
     SwitchListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
-      title: Text(
-        zh ? '玻璃底色遵循主题色' : 'Tint glass with theme color',
-        style: TextStyle(color: clr, fontSize: 13),
-      ),
+      title: Text(zh ? '添加边框' : 'Add borders'),
       subtitle: Text(
-        zh
-            ? '开启后玻璃/卡片底色使用协调后的主题色而不是表面灰'
-            : 'Use the harmonized accent color instead of surface gray',
-        style: SettingsTypography.description.copyWith(
-          color: scheme.onSurfaceVariant,
-        ),
-      ),
-      value: cfg.glassFollowTheme,
-      onChanged: (v) => state.updateConfig((c) => c..glassFollowTheme = v),
-    ),
-    // ── 设置卡片玻璃（三选一）──
-    // 去重：原先这里是「设置项以毛玻璃展示」+「不使用卡片玻璃效果」两个独立
-    // 开关，语义互斥又重复（用户反馈「下方选项中有重复项」）。现在合并为一个
-    // 三选一下拉，唯一数据源是 AppConfig.settingsGlassMode。
-    Padding(
-      padding: const EdgeInsets.only(top: 6, bottom: 10),
-      child: Row(
-        children: [
-          Icon(
-            Icons.dashboard_customize_outlined,
-            size: 15,
-            color: scheme.primary,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  zh ? '设置卡片玻璃' : 'Settings card glass',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: clr, fontSize: 12),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  zh ? '仅作用于设置页的卡片' : 'Applies to settings cards only',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: SettingsTypography.description.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: _kMenuWidth,
-            child: OptionMenuBar<String>(
-              expandable: true,
-              value: cfg.settingsGlassMode,
-              items: [
-                OptionItem(
-                  'follow',
-                  zh ? '跟随样式' : 'Follow',
-                  icon: Icons.link,
-                  subtitle: zh ? '与卡片样式一致' : 'Same as card style',
-                ),
-                OptionItem(
-                  'frosted',
-                  zh ? '毛玻璃' : 'Frosted',
-                  icon: Icons.blur_on_outlined,
-                  subtitle: zh ? '扁平模糊，长列表更易读' : 'Flat blur, easier to read',
-                ),
-                OptionItem(
-                  'solid',
-                  zh ? '主题色实心' : 'Solid',
-                  icon: Icons.format_color_fill,
-                  subtitle: zh ? '不透明，低配更流畅' : 'Opaque, smoother on low-end',
-                ),
-              ],
-              onChanged: (v) =>
-                  state.updateConfig((c) => c..settingsGlassMode = v),
-            ),
-          ),
-        ],
-      ),
-    ),
-    // PC 专属：桌面端的 shader backdrop 坐标系不成立（见 gpuGlassEnabledOf 注释），
-    // 开启后顶栏/侧栏/页签栏的玻璃里会出现被放大错位的壁纸片段，且内存最贵。
-    // 2026-09-18 起桌面端**无条件**走「模糊 + 倒角高光」回退，该开关不再生效，
-    // 因此这里改为不可交互的说明行 —— 留一个拨不动的开关等于骗用户。
-    // （配置字段 glassGpuOnDesktop 仍保留：JSON 兼容，且将来若修好坐标系可直接复用。）
-    if (!isMobilePlatform)
-      ListTile(
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        title: Text(
-          zh ? 'GPU 液态玻璃（桌面端不可用）' : 'GPU liquid glass (unavailable on desktop)',
-          style: TextStyle(color: scheme.outline, fontSize: 13),
-        ),
-        subtitle: Text(
-          zh
-              ? '桌面图形后端的 backdrop 坐标系与 shader 假设不一致，开启会导致玻璃里出现放大的壁纸碎片，已停用；当前使用「模糊 + 倒角高光」回退（背景即真实壁纸）'
-              : 'Shader backdrop coordinates are not reliable on desktop backends; disabled. Using blur + bevel highlight fallback instead.',
-          style: SettingsTypography.description.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
-        ),
-        trailing: Icon(Icons.block, size: 18, color: scheme.outline),
-      ),
-    const SizedBox(height: 4),
-    // ── 添加边框：所有卡片与药丸的实线描边 ──
-    SwitchListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      title: Text(
-        zh ? '添加边框' : 'Add borders',
-        style: TextStyle(color: clr, fontSize: 13),
-      ),
-      subtitle: Text(
-        zh
-            ? '为所有卡片与药丸添加实线边框，可自定义颜色与宽度'
-            : 'Draw a solid border around all cards and pills (custom color & width)',
-        style: SettingsTypography.description.copyWith(
-          color: scheme.onSurfaceVariant,
-        ),
+        zh ? '为卡片和药丸添加实线边框' : 'Draw solid borders around cards and pills',
       ),
       value: cfg.borderEnabled,
       onChanged: (v) => state.updateConfig((c) => c..borderEnabled = v),
@@ -4020,39 +3748,18 @@ List<Widget> _buildStylePresets(BuildContext ctx, AppState state) {
   ];
 }
 
+Widget _buildGlassDetailCard(BuildContext ctx, AppState state) => _glass(
+  ctx,
+  state,
+  state.config.language == 'zh' ? '玻璃细节' : 'Glass details',
+  _glassDetailItems(ctx, state),
+);
 
-/// 「玻璃细节」卡：模糊度 / 通透度 / 高光强度与位置 / 边缘光。
-///
-/// 用户反馈「玻璃效果需提供详细可调的设置项，包括玻璃模糊度、通透度、
-/// 高光强度与位置、边缘光等具体参数」。五项都接到全部玻璃渲染路径
-/// （见 widgets/liquid_glass_fallback.dart 的 GlassTuning）。
-Widget _buildGlassDetailCard(BuildContext ctx, AppState state) {
+List<Widget> _glassDetailItems(BuildContext ctx, AppState state) {
   final cfg = state.config;
-  final scheme = Theme.of(ctx).colorScheme;
-  final clr = scheme.onSurface;
+  final clr = Theme.of(ctx).colorScheme.onSurface;
   final zh = cfg.language == 'zh';
-  return _glass(ctx, state, zh ? '玻璃细节' : 'Glass details', [
-    Text(
-      zh
-          ? '作用于所有玻璃表面：卡片 / 底部菜单栏 / 顶部药丸 / 弹窗与面板'
-          : 'Applies to every glass surface: cards, bottom nav, pills, popups, panels',
-      style: SettingsTypography.description.copyWith(
-        color: scheme.onSurfaceVariant,
-      ),
-    ),
-    const SizedBox(height: 10),
-    _SettingSlider(
-      value: cfg.glassBlur,
-      min: 0,
-      max: 30,
-      divisions: 30,
-      // 拖动中就写回配置：模糊度的效果是「整块玻璃变糊/变清」，松手才生效时
-      // 拖动过程中看不出差别，会被判定成「滑块不管用」（与字号滑块同一个坑）。
-      liveCommit: true,
-      label: (v) => '${zh ? '玻璃模糊度' : 'Blur'}: ${v.round()}',
-      labelStyle: TextStyle(color: clr, fontSize: 12),
-      onCommit: (v) => state.updateConfig((c) => c..glassBlur = v),
-    ),
+  return [
     _SettingSlider(
       value: cfg.glassClarity,
       min: 0,
@@ -4108,7 +3815,7 @@ Widget _buildGlassDetailCard(BuildContext ctx, AppState state) {
         ),
         icon: const Icon(Icons.restart_alt, size: 15),
         label: Text(
-          zh ? '恢复默认' : 'Reset',
+          zh ? '重置玻璃参数' : 'Reset glass parameters',
           style: const TextStyle(fontSize: 12),
         ),
         style: TextButton.styleFrom(
@@ -4118,7 +3825,7 @@ Widget _buildGlassDetailCard(BuildContext ctx, AppState state) {
         ),
       ),
     ),
-  ]);
+  ];
 }
 
 /// 边框颜色选择：复用主题色的取色面板 [_CP]（只取第一个颜色）。
@@ -4491,74 +4198,130 @@ Widget _fontWeightPicker(
   );
 }
 
-String _selectionIndicatorTitle(AppStrings strings) =>
-    strings.isZh ? '选中遮罩' : 'Selection highlight';
-
-Widget _buildSelectionIndicatorStyle(BuildContext context, AppState state) {
-  final strings = AppStrings.of(state.config.language);
-  final title = _selectionIndicatorTitle(strings);
-  final scheme = Theme.of(context).colorScheme;
-  return _glass(context, state, title, [
-    Text(
-      strings.isZh
-          ? '适用范围：主导航、设置导航和分段选项；与菜单本身的材质分别设置。'
-          : 'Applies to navigation and segmented options, independently of the menu surface.',
-      style: SettingsTypography.description.copyWith(
-        color: scheme.onSurfaceVariant,
-      ),
-    ),
-    const SizedBox(height: 8),
-    ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 320),
-      child: Semantics(
-        label: title,
-        child: OptionMenuBar<String>(
-          key: const ValueKey('settings_selection_indicator_style'),
-          value: state.config.selectionIndicatorStyle,
-          triggerHeight: 44,
-          triggerMaxLines: 2,
-          itemLabelMaxLines: null,
-          items: [
-            OptionItem(
-              'theme',
-              strings.isZh ? '主题色' : 'Theme accent',
-              icon: Icons.palette_outlined,
-            ),
-            OptionItem(
-              'liquid',
-              strings.isZh ? '液态玻璃' : 'Liquid glass',
-              icon: Icons.water_drop_outlined,
-            ),
-            OptionItem(
-              'blur',
-              strings.isZh ? '毛玻璃' : 'Frosted glass',
-              icon: Icons.blur_on_outlined,
-            ),
-            OptionItem(
-              'outline',
-              strings.isZh ? '描边' : 'Outline',
-              icon: Icons.crop_square,
-            ),
-          ],
-          onChanged: (style) => state.updateConfig(
-            (config) => config..selectionIndicatorStyle = style,
+/// Navigation surface, placement and selection feedback affect different parts
+/// of the same controls, so they are configured together.
+Widget _buildNavigationAppearance(BuildContext ctx, AppState state) {
+  final cfg = state.config;
+  final s = AppStrings.of(cfg.language);
+  final zh = s.isZh;
+  return _glass(ctx, state, zh ? '导航与选中样式' : 'Navigation & selection', [
+    if (isMobilePlatform) ...[
+      _optionRow(
+        ctx,
+        icon: Icons.vertical_split_outlined,
+        label: s.navPlacementLabel,
+        scope: s.navPlacementScope,
+        value: cfg.mobileNavPlacement,
+        items: [
+          OptionItem('auto', s.navPlacementAuto, icon: Icons.auto_mode),
+          OptionItem(
+            'bottom',
+            s.navPlacementBottom,
+            icon: Icons.align_vertical_bottom,
           ),
-        ),
+          OptionItem(
+            'left',
+            s.navPlacementLeft,
+            icon: Icons.align_horizontal_left,
+          ),
+          OptionItem(
+            'right',
+            s.navPlacementRight,
+            icon: Icons.align_horizontal_right,
+          ),
+        ],
+        onSelected: (v) => state.updateConfig((c) => c..mobileNavPlacement = v),
       ),
+      _styleRow(
+        ctx,
+        icon: Icons.view_sidebar_outlined,
+        label: zh ? '侧边导航样式' : 'Side navigation style',
+        value: cfg.navStyle,
+        onSelected: (v) => state.updateConfig((c) => c..navStyle = v),
+      ),
+      _styleRow(
+        ctx,
+        icon: Icons.crop_landscape_outlined,
+        label: s.pillStyleLabel,
+        value: cfg.pillStyle,
+        onSelected: (v) => state.updateConfig((c) => c..pillStyle = v),
+      ),
+    ] else
+      _styleRow(
+        ctx,
+        icon: Icons.view_sidebar_outlined,
+        label: zh ? '侧栏与顶栏样式' : 'Sidebar and top bar style',
+        value: cfg.menuStyle,
+        onSelected: (v) => state.updateConfig((c) => c..menuStyle = v),
+      ),
+    _optionRow(
+      ctx,
+      menuKey: const ValueKey('settings_selection_indicator_style'),
+      icon: Icons.highlight_alt_outlined,
+      label: zh ? '选中遮罩' : 'Selection highlight',
+      scope: zh
+          ? '用于主导航、设置导航和分段选项的选中项'
+          : 'Marks the active item in navigation and segmented controls',
+      value: cfg.selectionIndicatorStyle,
+      items: [
+        OptionItem(
+          'theme',
+          zh ? '主题色' : 'Theme accent',
+          icon: Icons.palette_outlined,
+        ),
+        OptionItem(
+          'liquid',
+          s.surfaceStyleLiquid,
+          icon: Icons.water_drop_outlined,
+        ),
+        OptionItem(
+          'blur',
+          zh ? '毛玻璃' : 'Frosted glass',
+          icon: Icons.blur_on_outlined,
+        ),
+        OptionItem('outline', zh ? '描边' : 'Outline', icon: Icons.crop_square),
+      ],
+      onSelected: (v) =>
+          state.updateConfig((c) => c..selectionIndicatorStyle = v),
     ),
+    if (isMobilePlatform) ...[
+      SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        title: Text(zh ? '滑动时自动收起底部导航' : 'Auto-hide bottom navigation'),
+        subtitle: Text(zh ? '上滑收起，下滑展开' : 'Swipe up to hide and down to show'),
+        value: cfg.navAutoHide,
+        onChanged: (v) => state.updateConfig((c) => c..navAutoHide = v),
+      ),
+      _optionRow(
+        ctx,
+        icon: Icons.swap_horiz,
+        label: s.bottomActionSideLabel,
+        scope: s.bottomActionSideScope,
+        value: cfg.mobileBottomActionSide,
+        items: [
+          OptionItem(
+            'left',
+            s.bottomActionSideLeft,
+            icon: Icons.align_horizontal_left,
+          ),
+          OptionItem(
+            'right',
+            s.bottomActionSideRight,
+            icon: Icons.align_horizontal_right,
+          ),
+        ],
+        onSelected: (v) =>
+            state.updateConfig((c) => c..mobileBottomActionSide = v),
+      ),
+    ],
   ]);
 }
 
-/// 表面样式设置行：左 = 图标 + 文字（可选作用范围说明），右 = 四值
-/// 「菜单栏选项」控件（按钮 + 展开选项列表，key 绑定当前值，配置被外部
-/// 改动如低配自动降级后重建时菜单显示最新值）。
-/// 通用「图标 + 标签（可选说明）+ 下拉选项」设置行。
-///
-/// 抽出来的原因：表面样式那四行与新增的「菜单栏位置」是同一套版式，若各自
-/// 内联一遍，间距、溢出处理、OptionMenuBar 的展开动画约定迟早漂移
-///（原实现明确要求「不给 OptionMenuBar 绑随 value 变化的 key」，见下）。
+/// A settings label and its menu stack when space is limited.
 Widget _optionRow(
   BuildContext ctx, {
+  Key? menuKey,
   required IconData icon,
   required String label,
   String? scope,
@@ -4567,60 +4330,68 @@ Widget _optionRow(
   required ValueChanged<String> onSelected,
 }) {
   final scheme = Theme.of(ctx).colorScheme;
-  final clr = scheme.onSurface;
+  final heading = Row(
+    children: [
+      Icon(icon, size: 15, color: scheme.primary),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(color: scheme.onSurface, fontSize: 13),
+            ),
+            if (scope != null)
+              Text(
+                scope,
+                style: SettingsTypography.description.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+          ],
+        ),
+      ),
+    ],
+  );
+  final menu = Semantics(
+    label: label,
+    child: OptionMenuBar<String>(
+      key: menuKey,
+      value: value,
+      items: items,
+      triggerHeight: 44,
+      triggerMaxLines: 2,
+      itemLabelMaxLines: null,
+      onChanged: onSelected,
+    ),
+  );
   return Padding(
     padding: const EdgeInsets.only(bottom: 10),
-    child: Row(
-      children: [
-        Icon(icon, size: 15, color: scheme.primary),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 大字号下固定宽度控件旁的标签不换行（只省略），避免行高变化导致
-              // 「标签与选择框不对称」的观感（见设置页各类设置行）。
-              Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: clr, fontSize: 12),
-              ),
-              if (scope != null) ...[
-                const SizedBox(height: 2),
-                Text(
-                  scope,
-                  style: SettingsTypography.description.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ],
-          ),
-        ),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: _kMenuWidth,
-          child: OptionMenuBar<String>(
-            // 这里刻意不再给 OptionMenuBar 绑「随 value 变化」的 key。
-            // 当前值由 value 参数直接下发，State 不缓存它，所以外部改动
-            // （如低配自动降级）本就能正确刷新；而带 value 的 key 会在每次
-            // 选值后把 State 整个重建 —— State 一换，收起动画刚开始就被卸载，
-            // 浮层「啪」地消失（用户反馈「展开/收起没有动画」）。
-            expandable: true,
-            value: value,
-            items: items,
-            onChanged: onSelected,
-          ),
-        ),
-      ],
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final unit = MediaQuery.textScalerOf(context).scale(13);
+        final minLabelWidth = unit * 13;
+        final menuWidth = unit * 15;
+        if (constraints.maxWidth < menuWidth + minLabelWidth + 12) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            spacing: 6,
+            children: [heading, menu],
+          );
+        }
+        return Row(
+          spacing: 12,
+          children: [
+            Expanded(child: heading),
+            SizedBox(width: menuWidth, child: menu),
+          ],
+        );
+      },
     ),
   );
 }
 
-/// 表面样式行（卡片 / 菜单 / 底部菜单栏 / 顶部药丸共用同一组四值）。
 Widget _styleRow(
   BuildContext ctx, {
   required IconData icon,
@@ -4976,6 +4747,7 @@ Widget _buildPredictiveBack(BuildContext ctx, AppState state) {
     ),
   ]);
 }
+
 Widget _languageMenu(AppState state, String label) => Semantics(
   label: label,
   child: OptionMenuBar<String>(
@@ -5003,7 +4775,6 @@ Widget _buildLanguage(BuildContext ctx, AppState state) {
     ),
   ]);
 }
-
 
 Widget _buildFont(BuildContext ctx, AppState state) {
   final cfg = state.config;
@@ -5596,11 +5367,10 @@ Widget _buildFluidCloudProgressTile(
     builder: (context, snap) {
       final st = snap.data;
       // 非 Android / 非 ColorOS / Provider 不可达 / 尚未查到：一律隐藏。
-      if (st == null ||
-          st['colorOs'] != true ||
-          st['intentShareAvailable'] != true) {
+      if (!shouldShowFluidCloudProgressSetting(st)) {
         return const SizedBox.shrink();
       }
+      final integrationConfigured = isFluidCloudIntegrationConfigured(st);
       return SwitchListTile(
         dense: true,
         contentPadding: EdgeInsets.zero,
@@ -5609,15 +5379,21 @@ Widget _buildFluidCloudProgressTile(
           style: TextStyle(color: clr, fontSize: 13),
         ),
         subtitle: Text(
-          s.isZh
-              ? '转码进行中时，进度以 ColorOS 流体云胶囊/卡片展示'
-              : 'Show transcoding progress as a ColorOS Fluid Cloud capsule',
+          integrationConfigured
+              ? (s.isZh
+                    ? '转码进行中时，进度以 ColorOS 流体云胶囊/卡片展示'
+                    : 'Show transcoding progress as a ColorOS Fluid Cloud capsule')
+              : (s.isZh
+                    ? '此版本尚未配置 ColorOS 正式接入标识，功能暂不可用'
+                    : 'Official ColorOS integration identifiers are not configured for this build.'),
           style: SettingsTypography.description.copyWith(
             color: scheme.onSurfaceVariant,
           ),
         ),
-        value: cfg.fluidCloudProgress,
-        onChanged: (v) => state.updateConfig((c) => c..fluidCloudProgress = v),
+        value: integrationConfigured && cfg.fluidCloudProgress,
+        onChanged: integrationConfigured
+            ? (v) => state.updateConfig((c) => c..fluidCloudProgress = v)
+            : null,
       );
     },
   );
@@ -5834,22 +5610,21 @@ class _IslandProgressTileState extends State<_IslandProgressTile> {
   Widget build(BuildContext context) {
     if (_loading) return const SizedBox.shrink();
     final st = _status;
-    // 非 Android 或查询失败：没有可解释的内容，整块不显示。
-    if (st == null) return const SizedBox.shrink();
+    // 查询失败或 ROM 不支持时不渲染；只有支持岛的设备才显示其控制项。
+    if (!shouldShowSuperIslandProgressSetting(st)) {
+      return const SizedBox.shrink();
+    }
 
     final s = widget.s;
     final scheme = widget.scheme;
-    final supported = st['islandSupported'] == true;
-    final protocol = (st['focusProtocolVersion'] as num?)?.toInt() ?? 0;
-    final focus = st['hasFocusPermission'] == true;
+    final status = st!;
+    final supported = status['islandSupported'] == true;
+    final protocol = (status['focusProtocolVersion'] as num?)?.toInt() ?? 0;
+    final focus = status['hasFocusPermission'] == true;
     final available = supported && protocol >= 3 && focus;
 
     final String reason;
-    if (!supported) {
-      reason = s.isZh
-          ? '本机不支持超级岛：需要澎湃 OS 3 且系统开启了岛能力'
-          : 'No Super Island on this device (needs HyperOS 3 with Island support)';
-    } else if (protocol < 3) {
+    if (protocol < 3) {
       reason = s.isZh
           ? '焦点通知协议版本为 $protocol（需要 3 / OS3）'
           : 'Focus protocol is $protocol (OS3 / 3 required)';
@@ -6040,6 +5815,22 @@ Widget _buildDebug(BuildContext ctx, AppState state) {
       onChanged: (v) => state.updateConfig((c) => c..debugMode = v),
     ),
     SwitchListTile(
+      key: const ValueKey('settings_very_verbose_logs'),
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(
+        s.isZh ? '非常详细的日志' : 'Very verbose logs',
+        style: TextStyle(color: clr, fontSize: 13),
+      ),
+      subtitle: Text(
+        s.isZh
+            ? '在日志页记录底层操作，仅建议调试时开启。'
+            : 'Records low-level operations in Logs. Enable only while debugging.',
+      ),
+      value: cfg.veryVerboseLogs,
+      onChanged: (value) => _setVeryVerboseLogs(ctx, state, s, value),
+    ),
+    SwitchListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
       title: Text(s.dSaveLogs, style: TextStyle(color: clr, fontSize: 13)),
@@ -6057,7 +5848,59 @@ Widget _buildDebug(BuildContext ctx, AppState state) {
           if (d != null) state.updateConfig((c) => c..logSavePath = d);
         },
       ),
+    Align(
+      alignment: AlignmentDirectional.centerEnd,
+      child: TextButton.icon(
+        icon: const Icon(Icons.receipt_long_outlined),
+        label: Text(s.isZh ? '查看日志' : 'Open logs'),
+        onPressed: () => Navigator.of(ctx).push(
+          MaterialPageRoute(
+            allowSnapshotting: false,
+            builder: (_) => const LogPage(),
+          ),
+        ),
+      ),
+    ),
   ]);
+}
+
+Future<void> _setVeryVerboseLogs(
+  BuildContext context,
+  AppState state,
+  AppStrings strings,
+  bool value,
+) async {
+  if (!value) {
+    await state.setVeryVerboseLogs(false);
+    return;
+  }
+  final zh = strings.isZh;
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AppAlertDialog(
+      title: Text(zh ? '开启非常详细的日志？' : 'Enable very verbose logs?'),
+      content: Text(
+        zh
+            ? '探针会记录大量底层操作，可能增加资源开销和日志体积。除非正在调试，否则不建议开启。'
+            : 'Probes record many low-level operations and can increase resource '
+                  'usage and log size. Enable this only while debugging.',
+      ),
+      actions: [
+        TextButton(
+          autofocus: true,
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: Text(zh ? '取消' : 'Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: Text(zh ? '开启' : 'Enable'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed == true && context.mounted) {
+    await state.setVeryVerboseLogs(true);
+  }
 }
 
 /// Usage statistics shared by desktop settings and the mobile detail route.
@@ -6134,7 +5977,7 @@ Future<void> _resetNodeUsage(
 ) async {
   final confirmed = await showDialog<bool>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
+    builder: (dialogContext) => AppAlertDialog(
       scrollable: true,
       icon: const Icon(Icons.restart_alt),
       title: Text(zh ? '重置节点使用频次？' : 'Reset node usage frequency?'),
@@ -6621,6 +6464,9 @@ Future<void> pingAi(BuildContext ctx, AppState state, AppStrings s) async {
   final modelsUrl = baseUrl.endsWith('/v1')
       ? '$baseUrl/models'
       : '$baseUrl/v1/models';
+  final span = state.diagnosticTrace.begin('ai.ping', details: {
+    'protocol': cfg.aiProvider == 'anthropic' ? 'anthropic' : 'openai',
+  });
   state.addLog('[AI] Ping $modelsUrl ...', category: 'info');
   try {
     final uri = Uri.parse(modelsUrl);
@@ -6638,6 +6484,7 @@ Future<void> pingAi(BuildContext ctx, AppState state, AppStrings s) async {
     sw.stop();
     final ms = sw.elapsedMilliseconds;
     final ok = resp.statusCode >= 200 && resp.statusCode < 400;
+    span?.finish(success: ok, details: {'httpStatus': resp.statusCode});
     state.addLog(
       '[AI] Ping ${ok ? "OK" : "FAIL"}: ${resp.statusCode}, ${ms}ms',
       category: ok ? 'info' : 'error',
@@ -6652,6 +6499,7 @@ Future<void> pingAi(BuildContext ctx, AppState state, AppStrings s) async {
       );
     }
   } catch (e) {
+    span?.finish(success: false, error: e);
     state.addLog('[AI] Ping failed: $e', category: 'error');
     if (ctx.mounted) showToast(ctx, 'Error: $e', type: ToastType.error);
   }
@@ -6676,6 +6524,9 @@ Future<void> listAiModels(
     if (ctx.mounted) showToast(ctx, s.aiNotConfigured, type: ToastType.warning);
     return;
   }
+  final span = state.diagnosticTrace.begin('ai.models', details: {
+    'protocol': cfg.aiProvider == 'anthropic' ? 'anthropic' : 'openai',
+  });
   state.addLog('[AI] 获取模型列表...', category: 'info');
   try {
     final headers = <String, String>{};
@@ -6695,6 +6546,7 @@ Future<void> listAiModels(
             (data['data'] as List?)?.map((m) => m['id'] as String).toList() ??
             [];
         models.sort();
+        span?.finish(success: true, details: {'httpStatus': resp.statusCode, 'itemCount': models.length});
         state.addLog(
           '[AI] Anthropic 获取到 ${models.length} 个模型',
           category: 'info',
@@ -6707,6 +6559,9 @@ Future<void> listAiModels(
           category: 'info',
         );
         final known = List.of(_kKnownAnthropicModels);
+        span?.finish(success: false, details: {
+          'httpStatus': resp.statusCode, 'fallback': true, 'itemCount': known.length,
+        });
         onListed?.call(known);
         if (ctx.mounted) _showModelPicker(ctx, state, known, s, onPicked);
       }
@@ -6723,16 +6578,19 @@ Future<void> listAiModels(
       final models =
           (data['data'] as List?)?.map((m) => m['id'] as String).toList() ?? [];
       models.sort();
+      span?.finish(success: true, details: {'httpStatus': resp.statusCode, 'itemCount': models.length});
       state.addLog('[AI] 获取到 ${models.length} 个模型', category: 'info');
       onListed?.call(models);
       if (ctx.mounted) _showModelPicker(ctx, state, models, s, onPicked);
     } else {
+      span?.finish(success: false, details: {'httpStatus': resp.statusCode});
       state.addLog('[AI] 获取模型失败: ${resp.statusCode}', category: 'error');
       if (ctx.mounted) {
         showToast(ctx, 'HTTP ${resp.statusCode}', type: ToastType.error);
       }
     }
   } catch (e) {
+    span?.finish(success: false, error: e);
     state.addLog('[AI] 获取模型失败: $e', category: 'error');
     if (ctx.mounted) showToast(ctx, 'Error: $e', type: ToastType.error);
   }
@@ -6747,7 +6605,21 @@ Future<void> listAiModels(
 ///
 /// 返回可读余额字符串；全部端点不可用时返回 null（由调用方提示「不支持」），
 /// 而不是抛错——避免把「供应商没这个接口」当成配置错误误导用户。
-Future<String?> fetchAiBalance(AiProfile profile) async {
+Future<String?> fetchAiBalance(AiProfile profile, {DiagnosticTrace? trace}) async {
+  final span = trace?.begin('ai.balance', details: {
+    'protocol': profile.provider == 'anthropic' ? 'anthropic' : 'openai',
+  });
+  try {
+    final result = await _fetchAiBalance(profile, span);
+    span?.finish(success: result != null);
+    return result;
+  } catch (error) {
+    span?.finish(success: false, error: error);
+    rethrow;
+  }
+}
+
+Future<String?> _fetchAiBalance(AiProfile profile, DiagnosticSpan? span) async {
   final keys = profile.effectiveKeys;
   if (keys.isEmpty) return null;
   final key = keys.first;
@@ -6769,6 +6641,7 @@ Future<String?> fetchAiBalance(AiProfile profile) async {
           headers: headers,
         )
         .timeout(timeout);
+    span?.record('ai.balance.endpoint', details: {'endpoint': 'credit_grants', 'httpStatus': resp.statusCode});
     if (resp.statusCode == 200) {
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
       final total = (data['total_granted'] as num?)?.toDouble();
@@ -6784,7 +6657,8 @@ Future<String?> fetchAiBalance(AiProfile profile) async {
         return parts.join(' · ');
       }
     }
-  } catch (_) {
+  } catch (error) {
+    span?.record('ai.balance.endpoint', details: {'endpoint': 'credit_grants', 'failureType': error.runtimeType.toString()});
     // 端点不存在/网络问题 → 继续尝试下一个
   }
 
@@ -6793,6 +6667,7 @@ Future<String?> fetchAiBalance(AiProfile profile) async {
     final resp = await http
         .get(Uri.parse('$base/user/info'), headers: headers)
         .timeout(timeout);
+    span?.record('ai.balance.endpoint', details: {'endpoint': 'user_info', 'httpStatus': resp.statusCode});
     if (resp.statusCode == 200) {
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
       final d = data['data'];
@@ -6809,7 +6684,8 @@ Future<String?> fetchAiBalance(AiProfile profile) async {
         }
       }
     }
-  } catch (_) {
+  } catch (error) {
+    span?.record('ai.balance.endpoint', details: {'endpoint': 'user_info', 'failureType': error.runtimeType.toString()});
     // 同上
   }
 
@@ -6835,7 +6711,7 @@ void _showModelPicker(
     context: ctx,
     builder: (dCtx) {
       final scheme = Theme.of(dCtx).colorScheme;
-      return AlertDialog(
+      return AppAlertDialog(
         title: Text(
           s.aiListModels,
           style: TextStyle(color: scheme.onSurface, fontSize: 15),
@@ -6976,7 +6852,7 @@ Future<void> _clearCache(
 ) async {
   final scope = await showDialog<_CacheScope>(
     context: ctx,
-    builder: (dCtx) => AlertDialog(
+    builder: (dCtx) => AppAlertDialog(
       scrollable: true,
       icon: Icon(Icons.cleaning_services_outlined, color: scheme.primary),
       title: Text(
@@ -7167,7 +7043,9 @@ String _humanSize(int bytes) {
 
 Future<void> _checkForUpdate(BuildContext ctx, AppStrings s) async {
   showToast(ctx, s.checking, type: ToastType.info);
-  final result = await updater.checkForUpdate(preferLanzou: s.isZh);
+  final result = await updater.checkForUpdate(
+    preferLanzou: s.isZh, trace: ctx.read<AppState>().diagnosticTrace,
+  );
   if (!ctx.mounted) return;
   if (result.error != null && !result.hasUpdate) {
     showToast(ctx, s.updateFailed, type: ToastType.error);
@@ -7198,7 +7076,7 @@ void _showUpdateDialog(
       result.downloadUrl != null;
   showDialog(
     context: ctx,
-    builder: (dCtx) => AlertDialog(
+    builder: (dCtx) => AppAlertDialog(
       scrollable: true,
       icon: Icon(Icons.system_update, color: scheme.primary, size: 32),
       title: Text(s.updateAvailable, style: TextStyle(color: scheme.onSurface)),
@@ -7316,6 +7194,7 @@ Future<void> _downloadAndInstall(
   String? expectedSha256,
 ]) async {
   final scheme = Theme.of(ctx).colorScheme;
+  final trace = ctx.read<AppState>().diagnosticTrace;
   final progressNotifier = ValueNotifier<double>(0);
   final statusNotifier = ValueNotifier<String>(
     s.isZh ? '准备下载...' : 'Preparing...',
@@ -7326,7 +7205,7 @@ Future<void> _downloadAndInstall(
     barrierDismissible: false,
     builder: (_) => PopScope(
       canPop: false,
-      child: AlertDialog(
+      child: AppAlertDialog(
         title: Text(
           s.isZh ? '下载更新' : 'Downloading Update',
           style: TextStyle(color: scheme.onSurface),
@@ -7357,6 +7236,7 @@ Future<void> _downloadAndInstall(
   try {
     final filePath = await updater.downloadUpdate(
       url,
+      trace: trace,
       onProgress: (received, total) {
         if (total > 0) {
           progressNotifier.value = received / total;
@@ -7422,7 +7302,7 @@ Future<void> _pickColor(BuildContext ctx, AppState state) async {
 void _showSponsor(BuildContext ctx, ColorScheme scheme, AppStrings s) {
   showDialog(
     context: ctx,
-    builder: (dCtx) => AlertDialog(
+    builder: (dCtx) => AppAlertDialog(
       title: Text(
         s.aboutSponsor,
         style: TextStyle(
@@ -7723,7 +7603,7 @@ class _FfmpegCardState extends State<_FfmpegCard> {
       context: context,
       builder: (ctx) {
         final s = Theme.of(ctx).colorScheme;
-        return AlertDialog(
+        return AppAlertDialog(
           icon: Icon(Icons.delete_forever, color: s.error, size: 32),
           title: Text(isZh ? '删除 FFmpeg' : 'Delete FFmpeg'),
           content: Text(
@@ -8086,247 +7966,283 @@ class _CPState extends State<_CP> {
     final sectionHint = SettingsTypography.description.copyWith(
       color: scheme.onSurfaceVariant,
     );
-    // 液态玻璃：跟随全局玻璃配置（液态/模糊/无效果），主题着色跟随 glassFollowTheme
-    return GlassPanel(
-      radius: 18,
-      blur: 14,
-      padding: const EdgeInsets.fromLTRB(18, 14, 18, 10),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 560),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.palette_outlined, size: 18, color: scheme.primary),
-                  const SizedBox(width: 8),
-                  Text(
-                    widget.isZh ? '主题颜色' : 'Theme Color',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: scheme.onSurface,
-                    ),
-                  ),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: Icon(Icons.close, size: 18, color: scheme.outline),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              // 预览：纯色或渐变
-              Container(
-                height: 44,
-                width: double.infinity,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: _gradEnabled ? null : c1,
-                  gradient: _gradEnabled
-                      ? LinearGradient(
-                          colors: [c1, c2],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        )
-                      : null,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: scheme.outlineVariant.withAlpha(80),
-                  ),
-                ),
-                child: Text(
-                  _gradEnabled
-                      ? (widget.isZh ? '渐变' : 'Gradient')
-                      : (widget.isZh ? '纯色' : 'Solid'),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              // 是否使用渐变色（通俗开关）
-              Row(
-                children: [
-                  Icon(Icons.auto_awesome, size: 16, color: scheme.primary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      widget.isZh ? '使用渐变色' : 'Use gradient',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: scheme.onSurface,
-                      ),
-                    ),
-                  ),
-                  Switch(
-                    value: _gradEnabled,
-                    onChanged: (v) => setState(() => _gradEnabled = v),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              // 常用色板（单色 / 渐变通用）
-              Text(widget.isZh ? '常用颜色' : 'Common colors', style: labelStyle),
-              const SizedBox(height: 8),
-              if (_gradEnabled)
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _gradPresets.map((g) {
-                    final selected =
-                        g.$1 == c1.toARGB32() && g.$2 == c2.toARGB32();
-                    return GestureDetector(
-                      onTap: () {
-                        final h1 = HSVColor.fromColor(Color(g.$1));
-                        final h2 = HSVColor.fromColor(Color(g.$2));
-                        setState(() {
-                          _h1 = h1.hue;
-                          _s1 = h1.saturation;
-                          _v1 = h1.value;
-                          _h2 = h2.hue;
-                          _s2 = h2.saturation;
-                          _v2 = h2.value;
-                          _gradEnabled = true;
-                        });
-                      },
-                      child: Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [Color(g.$1), Color(g.$2)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: selected
-                                ? scheme.primary
-                                : scheme.outlineVariant.withAlpha(90),
-                            width: selected ? 3 : 1,
-                          ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                )
-              else
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
+    return Material(
+      color: Theme.of(context).dialogTheme.backgroundColor,
+      shape: Theme.of(context).dialogTheme.shape,
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 560),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
                   children: [
-                    for (final preset in const [
-                      0xFF5E6AD2,
-                      0xFF3B82F6,
-                      0xFF06B6D4,
-                      0xFF10B981,
-                      0xFF84CC16,
-                      0xFFF59E0B,
-                      0xFFF97316,
-                      0xFFEF4444,
-                      0xFFEC4899,
-                      0xFF8B5CF6,
-                      0xFF64748B,
-                      0xFF000000,
-                      0xFFFFFFFF,
-                      0xFFF8FAFC,
-                    ])
-                      GestureDetector(
-                        onTap: () {
-                          final hsv = HSVColor.fromColor(Color(preset));
-                          setState(() {
-                            _h1 = hsv.hue;
-                            _s1 = hsv.saturation;
-                            _v1 = hsv.value;
-                          });
-                        },
-                        child: Container(
-                          width: 28,
-                          height: 28,
-                          decoration: BoxDecoration(
-                            color: Color(preset),
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: scheme.outlineVariant.withAlpha(120),
-                            ),
-                          ),
-                          child: preset == c1.toARGB32()
-                              ? const Icon(
-                                  Icons.check,
-                                  size: 13,
-                                  color: Colors.white,
-                                )
-                              : null,
+                    Icon(
+                      Icons.palette_outlined,
+                      size: 18,
+                      color: scheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.isZh ? '主题颜色' : 'Theme Color',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurface,
                         ),
                       ),
-                  ],
-                ),
-              const SizedBox(height: 12),
-              // 自定义微调
-              Text(widget.isZh ? '自定义微调' : 'Fine-tune', style: labelStyle),
-              Text(
-                widget.isZh
-                    ? '用色相 / 饱和度 / 明度精确调整颜色'
-                    : 'Adjust hue / saturation / value precisely',
-                style: sectionHint,
-              ),
-              const SizedBox(height: 4),
-              _colorRow(c1, [
-                _sl('H', _h1, 0, 360, (v) => setState(() => _h1 = v)),
-                _sl('S', _s1, 0, 1, (v) => setState(() => _s1 = v)),
-                _sl('V', _v1, 0, 1, (v) => setState(() => _v1 = v)),
-              ]),
-              if (_gradEnabled) ...[
-                const SizedBox(height: 6),
-                Text(
-                  widget.isZh
-                      ? '第二种颜色（渐变终点）'
-                      : 'Second color (end of gradient)',
-                  style: labelStyle,
-                ),
-                const SizedBox(height: 4),
-                _colorRow(c2, [
-                  _sl('H', _h2, 0, 360, (v) => setState(() => _h2 = v)),
-                  _sl('S', _s2, 0, 1, (v) => setState(() => _s2 = v)),
-                  _sl('V', _v2, 0, 1, (v) => setState(() => _v2 = v)),
-                ]),
-              ],
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '#${_hex(c1)}${_gradEnabled ? ' → #${_hex(c2)}' : ''}',
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 11,
+                    ),
+                    IconButton(
+                      tooltip: widget.isZh ? '关闭' : 'Close',
+                      onPressed: () => Navigator.pop(context),
+                      constraints: const BoxConstraints(
+                        minWidth: 44,
+                        minHeight: 44,
+                      ),
+                      icon: Icon(
+                        Icons.close,
+                        size: 18,
                         color: scheme.onSurfaceVariant,
                       ),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                // 预览：纯色或渐变
+                Container(
+                  height: 44,
+                  width: double.infinity,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: _gradEnabled ? null : c1,
+                    gradient: _gradEnabled
+                        ? LinearGradient(
+                            colors: [c1, c2],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          )
+                        : null,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: scheme.outlineVariant.withAlpha(80),
+                    ),
                   ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: Text(widget.isZh ? '取消' : 'Cancel'),
+                  child: Text(
+                    _gradEnabled
+                        ? (widget.isZh ? '渐变' : 'Gradient')
+                        : (widget.isZh ? '纯色' : 'Solid'),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
                   ),
-                  FilledButton(
-                    onPressed: () => Navigator.pop(
-                      context,
-                      _GradResult(
-                        c1.toARGB32(),
-                        _gradEnabled ? c2.toARGB32() : null,
+                ),
+                const SizedBox(height: 12),
+                // 是否使用渐变色（通俗开关）
+                Row(
+                  children: [
+                    Icon(Icons.auto_awesome, size: 16, color: scheme.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.isZh ? '使用渐变色' : 'Use gradient',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurface,
+                        ),
                       ),
                     ),
-                    child: Text(widget.isZh ? '选择' : 'Select'),
+                    Switch(
+                      value: _gradEnabled,
+                      onChanged: (v) => setState(() => _gradEnabled = v),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                // 常用色板（单色 / 渐变通用）
+                Text(widget.isZh ? '常用颜色' : 'Common colors', style: labelStyle),
+                const SizedBox(height: 8),
+                if (_gradEnabled)
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _gradPresets.map((g) {
+                      final selected =
+                          g.$1 == c1.toARGB32() && g.$2 == c2.toARGB32();
+                      return GestureDetector(
+                        onTap: () {
+                          final h1 = HSVColor.fromColor(Color(g.$1));
+                          final h2 = HSVColor.fromColor(Color(g.$2));
+                          setState(() {
+                            _h1 = h1.hue;
+                            _s1 = h1.saturation;
+                            _v1 = h1.value;
+                            _h2 = h2.hue;
+                            _s2 = h2.saturation;
+                            _v2 = h2.value;
+                            _gradEnabled = true;
+                          });
+                        },
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Color(g.$1), Color(g.$2)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: selected
+                                  ? scheme.primary
+                                  : scheme.outlineVariant.withAlpha(90),
+                              width: selected ? 3 : 1,
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  )
+                else
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final preset in const [
+                        0xFF5E6AD2,
+                        0xFF3B82F6,
+                        0xFF06B6D4,
+                        0xFF10B981,
+                        0xFF84CC16,
+                        0xFFF59E0B,
+                        0xFFF97316,
+                        0xFFEF4444,
+                        0xFFEC4899,
+                        0xFF8B5CF6,
+                        0xFF64748B,
+                        0xFF000000,
+                        0xFFFFFFFF,
+                        0xFFF8FAFC,
+                      ])
+                        GestureDetector(
+                          onTap: () {
+                            final hsv = HSVColor.fromColor(Color(preset));
+                            setState(() {
+                              _h1 = hsv.hue;
+                              _s1 = hsv.saturation;
+                              _v1 = hsv.value;
+                            });
+                          },
+                          child: Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              color: Color(preset),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: scheme.outlineVariant.withAlpha(120),
+                              ),
+                            ),
+                            child: preset == c1.toARGB32()
+                                ? const Icon(
+                                    Icons.check,
+                                    size: 13,
+                                    color: Colors.white,
+                                  )
+                                : null,
+                          ),
+                        ),
+                    ],
                   ),
+                const SizedBox(height: 12),
+                // 自定义微调
+                Text(widget.isZh ? '自定义微调' : 'Fine-tune', style: labelStyle),
+                Text(
+                  widget.isZh
+                      ? '用色相 / 饱和度 / 明度精确调整颜色'
+                      : 'Adjust hue / saturation / value precisely',
+                  style: sectionHint,
+                ),
+                const SizedBox(height: 4),
+                _colorRow(c1, [
+                  _sl('H', _h1, 0, 360, (v) => setState(() => _h1 = v)),
+                  _sl('S', _s1, 0, 1, (v) => setState(() => _s1 = v)),
+                  _sl('V', _v1, 0, 1, (v) => setState(() => _v1 = v)),
+                ]),
+                if (_gradEnabled) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    widget.isZh
+                        ? '第二种颜色（渐变终点）'
+                        : 'Second color (end of gradient)',
+                    style: labelStyle,
+                  ),
+                  const SizedBox(height: 4),
+                  _colorRow(c2, [
+                    _sl('H', _h2, 0, 360, (v) => setState(() => _h2 = v)),
+                    _sl('S', _s2, 0, 1, (v) => setState(() => _s2 = v)),
+                    _sl('V', _v2, 0, 1, (v) => setState(() => _v2 = v)),
+                  ]),
                 ],
-              ),
-            ],
+                const SizedBox(height: 10),
+                Text(
+                  '#${_hex(c1)}${_gradEnabled ? ' → #${_hex(c2)}' : ''}',
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 11,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final cancel = AppDialogAction(
+                      role: AppDialogActionRole.cancel,
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: Text(widget.isZh ? '取消' : 'Cancel'),
+                      ),
+                    );
+                    final select = AppDialogAction(
+                      role: AppDialogActionRole.primary,
+                      child: FilledButton(
+                        onPressed: () => Navigator.pop(
+                          context,
+                          _GradResult(
+                            c1.toARGB32(),
+                            _gradEnabled ? c2.toARGB32() : null,
+                          ),
+                        ),
+                        child: Text(widget.isZh ? '选择' : 'Select'),
+                      ),
+                    );
+                    if (constraints.maxWidth < 220 ||
+                        MediaQuery.textScalerOf(context).scale(14) > 21) {
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [cancel, const SizedBox(height: 8), select],
+                      );
+                    }
+                    return Row(
+                      children: [
+                        Expanded(child: cancel),
+                        const SizedBox(width: 8),
+                        Expanded(child: select),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
         ),
       ),

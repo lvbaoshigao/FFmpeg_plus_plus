@@ -37,6 +37,40 @@ LiquidGlassPainter _painter(WidgetTester tester) => tester
     .first;
 
 void main() {
+  group('liquidGlassSettingsFor', () {
+    test(
+      'should retain settings identity across soft and regular surfaces',
+      () {
+        const tuning = GlassTuning();
+        final regular = liquidGlassSettingsFor(tuning);
+        final soft = liquidGlassSettingsFor(tuning, soft: true);
+        expect(soft.blurRadiusPx, closeTo(4.8, 0.001));
+        expect(regular.blurRadiusPx, 0);
+        expect(identical(liquidGlassSettingsFor(tuning), regular), isTrue);
+        expect(
+          identical(liquidGlassSettingsFor(tuning, soft: true), soft),
+          isTrue,
+        );
+      },
+    );
+
+    test('should honor zero blur and bound floating surface softening', () {
+      expect(
+        liquidGlassSettingsFor(
+          const GlassTuning(blur: 0),
+          soft: true,
+        ).blurRadiusPx,
+        0,
+      );
+      expect(
+        liquidGlassSettingsFor(
+          const GlassTuning(blur: 100),
+          soft: true,
+        ).blurRadiusPx,
+        9,
+      );
+    });
+  });
   test('effective sigma rejects non-finite input', () {
     for (final value in [
       double.nan,
@@ -91,11 +125,14 @@ void main() {
     );
     await tester.pumpWidget(
       _host(
-        optionMenuPanel(
-          scheme: scheme,
-          appearance: 'liquid',
-          tuning: tuning,
-          child: const SizedBox(width: 120, height: 44),
+        Builder(
+          builder: (context) => optionMenuPanel(
+            context: context,
+            scheme: scheme,
+            appearance: 'liquid',
+            tuning: tuning,
+            child: const SizedBox(width: 120, height: 44),
+          ),
         ),
       ),
     );
@@ -123,11 +160,14 @@ void main() {
       GlassTuning tuning,
     ) => tester.pumpWidget(
       _host(
-        optionMenuPanel(
-          scheme: scheme,
-          appearance: appearance,
-          tuning: tuning,
-          child: const SizedBox(key: contentKey, width: 120, height: 44),
+        Builder(
+          builder: (context) => optionMenuPanel(
+            context: context,
+            scheme: scheme,
+            appearance: appearance,
+            tuning: tuning,
+            child: const SizedBox(key: contentKey, width: 120, height: 44),
+          ),
         ),
       ),
     );

@@ -113,12 +113,10 @@ inline constexpr uint8_t FPPX2_MAC_HMAC_SHA256 = 0x01;
 // 模块 0x02 载荷：未加密 = 1B(0x00)；加密 = 13B 定长头 + salt + iv
 inline constexpr uint32_t FPPX2_ENCINFO_FIXED_LEN = 13;
 inline constexpr uint32_t FPPX2_ENCINFO_MAX_SALT = 64;
-inline constexpr uint32_t FPPX2_ENCINFO_MAX_IV = 32;
 inline constexpr uint32_t FPPX2_MAC_LEN_SHA256 = 32;
 
 // 默认迭代次数（写端决定并存入 0x02，读端照用）
 inline constexpr uint32_t FPPX2_PBKDF2_ITERS_DESKTOP = 200000;
-inline constexpr uint32_t FPPX2_PBKDF2_ITERS_MOBILE = 100000;
 inline constexpr uint32_t FPPX2_PBKDF2_ITERS_MAX = 1000000;  // 读端上限；实测 /O2 约 2.6s，
                                                              // 远低于 GUI 的 30s 请求超时
                                                              // （5e6 需 14.1s，慢机上会撞超时）

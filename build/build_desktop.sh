@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 一键构建桌面端（Linux/Windows/macOS，按当前平台自动选择）。
-#   1) 编译 C++ 后端 libffmpegpp.so / ffmpegpp.dll / libffmpegpp.dylib
+#   1) Windows/macOS 单独编译后端；Linux 由 Flutter CMake 工程编译并打包
 #   2) flutter build <target> --release（强制 release，杜绝 debug 大包）
 #   3) [macOS] 校验 release 产物特征（TRACK_WIDGET_CREATION 须为 false）
-#   4) 把后端库拷贝进 Flutter bundle
+#   4) Windows/macOS 拷贝后端库；Linux 校验已打包的后端库
 # 用法：
 #   build/build_desktop.sh [linux|windows|macos]
 set -euo pipefail
@@ -25,9 +25,7 @@ fi
 echo "==== [1/3] 编译 C++ 后端 ($TARGET) ===="
 case "$TARGET" in
   linux)
-    cmake -S "$ROOT/server_cpp" -B "$ROOT/server_cpp/build_linux" -DCMAKE_BUILD_TYPE=Release
-    cmake --build "$ROOT/server_cpp/build_linux" -j"$(nproc)"
-    LIB="$ROOT/server_cpp/build_linux/libffmpegpp.so"
+    echo "Linux 后端由 flutter build linux 统一构建并安装"
     ;;
   macos)
     cmake -S "$ROOT/server_cpp" -B "$ROOT/server_cpp/build_macos" -DCMAKE_BUILD_TYPE=Release
@@ -41,12 +39,26 @@ case "$TARGET" in
     ;;
   *) echo "不支持的平台: $TARGET"; exit 1 ;;
 esac
-test -f "$LIB" || { echo "后端库未生成: $LIB"; exit 1; }
+if [ "$TARGET" != linux ]; then
+  test -f "$LIB" || { echo "后端库未生成: $LIB"; exit 1; }
+fi
 
 echo "==== [2/3] flutter build $TARGET --release ===="
 cd "$ROOT/ffmpegpp_gui"
 flutter pub get
 flutter build "$TARGET" --release
+
+if [ "$TARGET" = linux ]; then
+  case "$(uname -m)" in
+    x86_64) ARCH=x64 ;;
+    aarch64|arm64) ARCH=arm64 ;;
+    *) echo "不支持的 Linux 架构: $(uname -m)" >&2; exit 1 ;;
+  esac
+  LIB="$ROOT/ffmpegpp_gui/build/linux/$ARCH/release/bundle/lib/libffmpegpp.so"
+  test -f "$LIB" || { echo "Flutter bundle 缺少后端库: $LIB" >&2; exit 1; }
+  echo "✅ 桌面端构建完成: $TARGET"
+  exit 0
+fi
 
 # macOS 强制校验：确实产出了 release 而非 debug。
 # flutter 每次 build/run 都会重新生成 macos/Flutter/ephemeral/Flutter-Generated.xcconfig：
@@ -73,9 +85,6 @@ fi
 
 echo "==== [3/3] 拷贝后端库到 bundle ===="
 case "$TARGET" in
-  linux)
-    DEST="$ROOT/ffmpegpp_gui/build/linux/x64/release/bundle/lib"
-    ;;
   macos)
     # flutter build macos --release 的真实产物名为 ffmpegpp_gui.app
     # （PRODUCT_NAME=ffmpegpp_gui，见 AppInfo.xcconfig）。此前误写死成

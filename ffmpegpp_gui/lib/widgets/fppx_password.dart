@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/fppx2_service.dart';
 import '../widgets/toast.dart';
+import 'app_alert_dialog.dart';
 
 /// 「输入口令」对话框 —— 导入加密 .fppx 时使用。
 ///
@@ -39,6 +40,7 @@ class _FppxPasswordDialogState extends State<FppxPasswordDialog> {
   }
 
   Future<void> _submit() async {
+    if (_busy) return;
     final zh = widget.zh;
     if (_ctrl.text.isEmpty) {
       setState(() => _err = zh ? '口令不能为空' : 'Password cannot be empty');
@@ -48,8 +50,13 @@ class _FppxPasswordDialogState extends State<FppxPasswordDialog> {
       _busy = true;
       _err = null;
     });
-    final err = await widget.attempt(_ctrl.text);
-    if (!mounted) return;
+    String? err;
+    try {
+      err = await widget.attempt(_ctrl.text);
+    } catch (_) {
+      err = zh ? '验证口令失败，请重试' : 'Unable to verify password. Please try again.';
+    }
+    if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
     if (err == null) {
       Navigator.pop(context, _ctrl.text);
       return;
@@ -64,24 +71,33 @@ class _FppxPasswordDialogState extends State<FppxPasswordDialog> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final zh = widget.zh;
-    return AlertDialog(
-      title: Row(children: [
-        Icon(Icons.lock_outline, size: 20, color: scheme.primary),
-        const SizedBox(width: 8),
-        Text(zh ? '输入配置口令' : 'Enter Password',
-            style: TextStyle(color: scheme.onSurface)),
-      ]),
-      content: SizedBox(
-        width: 340,
-        child: Column(
+    return PopScope<String>(
+      canPop: !_busy,
+      child: AppAlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.lock_outline, size: 20, color: scheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                zh ? '输入配置口令' : 'Enter Password',
+                style: TextStyle(color: scheme.onSurface),
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 340,
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                  zh
-                      ? '该配置文件已加密，请输入口令以解密并打开。'
-                      : 'This config file is encrypted. Enter the password to open it.',
-                  style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+                zh
+                    ? '该配置文件已加密，请输入口令以解密并打开。'
+                    : 'This config file is encrypted. Enter the password to open it.',
+                style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+              ),
               const SizedBox(height: 12),
               TextField(
                 controller: _ctrl,
@@ -92,35 +108,49 @@ class _FppxPasswordDialogState extends State<FppxPasswordDialog> {
                 decoration: InputDecoration(
                   labelText: zh ? '口令' : 'Password',
                   labelStyle: TextStyle(color: scheme.onSurfaceVariant),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                   isDense: true,
                 ),
                 style: TextStyle(fontSize: 13, color: scheme.onSurface),
               ),
               if (_err != null) ...[
                 const SizedBox(height: 10),
-                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Icon(Icons.error_outline, size: 14, color: scheme.error),
-                  const SizedBox(width: 4),
-                  Expanded(
-                      child: Text(_err!, style: TextStyle(fontSize: 12, color: scheme.error))),
-                ]),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.error_outline, size: 14, color: scheme.error),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        _err!,
+                        style: TextStyle(fontSize: 12, color: scheme.error),
+                      ),
+                    ),
+                  ],
+                ),
               ],
-            ]),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: _busy ? null : () => Navigator.pop(context),
+            child: Text(zh ? '取消' : 'Cancel'),
+          ),
+          FilledButton(
+            onPressed: _busy ? null : _submit,
+            child: _busy
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(zh ? '解密并打开' : 'Unlock'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: _busy ? null : () => Navigator.pop(context),
-          child: Text(zh ? '取消' : 'Cancel'),
-        ),
-        FilledButton(
-          onPressed: _busy ? null : _submit,
-          child: _busy
-              ? const SizedBox(
-                  width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-              : Text(zh ? '解密并打开' : 'Unlock'),
-        ),
-      ],
     );
   }
 }
@@ -158,7 +188,9 @@ Future<FppxImportResult?> importFppxWithPassword(
         }
         if (r.errors.isNotEmpty) return r.errors.join('\n');
         return r.error ??
-            (zh ? '口令错误，或文件已损坏 / 被篡改' : 'Wrong password, or the file is corrupted');
+            (zh
+                ? '口令错误，或文件已损坏 / 被篡改'
+                : 'Wrong password, or the file is corrupted');
       },
     ),
   );

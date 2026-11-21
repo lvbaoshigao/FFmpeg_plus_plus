@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:liquid_glass_tab_bar/liquid_glass_tab_bar.dart';
 import 'package:provider/provider.dart';
 
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
+import '../theme/mobile_ui.dart';
+import 'liquid_glass_fallback.dart';
 import 'mobile_bottom_nav.dart' show NavGlassShell, navGlassPalOf, navGlassLook;
 import 'selection_highlight.dart';
 import 'tabler_icon.dart';
@@ -45,6 +48,31 @@ class AppLiquidTabBar extends StatelessWidget {
   final Color? unselectedColor;
   final LiquidGlassTabBarStyle style;
 
+  /// Shared geometry for parents that must reserve space for a floating bar.
+  static LiquidGlassTabBarStyle resolveStyle(
+    BuildContext context,
+    LiquidGlassTabBarStyle style,
+  ) => _tabStyleOf(context, style);
+
+  /// Height of this bar's painted host after the caller removes bottom safe
+  /// area padding. The value includes the top droplet/shadow room and the
+  /// configured bottom gap, and follows the active text scaler.
+  static double heightOf(
+    BuildContext context, [
+    LiquidGlassTabBarStyle style = kAppLiquidTabBarStyle,
+  ]) {
+    final effective = _tabStyleOf(context, style);
+    return effective.barHeight +
+        _tabBarTopPadding +
+        LiquidGlassTabBar.bottomGapOf(context, effective);
+  }
+
+  /// Total clearance needed below scrollable content, including the safe area.
+  static double clearanceOf(
+    BuildContext context, [
+    LiquidGlassTabBarStyle style = kAppLiquidTabBarStyle,
+  ]) => MediaQuery.paddingOf(context).bottom + heightOf(context, style);
+
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
@@ -54,29 +82,90 @@ class AppLiquidTabBar extends StatelessWidget {
     final indicatorStyle = context.select<AppState?, String>(
       (state) => state?.config.selectionIndicatorStyle ?? 'theme',
     );
-    // The hosted package exposes layout and item colors, but no indicator
-    // builder. Retain its original refracting droplet only for liquid mode.
-    if (indicatorStyle == 'liquid' &&
+    final effectiveStyle = _tabStyleOf(context, style);
+    // Mobile uses one backdrop and one content row for every indicator style.
+    if (!isMobilePlatform &&
+        indicatorStyle == 'liquid' &&
+        MediaQuery.textScalerOf(context).scale(10.5) <= 12 &&
         !MediaQuery.disableAnimationsOf(context) &&
         !MediaQuery.highContrastOf(context)) {
-      return LiquidGlassTabBar(
-        currentIndex: currentIndex,
-        onTap: onTap,
-        onTapIntercept: onTapIntercept,
-        selectedColor: selectedColor ?? theme.colorScheme.primary,
-        unselectedColor: unselectedColor ?? theme.colorScheme.onSurfaceVariant,
-        style: style,
-        items: items,
+      return _FloatingTabBarFrame(
+        horizontalMargin: style.horizontalMargin,
+        child: LiquidGlassTabBar(
+          currentIndex: currentIndex,
+          onTap: onTap,
+          onTapIntercept: onTapIntercept,
+          selectedColor: selectedColor ?? theme.colorScheme.primary,
+          unselectedColor:
+              unselectedColor ?? theme.colorScheme.onSurfaceVariant,
+          style: effectiveStyle,
+          items: items,
+        ),
       );
     }
-    return _StyledAppTabBar(bar: this, indicatorStyle: indicatorStyle);
+    return _FloatingTabBarFrame(
+      horizontalMargin: style.horizontalMargin,
+      child: _StyledAppTabBar(bar: this, indicatorStyle: indicatorStyle),
+    );
   }
 }
 
-/// Keeps the hosted tab geometry while the shared indicator owns its material.
-///
-/// The fallback supports tap, drag-release, long press, keyboard activation,
-/// and interception. Liquid-only droplet deformation stays in the hosted bar.
+/// Restricts the painted surface, while keeping margins transparent and tappable
+/// content clear of landscape cutouts.
+class _FloatingTabBarFrame extends StatelessWidget {
+  const _FloatingTabBarFrame({
+    required this.horizontalMargin,
+    required this.child,
+  });
+
+  final double horizontalMargin;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    top: false,
+    bottom: false,
+    child: Align(
+      alignment: Alignment.bottomCenter,
+      heightFactor: 1,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: MobileUi.navMaxWidth + horizontalMargin * 2,
+        ),
+        child: child,
+      ),
+    ),
+  );
+}
+
+const double _tabBarTopPadding = 6;
+
+LiquidGlassTabBarStyle _tabStyleOf(
+  BuildContext context,
+  LiquidGlassTabBarStyle style,
+) {
+  final labelSize = style.labelStyle?.fontSize ?? 10.5;
+  final labelHeight =
+      MediaQuery.textScalerOf(context).scale(labelSize) *
+      (style.labelStyle?.height ?? 1.2);
+  final contentHeight = style.iconSize + 6 + labelHeight + 8;
+  final mobileCapsuleHeight = contentHeight.clamp(
+    isMobilePlatform && style.capsuleHeight < 48 ? 48.0 : style.capsuleHeight,
+    double.infinity,
+  );
+  return LiquidGlassTabBarStyle(
+    capsuleHeight: isMobilePlatform ? mobileCapsuleHeight : style.capsuleHeight,
+    capsuleInset: style.capsuleInset,
+    capsuleOverhang: style.capsuleOverhang,
+    horizontalMargin: style.horizontalMargin,
+    bottomGap: style.bottomGap,
+    iconSize: style.iconSize,
+    labelStyle: style.labelStyle,
+  );
+}
+
+/// Keeps the shared tab geometry and supports taps, drags, long presses,
+/// keyboard activation, and action interception.
 class _StyledAppTabBar extends StatefulWidget {
   const _StyledAppTabBar({required this.bar, required this.indicatorStyle});
 
@@ -114,7 +203,7 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
   @override
   Widget build(BuildContext context) {
     final bar = widget.bar;
-    final style = bar.style;
+    final style = _tabStyleOf(context, bar.style);
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final hasAppState = context.select<AppState?, bool>(
@@ -126,18 +215,27 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
         : navGlassLook(scheme, theme.brightness == Brightness.dark, pal);
     final margins = EdgeInsets.fromLTRB(
       style.horizontalMargin,
-      6,
+      _tabBarTopPadding,
       style.horizontalMargin,
       MediaQuery.paddingOf(context).bottom +
           LiquidGlassTabBar.bottomGapOf(context, style),
     );
     final radius = style.barHeight / 2;
+    final mobile = isMobilePlatform;
+    final neutralTrack = mobile && widget.indicatorStyle == 'liquid';
+    final trackTint = look?.tint ?? scheme.surfaceContainerHigh;
+    final rtl = Directionality.of(context) == TextDirection.rtl;
     final track = DecoratedBox(
       decoration: BoxDecoration(
-        color: look?.style == 'liquid'
+        color: mobile && pal == null || look?.style == 'liquid'
             ? Colors.transparent
-            : look?.tint ?? scheme.surfaceContainerHigh,
+            : neutralTrack
+            ? neutralGray(trackTint)
+            : trackTint,
         borderRadius: BorderRadius.circular(radius),
+        border: mobile && (look?.solid ?? false)
+            ? Border.all(color: scheme.onSurface.withValues(alpha: 0.16))
+            : null,
       ),
       child: Padding(
         padding: EdgeInsets.symmetric(
@@ -149,27 +247,50 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final slotWidth = constraints.maxWidth / bar.items.length;
+              if (slotWidth <= 0) return const SizedBox.shrink();
               final reducedMotion = MediaQuery.disableAnimationsOf(context);
+              final lastSlot = bar.items.length - 1.0;
+              double positionFor(double dx) {
+                final slot = dx / slotWidth - 0.5;
+                return (rtl ? lastSlot - slot : slot).clamp(0.0, lastSlot);
+              }
+
               final staticRows = _StaticTabRows(
                 normal: Row(
                   children: [
                     for (var index = 0; index < bar.items.length; index++)
-                      Expanded(child: _interactiveItem(context, index)),
+                      Expanded(child: _interactiveItem(context, index, style)),
                   ],
                 ),
-                selected: Row(
-                  children: [
-                    for (var index = 0; index < bar.items.length; index++)
-                      Expanded(child: _itemContent(context, index, true)),
-                  ],
-                ),
+                selected: mobile
+                    ? null
+                    : Row(
+                        children: [
+                          for (var index = 0; index < bar.items.length; index++)
+                            Expanded(
+                              child: _itemContent(context, index, true, style),
+                            ),
+                        ],
+                      ),
               );
-              Rect selectionRect(double position) => Rect.fromLTWH(
-                position * slotWidth - style.capsuleOverhang,
-                0,
-                slotWidth + style.capsuleOverhang * 2,
-                style.capsuleHeight,
-              );
+              Rect selectionRect(double position) {
+                final x = (rtl ? lastSlot - position : position) * slotWidth;
+                // Leave breathing room around the inset and keep the entire
+                // slot available to touch and keyboard users.
+                return mobile
+                    ? Rect.fromLTWH(
+                        x + 3,
+                        2,
+                        (slotWidth - 6).clamp(0.0, slotWidth),
+                        style.capsuleHeight - 4,
+                      )
+                    : Rect.fromLTWH(
+                        x - style.capsuleOverhang,
+                        0,
+                        slotWidth + style.capsuleOverhang * 2,
+                        style.capsuleHeight,
+                      );
+              }
 
               return GestureDetector(
                 key: const ValueKey('app-tab-drag-surface'),
@@ -181,24 +302,18 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
                 onHorizontalDragUpdate: (details) {
                   _dragPosition.value =
                       ((_dragPosition.value ?? bar.currentIndex.toDouble()) +
-                              (details.primaryDelta ?? 0) / slotWidth)
+                              (details.primaryDelta ?? 0) /
+                                  slotWidth *
+                                  (rtl ? -1 : 1))
                           .clamp(0.0, bar.items.length - 1.0);
                 },
                 onHorizontalDragEnd: (_) => _finishDrag(),
                 onHorizontalDragCancel: _cancelDrag,
                 onLongPressStart: (details) {
-                  _dragPosition.value =
-                      (details.localPosition.dx / slotWidth - 0.5).clamp(
-                        0.0,
-                        bar.items.length - 1.0,
-                      );
+                  _dragPosition.value = positionFor(details.localPosition.dx);
                 },
                 onLongPressMoveUpdate: (details) {
-                  _dragPosition.value =
-                      (details.localPosition.dx / slotWidth - 0.5).clamp(
-                        0.0,
-                        bar.items.length - 1.0,
-                      );
+                  _dragPosition.value = positionFor(details.localPosition.dx);
                 },
                 onLongPressEnd: (_) => _finishDrag(),
                 onLongPressCancel: _cancelDrag,
@@ -212,34 +327,49 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
                         ),
                         duration: reducedMotion || dragPosition != null
                             ? Duration.zero
-                            : const Duration(milliseconds: 240),
+                            : Duration(milliseconds: mobile ? 165 : 240),
                         curve: Curves.easeOutCubic,
                         child: rows,
                         builder: (context, position, staticRows) {
                           final rows = staticRows! as _StaticTabRows;
-                          final rect = selectionRect(position);
+                          final rect = selectionRect(
+                            reducedMotion
+                                ? dragPosition ?? bar.currentIndex.toDouble()
+                                : position,
+                          );
                           return Stack(
                             clipBehavior: Clip.none,
                             children: [
                               Positioned.fromRect(
                                 rect: rect,
-                                child: SelectionHighlight(
-                                  key: const ValueKey('app-tab-selection'),
-                                  radius: style.capsuleHeight / 2,
-                                  style: widget.indicatorStyle,
-                                ),
+                                child: mobile
+                                    ? MobileGlassSelection(
+                                        key: const ValueKey(
+                                          'app-tab-selection',
+                                        ),
+                                        radius: rect.height / 2,
+                                        style: widget.indicatorStyle,
+                                      )
+                                    : SelectionHighlight(
+                                        key: const ValueKey(
+                                          'app-tab-selection',
+                                        ),
+                                        radius: style.capsuleHeight / 2,
+                                        style: widget.indicatorStyle,
+                                      ),
                               ),
                               rows.normal,
-                              Positioned.fill(
-                                child: IgnorePointer(
-                                  child: ExcludeSemantics(
-                                    child: ClipPath(
-                                      clipper: _TabSelectionClipper(rect),
-                                      child: rows.selected,
+                              if (rows.selected != null)
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: ExcludeSemantics(
+                                      child: ClipPath(
+                                        clipper: _TabSelectionClipper(rect),
+                                        child: rows.selected,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
                             ],
                           );
                         },
@@ -252,6 +382,31 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
       ),
     );
 
+    if (mobile) {
+      final shape = BorderRadius.circular(radius);
+      // Own the mobile material here so track, selection and configurable
+      // outline cannot acquire a second glass shell from a hosted nav wrapper.
+      Widget surface = look?.solid ?? false
+          ? track
+          : MobileGlassSurface(
+              borderRadius: shape,
+              tuning: pal?.tuning ?? const GlassTuning(),
+              opacity: pal?.op ?? 0.7,
+              liquid: look?.style != 'blur',
+              accent:
+                  !neutralTrack &&
+                      pal != null &&
+                      pal.follow &&
+                      pal.useThemeColor
+                  ? themedGlassBase(scheme, pal.tone, true, second: pal.second)
+                  : null,
+              child: track,
+            );
+      if (hasAppState) {
+        surface = withConfigurableBorder(context, surface, radius: shape);
+      }
+      return Padding(padding: margins, child: surface);
+    }
     return pal == null
         ? Padding(padding: margins, child: track)
         : NavGlassShell(
@@ -264,15 +419,54 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
   }
 
   void _handleFocusHighlight(int index, bool show) {
-    final next = show ? index : null;
+    final next = show ? index : (_focused == index ? null : _focused);
     if (_focused == next) return;
     setState(() => _focused = next);
   }
 
-  Widget _interactiveItem(BuildContext context, int index) {
+  Widget _interactiveItem(
+    BuildContext context,
+    int index,
+    LiquidGlassTabBarStyle style,
+  ) {
     final bar = widget.bar;
     final item = bar.items[index];
     final scheme = Theme.of(context).colorScheme;
+    final mobile = isMobilePlatform;
+    final itemShape = BorderRadius.circular(style.capsuleHeight / 2);
+    final face = InkWell(
+      onTap: () => _activate(index),
+      canRequestFocus: false,
+      excludeFromSemantics: true,
+      borderRadius: itemShape,
+      splashFactory: mobile ? NoSplash.splashFactory : null,
+      overlayColor: mobile
+          ? WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.pressed)) {
+                return scheme.onSurface.withValues(alpha: 0.08);
+              }
+              if (states.contains(WidgetState.hovered)) {
+                return scheme.onSurface.withValues(alpha: 0.05);
+              }
+              return null;
+            })
+          : null,
+      child: DecoratedBox(
+        position: DecorationPosition.foreground,
+        decoration: BoxDecoration(
+          borderRadius: itemShape,
+          border: _focused == index
+              ? Border.all(color: scheme.onSurface, width: 2)
+              : null,
+        ),
+        child: _itemContent(
+          context,
+          index,
+          mobile && index == bar.currentIndex,
+          style,
+        ),
+      ),
+    );
     return Semantics(
       key: ValueKey('app-tab-$index'),
       container: true,
@@ -297,67 +491,78 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
             },
           ),
         },
-        child: InkWell(
-          onTap: () => _activate(index),
-          canRequestFocus: false,
-          excludeFromSemantics: true,
-          borderRadius: BorderRadius.circular(bar.style.capsuleHeight / 2),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(bar.style.capsuleHeight / 2),
-              border: _focused == index
-                  ? Border.all(color: scheme.onSurface, width: 2)
-                  : null,
-            ),
-            child: _itemContent(context, index, false),
-          ),
-        ),
+        child: mobile
+            ? Material(type: MaterialType.transparency, child: face)
+            : face,
       ),
     );
   }
 
-  Widget _itemContent(BuildContext context, int index, bool selected) {
+  Widget _itemContent(
+    BuildContext context,
+    int index,
+    bool selected,
+    LiquidGlassTabBarStyle style,
+  ) {
     final bar = widget.bar;
     final item = bar.items[index];
     final scheme = Theme.of(context).colorScheme;
     final highContrast = MediaQuery.highContrastOf(context);
-    final color = selected
+    final mobile = isMobilePlatform;
+    final color = highContrast && mobile
+        ? scheme.onSurface
+        : selected
         ? bar.selectedColor ??
-              (highContrast ? scheme.onSurface : scheme.primary)
-        : bar.unselectedColor ?? scheme.onSurfaceVariant;
+              (highContrast || mobile ? scheme.onSurface : scheme.primary)
+        : bar.unselectedColor ??
+              (mobile
+                  ? Color.lerp(scheme.onSurface, scheme.onSurfaceVariant, 0.40)!
+                  : scheme.onSurfaceVariant);
     final icon =
         item.iconBuilder?.call(color) ??
         IconTheme.merge(
           data: IconThemeData(color: color, size: bar.style.iconSize),
           child: item.icon!,
         );
-    return SizedBox(
-      height: bar.style.capsuleHeight,
+    final content = item.label == null
+        ? icon
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                height: bar.style.iconSize + 6,
+                child: Center(child: icon),
+              ),
+              Text(
+                item.label!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  height: 1.2,
+                  fontWeight: mobile && selected
+                      ? FontWeight.w700
+                      : FontWeight.w500,
+                ).merge(bar.style.labelStyle).copyWith(color: color),
+              ),
+            ],
+          );
+    final itemSurface = SizedBox(
+      height: style.capsuleHeight,
       child: Center(
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: item.label == null
-              ? icon
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      height: bar.style.iconSize + 6,
-                      child: Center(child: icon),
-                    ),
-                    Text(
-                      item.label!,
-                      maxLines: 1,
-                      style: const TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w500,
-                      ).merge(bar.style.labelStyle).copyWith(color: color),
-                    ),
-                  ],
-                ),
-        ),
+        child: mobile
+            ? content
+            : FittedBox(fit: BoxFit.scaleDown, child: content),
       ),
     );
+    return mobile
+        ? Tooltip(
+            message: item.semanticLabel ?? item.label ?? '',
+            triggerMode: TooltipTriggerMode.manual,
+            child: itemSurface,
+          )
+        : itemSurface;
   }
 }
 
@@ -365,10 +570,10 @@ class _StaticTabRows extends StatelessWidget {
   const _StaticTabRows({required this.normal, required this.selected});
 
   final Widget normal;
-  final Widget selected;
+  final Widget? selected;
 
   @override
-  Widget build(BuildContext context) => Stack(children: [normal, selected]);
+  Widget build(BuildContext context) => normal;
 }
 
 class _TabSelectionClipper extends CustomClipper<Path> {
@@ -385,12 +590,12 @@ class _TabSelectionClipper extends CustomClipper<Path> {
       oldClipper.rect != rect;
 }
 
-/// 主界面与子页面共用的底栏尺寸：与历史主界面底部导航逐像素一致。
+/// 主界面与子页面共用的悬浮底栏尺寸；大字号会扩展内容高度。
 const LiquidGlassTabBarStyle kAppLiquidTabBarStyle = LiquidGlassTabBarStyle(
   capsuleHeight: 52,
   capsuleInset: 4,
-  horizontalMargin: 24,
-  bottomGap: 8,
+  horizontalMargin: MobileUi.navInsetH,
+  bottomGap: MobileUi.navBottomGap,
   iconSize: 22,
 );
 
@@ -429,7 +634,7 @@ class LiquidGlassMobileNav extends StatelessWidget {
     );
 
     final Widget bar;
-    if (navStyle == 'liquid') {
+    if (isMobilePlatform || navStyle == 'liquid') {
       bar = AppLiquidTabBar(
         currentIndex: index < 0 ? 0 : index,
         onTap: (tabIndex) => onSelected(_pageOrder[tabIndex]),
@@ -442,27 +647,53 @@ class LiquidGlassMobileNav extends StatelessWidget {
       // theme / gray / blur：NavGlassShell 提供胶囊外壳与玻璃效果，
       // 内容为一行等宽图标（与 AppLiquidTabBar 相同的图标与标签）。
       final pal = navGlassPalOf(context);
-      bar = NavGlassShell(
-        pal: pal,
-        radius: 26,
-        keyPrefix: 'bottomNav',
-        child: _FlatNavBar(
-          selectedIndex: index < 0 ? 0 : index,
-          onTap: (tabIndex) => onSelected(_pageOrder[tabIndex]),
-          items: items,
+      final look = navGlassLook(
+        Theme.of(context).colorScheme,
+        Theme.of(context).brightness == Brightness.dark,
+        pal,
+      );
+      bar = _FloatingTabBarFrame(
+        horizontalMargin: MobileUi.navInsetH,
+        child: NavGlassShell(
+          pal: pal,
+          radius: 26,
+          keyPrefix: 'bottomNav',
+          padding: EdgeInsets.fromLTRB(
+            MobileUi.navInsetH,
+            6,
+            MobileUi.navInsetH,
+            MediaQuery.paddingOf(context).bottom + MobileUi.navBottomGap,
+          ),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: look.tint,
+              borderRadius: BorderRadius.circular(26),
+            ),
+            child: _FlatNavBar(
+              selectedIndex: index < 0 ? 0 : index,
+              onTap: (tabIndex) => onSelected(_pageOrder[tabIndex]),
+              items: items,
+            ),
+          ),
         ),
       );
     }
 
-    return IgnorePointer(
-      ignoring: hidden,
-      child: AnimatedSlide(
-        offset: hidden ? const Offset(0, 1.2) : Offset.zero,
-        duration: MediaQuery.disableAnimationsOf(context)
-            ? Duration.zero
-            : const Duration(milliseconds: 240),
-        curve: Curves.easeInOutCubic,
-        child: bar,
+    return ExcludeFocus(
+      excluding: hidden,
+      child: ExcludeSemantics(
+        excluding: hidden,
+        child: IgnorePointer(
+          ignoring: hidden,
+          child: AnimatedSlide(
+            offset: hidden ? const Offset(0, 1.2) : Offset.zero,
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 240),
+            curve: Curves.easeInOutCubic,
+            child: bar,
+          ),
+        ),
       ),
     );
   }

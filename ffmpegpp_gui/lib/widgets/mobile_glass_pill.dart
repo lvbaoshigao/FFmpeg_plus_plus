@@ -55,15 +55,8 @@ class MobileGlassPill extends StatefulWidget {
 /// 药丸内紧凑圆形图标按钮 —— **全应用移动端顶栏动作按钮的唯一实现**。
 /// 与主界面（项目页）"搜索/导入/容器/+"按钮逐像素一致。
 ///
-/// 为什么不用 IconButton：Material IconButton 会按主题色渲染 splash/focus/hover，
-/// 在液态玻璃药丸里会显示一片主题色块（特别是搜索→关闭切换瞬间的涟漪 + 蓝色边框），
-/// 且自带 48×48 最小尺寸约束，会把药丸撑得比标题药丸更高。
-/// 这里手写一个透明 InkWell 的紧凑按钮：
-/// - 默认无背景；[bg] 传入后变成实心主题色圆形（用于"+"加号 CTA）
-/// - 使用全局轮廓内按压反馈，避免向外扩散的涟漪
-/// - 尺寸/图标/内边距统一取自 [MobileUi]（34/19/h1|h2）
-///
-/// 移动端横向内边距取 1（比桌面 2 更紧凑），与主界面一致。
+/// [size] controls the visible disk. The mobile touch area is at least 44
+/// logical pixels where constraints allow and includes the padding.
 class MobileGlassPillAction extends StatelessWidget {
   final IconData icon;
   final String tooltip;
@@ -94,24 +87,60 @@ class MobileGlassPillAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mobile = isMobilePlatform;
     final pad =
-        padding ??
-        EdgeInsets.symmetric(horizontal: isMobilePlatform ? 1 : 2, vertical: 2);
+        padding ?? EdgeInsets.symmetric(horizontal: mobile ? 1 : 2, vertical: 2);
+    final decoration = BoxDecoration(color: bg, shape: BoxShape.circle);
+    final glyph = SizedBox.square(
+      dimension: size,
+      child: Icon(icon, size: iconSize, color: color),
+    );
+    Widget face = Padding(
+      padding: pad,
+      // Paint colored disks on the same Material as the press and focus ink.
+      child: mobile && bg != null
+          ? Ink(decoration: decoration, child: glyph)
+          : DecoratedBox(decoration: decoration, child: glyph),
+    );
+    if (mobile) {
+      face = ConstrainedBox(
+        constraints: const BoxConstraints(
+          minWidth: MobileUi.pillHeight,
+          minHeight: MobileUi.pillHeight,
+        ),
+        child: Align(widthFactor: 1, heightFactor: 1, child: face),
+      );
+    }
+    final scheme = Theme.of(context).colorScheme;
+    final action = InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(mobile ? 22 : size / 2),
+      splashFactory: mobile ? NoSplash.splashFactory : null,
+      overlayColor: mobile
+          ? WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.pressed)) {
+                return scheme.onSurface.withValues(alpha: 0.10);
+              }
+              if (states.contains(WidgetState.focused)) {
+                return scheme.onSurface.withValues(alpha: 0.16);
+              }
+              if (states.contains(WidgetState.hovered)) {
+                return scheme.onSurface.withValues(alpha: 0.06);
+              }
+              return null;
+            })
+          : null,
+      child: face,
+    );
     return Tooltip(
       message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(size / 2),
-        child: Padding(
-          padding: pad,
-          child: Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
-            child: Icon(icon, size: iconSize, color: color),
-          ),
-        ),
-      ),
+      child: mobile
+          ? Semantics(
+              button: true,
+              enabled: onTap != null,
+              child: Material(type: MaterialType.transparency, child: action),
+            )
+          : action,
     );
   }
 }
@@ -150,8 +179,56 @@ class _PillPressPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_PillPressPainter oldDelegate) =>
-      oldDelegate.amount != amount || oldDelegate.color != color ||
+      oldDelegate.amount != amount ||
+      oldDelegate.color != color ||
       oldDelegate.radius != radius;
+}
+
+/// Directional edge light only: never wash a gradient across labels or icons.
+class _MobileGlassRimPainter extends CustomPainter {
+  const _MobileGlassRimPainter({
+    required this.radius,
+    required this.opacity,
+    required this.tuning,
+  });
+  final double radius;
+  final double opacity;
+  final GlassTuning tuning;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.shortestSide < 8 || tuning.edge <= 0 || opacity <= 0) return;
+    final rect = Offset.zero & size;
+    final shape = RRect.fromRectAndRadius(
+      rect.deflate(0.6),
+      Radius.circular(radius),
+    ).scaleRadii();
+    final strength = (opacity * tuning.edge).clamp(0.0, 1.0);
+    final angle = tuning.lightPos.clamp(0.0, 1.0);
+    final light = Alignment(-1 + 2 * angle, -1);
+    canvas.drawRRect(
+      shape,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0
+        ..shader = LinearGradient(
+          begin: light,
+          end: Alignment(-light.x, -light.y),
+          colors: [
+            Colors.white.withValues(alpha: 0.56 * strength),
+            Colors.white.withValues(alpha: 0.06 * strength),
+            Colors.white.withValues(alpha: 0.28 * strength),
+          ],
+          stops: const [0, 0.55, 1],
+        ).createShader(rect),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_MobileGlassRimPainter oldDelegate) =>
+      oldDelegate.radius != radius ||
+      oldDelegate.opacity != opacity ||
+      oldDelegate.tuning != tuning;
 }
 
 /// 药丸样式渲染相关的配置指纹，只有它变化时玻璃节点才重建。
@@ -212,11 +289,15 @@ class _PillGlassKey {
 class _MobileGlassPillState extends State<MobileGlassPill> {
   int? _pointer;
   Offset? _origin;
-  bool _pressed = false;
+  final _pressed = ValueNotifier(false);
+  bool _showFocus = false;
 
-  void _setPressed(bool value) {
-    if (_pressed == value) return;
-    setState(() => _pressed = value);
+  void _setPressed(bool value) => _pressed.value = value;
+
+  @override
+  void dispose() {
+    _pressed.dispose();
+    super.dispose();
   }
 
   void _pointerDown(PointerDownEvent event) {
@@ -244,23 +325,28 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
   Widget _pressSurface(Widget child) {
     final reduced = MediaQuery.disableAnimationsOf(context);
     final scheme = Theme.of(context).colorScheme;
-    return TweenAnimationBuilder<double>(
-      key: const ValueKey('pill_press_feedback'),
-      tween: Tween(end: _pressed ? 1 : 0),
-      duration: reduced
-          ? Duration.zero
-          : Duration(milliseconds: _pressed ? 75 : 165),
-      curve: Curves.easeOutCubic,
+    final color = MediaQuery.highContrastOf(context)
+        ? scheme.onSurface.withValues(alpha: 0.16)
+        : AppPressFeedback.softOverlay(scheme, true);
+    return ValueListenableBuilder<bool>(
+      valueListenable: _pressed,
       child: child,
-      builder: (context, amount, child) => CustomPaint(
-        foregroundPainter: _PillPressPainter(
-          amount: amount,
-          radius: widget.radius,
-          color: MediaQuery.highContrastOf(context)
-              ? scheme.onSurface.withValues(alpha: 0.16)
-              : AppPressFeedback.softOverlay(scheme, true),
-        ),
+      builder: (context, pressed, child) => TweenAnimationBuilder<double>(
+        key: const ValueKey('pill_press_feedback'),
+        tween: Tween(end: pressed ? 1 : 0),
+        duration: reduced
+            ? Duration.zero
+            : Duration(milliseconds: pressed ? 70 : 125),
+        curve: Curves.easeOutCubic,
         child: child,
+        builder: (context, amount, child) => CustomPaint(
+          foregroundPainter: _PillPressPainter(
+            amount: amount,
+            radius: widget.radius,
+            color: color,
+          ),
+          child: child,
+        ),
       ),
     );
   }
@@ -309,15 +395,23 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     final GlassTuning tuning = key.tuning;
     final double pillSigma = effectiveGlassSigma(tuning.blur);
     final double tScale = tuning.tintScale;
-    final style = widget.style ?? key.style;
+    final style = SurfaceStyle.normalize(widget.style ?? key.style);
+    if (isMobilePlatform) return _buildMobile(scheme, key, style);
     final op = key.op.clamp(0.0, 1.0);
     // 玻璃样式（liquid/blur）的 tint 与底部导航栏对齐：* 255 无截断，
     // 让玻璃质感与底部栏一致；纯色样式（theme/gray）强制完全不透明（255）
     // ——纯色语义即实心，不再跟随 cardOpacity（此前 ~88% 保底仍透底）。
     final solid = style == SurfaceStyle.theme || style == SurfaceStyle.gray;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final liquid = style == SurfaceStyle.liquid;
+    // Floating glass transmits the content, rather than painting a gray card.
+    // Keep the existing opaque styles and a stronger accessibility scrim.
+    final tintWeight = liquid && isMobilePlatform
+        ? (highContrast ? (isDark ? 210 : 230) : (isDark ? 72 : 88))
+        : (isDark ? 100 : 128);
     final baseAlpha = solid
         ? 255
-        : ((op * (isDark ? 100 : 128)) * tScale).round().clamp(0, 255);
+        : ((op * tintWeight) * tScale).round().clamp(0, 255);
     final baseColor = style == SurfaceStyle.theme
         // Neutral mode retains a monochrome solid surface.
         ? (key.useThemeColor
@@ -344,7 +438,7 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     final edgeBlur = edgeBorder(80 / 255, 0.5, tuning.edge);
     final edgeWhite = edgeBorder(isDark ? 0.12 : 0.18, 0.7, tuning.edge);
     final gpuGlass = gpuGlassEnabledOf(context);
-    final inner = Container(
+    Widget inner = Container(
       padding: widget.padding,
       decoration: BoxDecoration(
         color: style == SurfaceStyle.liquid && gpuGlass
@@ -382,6 +476,17 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
             ),
     );
 
+    if (liquid && gpuGlass) {
+      inner = CustomPaint(
+        foregroundPainter: _MobileGlassRimPainter(
+          radius: widget.radius,
+          opacity: op,
+          tuning: tuning,
+        ),
+        child: inner,
+      );
+    }
+
     Widget pill;
     if (solid) {
       pill = inner;
@@ -418,26 +523,24 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       //    变化时才真的销毁/重建液态玻璃节点；普通 AppState notify（进度、
       //    日志、任务状态等）会让 key 不变，Element 复用，shader 内部状态稳定；
       // 3) OCLiquidGlass 使用独立 key（避免与父级 OCLiquidGlassGroup 重复）；
-      // 4) RepaintBoundary 放在 OCLiquidGlassGroup 内部、OCLiquidGlass 外部，
-      //    让 shader 能正确采样画布背景，同时隔离内部重绘。
+      // Do not isolate the backdrop in a RepaintBoundary: content must remain
+      // live as it scrolls behind this floating control.
       final glassKey = ValueKey<_PillGlassKey>(key);
       final innerKey = ValueKey<String>('${key.hashCode}_inner');
-      pill = RepaintBoundary(
-        child: OCLiquidGlassGroup(
-          key: glassKey,
-          // 参数化 settings（带实例缓存，参数不变即复用同一实例）
-          settings: liquidGlassSettingsFor(tuning),
-          child: OCLiquidGlass(
-            key: innerKey,
-            borderRadius: widget.radius,
-            color: tint,
-            shadow: BoxShadow(
-              color: Colors.black.withAlpha(isDark ? 60 : 22),
-              blurRadius: 16,
-              offset: const Offset(0, 5),
-            ),
-            child: inner,
+      pill = OCLiquidGlassGroup(
+        key: glassKey,
+        // 参数化 settings（带实例缓存，参数不变即复用同一实例）
+        settings: liquidGlassSettingsFor(tuning, soft: true),
+        child: OCLiquidGlass(
+          key: innerKey,
+          borderRadius: widget.radius,
+          color: tint,
+          shadow: BoxShadow(
+            color: Colors.black.withAlpha(isDark ? 60 : 22),
+            blurRadius: 16,
+            offset: const Offset(0, 5),
           ),
+          child: inner,
         ),
       );
     } else {
@@ -462,14 +565,79 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
     // 「样式 → 添加边框」：开启时在药丸表面之上叠一层同圆角描边（关闭时原样
     // 返回 pill，零额外层级）。放在点击/外边距包装之内：描边严格贴合药丸本体
     //（而不是含 margin 的外框），按压仅影响前景光层。
-    Widget result = withConfigurableBorder(
+    final result = withConfigurableBorder(
       context,
       pill,
       radius: BorderRadius.circular(widget.radius),
     );
 
-    if (widget.pressable || widget.onTap != null) {
-      // Raw pointer feedback preserves child gestures and cancels cleanly.
+    return _finish(result);
+  }
+
+  Widget _buildMobile(ColorScheme scheme, _PillGlassKey key, String style) {
+    final corners = BorderRadius.circular(widget.radius);
+    final height = widget.height;
+    final padding = widget.padding.resolve(Directionality.of(context));
+    Widget surface = Padding(
+      padding: padding,
+      child: height == null
+          ? widget.child
+          : SizedBox(
+              height: (height - padding.vertical).clamp(0.0, double.infinity),
+              child: Center(widthFactor: 1, child: widget.child),
+            ),
+    );
+    final solid = style == SurfaceStyle.theme || style == SurfaceStyle.gray;
+    if (solid) {
+      final tint = style == SurfaceStyle.theme && key.useThemeColor
+          ? harmonizedAccent(scheme, key.tone)
+          : AppNeutralSurface.card(scheme.brightness);
+      surface = DecoratedBox(
+        decoration: BoxDecoration(color: tint, borderRadius: corners),
+        child: surface,
+      );
+    } else {
+      surface = MobileGlassSurface(
+        borderRadius: corners,
+        tuning: key.tuning,
+        opacity: key.op,
+        liquid: style != SurfaceStyle.blur,
+        accent: key.follow && key.useThemeColor
+            ? themedGlassBase(scheme, key.tone, true, second: key.second)
+            : null,
+        child: surface,
+      );
+    }
+    return _finish(withConfigurableBorder(context, surface, radius: corners));
+  }
+
+  Widget _finish(Widget result) {
+    final activate = widget.onTap;
+    if (widget.pressable || activate != null) {
+      if (_showFocus && activate != null) {
+        result = DecoratedBox(
+          position: DecorationPosition.foreground,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(widget.radius),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.onSurface,
+              width: 2,
+            ),
+          ),
+          child: result,
+        );
+      }
+      result = _pressSurface(result);
+      if (activate != null && isMobilePlatform) {
+        result = ConstrainedBox(
+          constraints: const BoxConstraints(
+            minWidth: MobileUi.pillHeight,
+            minHeight: MobileUi.pillHeight,
+          ),
+          child: Align(widthFactor: 1, heightFactor: 1, child: result),
+        );
+      }
+      // Pointer feedback preserves child gestures and cancels on scroll.
       result = Listener(
         behavior: HitTestBehavior.opaque,
         onPointerDown: _pointerDown,
@@ -478,17 +646,34 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
         onPointerCancel: _pointerEnd,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: widget.onTap,
-          child: _pressSurface(result),
+          onTap: activate,
+          child: result,
         ),
       );
-    }
+      if (activate != null) {
+        Object? invoke(Intent _) {
+          activate();
+          return null;
+        }
 
-    // 应用 margin
-    if (widget.margin != null) {
-      result = Padding(padding: widget.margin!, child: result);
+        result = Semantics(
+          button: true,
+          child: FocusableActionDetector(
+            onShowFocusHighlight: (show) {
+              if (_showFocus != show) setState(() => _showFocus = show);
+            },
+            actions: {
+              ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: invoke),
+              ButtonActivateIntent: CallbackAction<ButtonActivateIntent>(
+                onInvoke: invoke,
+              ),
+            },
+            child: result,
+          ),
+        );
+      }
     }
-
-    return result;
+    final margin = widget.margin;
+    return margin == null ? result : Padding(padding: margin, child: result);
   }
 }

@@ -3,6 +3,7 @@ import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 
 import '../models/models.dart';
 import '../theme/app_control_size.dart';
+import 'app_alert_dialog.dart';
 import 'app_card.dart';
 import 'app_slider.dart';
 import 'liquid_modality_pills.dart';
@@ -208,14 +209,15 @@ class _ModelEditorSheetState extends State<ModelEditorSheet> {
     final title = widget.isNew
         ? (widget.isZh ? '添加自定义模型' : 'Add custom model')
         : (widget.isZh ? '编辑模型' : 'Edit model');
-    final actionStyle = AppControlSize.large
-        .buttonStyle(filled: true)
-        .copyWith(
-          minimumSize: const WidgetStatePropertyAll(Size(48, 48)),
-          padding: const WidgetStatePropertyAll(
-            EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          ),
-        );
+    final actionMinimum = const WidgetStatePropertyAll(Size(48, 48));
+    final cancelActionStyle = AppDialogAction.styleOf(
+      context,
+      AppDialogActionRole.cancel,
+    ).copyWith(minimumSize: actionMinimum);
+    final primaryActionStyle = AppDialogAction.styleOf(
+      context,
+      AppDialogActionRole.primary,
+    ).copyWith(minimumSize: actionMinimum);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -328,7 +330,7 @@ class _ModelEditorSheetState extends State<ModelEditorSheet> {
                           Expanded(
                             child: TextButton(
                               key: const ValueKey('model_sheet_cancel'),
-                              style: actionStyle,
+                              style: cancelActionStyle,
                               onPressed: () => Navigator.of(context).maybePop(),
                               child: Text(widget.isZh ? '取消' : 'Cancel'),
                             ),
@@ -337,7 +339,7 @@ class _ModelEditorSheetState extends State<ModelEditorSheet> {
                           Expanded(
                             child: FilledButton(
                               key: const ValueKey('model_sheet_done'),
-                              style: actionStyle,
+                              style: primaryActionStyle,
                               onPressed: _done,
                               child: Text(widget.isZh ? '完成' : 'Done'),
                             ),

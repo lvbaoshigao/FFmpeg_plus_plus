@@ -102,6 +102,94 @@ void main() {
       await tester.pump();
       expect(find.byKey(const ValueKey('task-hide-one')), findsNothing);
     });
+    testWidgets('should cap cards, prioritize active tasks, and open the queue', (
+      tester,
+    ) async {
+      final state = QueueState()
+        ..replace([
+          task('pending-1'),
+          task('pending-2'),
+          task('pending-3'),
+          task('running', status: TaskStatus.processing),
+          task('paused', status: TaskStatus.paused),
+        ]);
+      addTearDown(state.dispose);
+      await tester.pumpWidget(
+        harness(
+          state,
+          const Stack(children: [Positioned.fill(child: TaskFloatLayer())]),
+        ),
+      );
+
+      expect(
+        find.byKey(const ValueKey('task-float-position-running')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('task-float-position-paused')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('task-float-position-pending-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('task-float-position-pending-2')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('task-float-position-pending-3')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('task-float-queue')), findsOneWidget);
+      expect(find.text('2'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('task-float-queue')));
+      expect(state.selectedNav, 1);
+    });
+
+    testWidgets('should bound minimized dock and preserve restore access', (
+      tester,
+    ) async {
+      final state = QueueState()
+        ..replace(List.generate(7, (index) => task('dock-$index')));
+      addTearDown(state.dispose);
+      await tester.pumpWidget(
+        harness(
+          state,
+          const Stack(children: [Positioned.fill(child: TaskFloatLayer())]),
+        ),
+      );
+
+      for (final id in [2, 3, 4, 5, 6]) {
+        await tester.tap(
+          find.byKey(ValueKey('task-minimize-dock-$id')),
+        );
+        await tester.pump();
+      }
+
+      for (final id in [2, 3, 4, 5]) {
+        expect(
+          find.byKey(ValueKey('task-dock-dock-$id')),
+          findsOneWidget,
+        );
+      }
+      expect(
+        find.byKey(const ValueKey('task-dock-dock-6')),
+        findsNothing,
+      );
+      expect(find.byKey(const ValueKey('task-float-queue')), findsOneWidget);
+      expect(find.text('1'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('task-dock-dock-2')));
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('task-float-position-dock-2')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('task-float-queue')), findsNothing);
+    });
+
     testWidgets('should pass outside taps through and remove terminal tasks', (
       tester,
     ) async {

@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_neutral_surface.dart';
 import '../theme/mobile_visual_theme.dart';
@@ -22,6 +23,106 @@ class SurfaceStyle {
   static const String blur = 'blur';
   static const String gray = 'gray';
   static const List<String> all = [theme, liquid, blur, gray];
+
+  /// Maps the persisted legacy `none` value to its opaque theme-colored surface.
+  static String normalize(String style) => style == 'none' ? theme : style;
+}
+
+/// Shared matte smoke-glass surface for mobile cards and content panels.
+///
+/// Unlike the floating controls, cards have no moving highlights, colored
+/// gradients, or drop shadow. A single clipped backdrop pass keeps the page
+/// legible while retaining a small amount of background detail.
+class MobileSmokeGlassSurface extends StatelessWidget {
+  final Widget child;
+  final BorderRadius borderRadius;
+  final EdgeInsetsGeometry? padding;
+  final double sigma;
+  final double opacity;
+  final double tintScale;
+  final double edge;
+  final Color? themeAccent;
+
+  const MobileSmokeGlassSurface({
+    super.key,
+    required this.child,
+    required this.borderRadius,
+    required this.sigma,
+    required this.opacity,
+    required this.tintScale,
+    required this.edge,
+    this.padding,
+    this.themeAccent,
+  });
+
+  /// Resolves a low-saturation smoke tint independent of dynamic theme seeds.
+  @visibleForTesting
+  static Color tint({
+    required Brightness brightness,
+    required double opacity,
+    required double tintScale,
+    Color? themeAccent,
+    bool highContrast = false,
+  }) {
+    final neutral = brightness == Brightness.dark
+        ? const Color(0xFF303234)
+        : const Color(0xFFE4E5E6);
+    final base = themeAccent == null
+        ? neutral
+        : Color.lerp(neutral, themeAccent.withAlpha(255), 0.045)!;
+    final safeOpacity = opacity.isFinite ? opacity.clamp(0.0, 1.0) : 0.0;
+    final safeScale = tintScale.isFinite ? tintScale.clamp(0.0, 4.0) : 0.0;
+    // Content surfaces need a density floor: even a fully blurred white
+    // wallpaper otherwise washes out small onSurfaceVariant labels in dark
+    // mode. Opacity and clarity still adjust the transmitted detail above it.
+    final alpha = highContrast
+        ? 1.0
+        : (0.88 + (safeOpacity - 0.7) * 0.12 + (safeScale - 1) * 0.07).clamp(
+            0.86,
+            0.96,
+          );
+    return base.withValues(alpha: alpha);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final reduced = mobileGlassEffectsReducedOf(context);
+    final blur = reduced ? 0.0 : mobileGlassSigma(sigma);
+    final tint = MobileSmokeGlassSurface.tint(
+      brightness: brightness,
+      opacity: opacity,
+      tintScale: tintScale,
+      themeAccent: themeAccent,
+      highContrast: highContrast,
+    );
+    final edgeStrength = edge.isFinite ? edge.clamp(0.0, 2.0) : 0.0;
+    final borderAlpha = highContrast ? 0.48 : (0.12 * edgeStrength);
+    final borderWidth = highContrast
+        ? 1.0
+        : (0.65 * edgeStrength).clamp(0.0, 0.9);
+    final surface = Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: tint,
+        borderRadius: borderRadius,
+        border: Border.all(
+          color: (brightness == Brightness.dark ? Colors.white : Colors.black)
+              .withValues(alpha: borderAlpha),
+          width: borderWidth,
+        ),
+      ),
+      child: child,
+    );
+
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: blur <= 0
+          ? surface
+          : BackdropFilter(filter: cachedGlassBlur(blur), child: surface),
+    );
+  }
 }
 
 /// 卡片玻璃渲染所需的「配置指纹」：只有它变化时才允许重建
@@ -159,7 +260,7 @@ class _AppCardState extends State<AppCard> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final style = widget.style;
+    final style = SurfaceStyle.normalize(widget.style);
     // 仅订阅玻璃渲染相关字段，进度/日志等高频 notify 不会重建卡片。
     final key = context.select<AppState, _CardGlassKey>(
       (s) => _keyOf(s, style),
@@ -246,7 +347,21 @@ class _AppCardState extends State<AppCard> {
     );
 
     Widget core;
-    if (solidStyle) {
+    if (isMobilePlatform && !solidStyle) {
+      // Mobile cards share one matte smoke-glass treatment. Keep the existing
+      // opacity / clarity / blur controls, while ignoring decorative liquid
+      // highlights and theme gradients on this content-heavy surface.
+      core = MobileSmokeGlassSurface(
+        borderRadius: br,
+        padding: widget.onTap == null ? widget.padding : null,
+        sigma: tuning.blur,
+        opacity: op,
+        tintScale: tScale,
+        edge: tuning.edge,
+        themeAccent: key.useThemeColor && key.follow ? accent : null,
+        child: inner,
+      );
+    } else if (solidStyle) {
       // 纯色卡片：强制完全不透明（255）。此前 alpha 跟随 cardOpacity（保底 ~88%），
       // 用户反馈「纯色模式下卡片仍然有透明度」——纯色语义就是实心，不再透底。
       final base = solidBase;

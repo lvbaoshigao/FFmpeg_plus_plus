@@ -5,8 +5,11 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import '../../providers/app_state.dart';
 import '../../services/frame_preview.dart';
 import '../../theme/app_semantic_colors.dart';
+import '../app_alert_dialog.dart';
 
 class VideoCropStepEditor extends StatefulWidget {
   final Map<String, dynamic> params;
@@ -17,6 +20,11 @@ class VideoCropStepEditor extends StatefulWidget {
   final double fps;
   final bool isZh;
 
+  /// Null uses the default generator with diagnostics from AppState.
+  /// Custom loaders retain their original signatures for deterministic tests.
+  final Future<String?> Function(String, double, {int width})? generatePreview;
+  final Future<String?> Function(String, double)? generateFullFrame;
+
   const VideoCropStepEditor({
     super.key,
     required this.params,
@@ -26,6 +34,8 @@ class VideoCropStepEditor extends StatefulWidget {
     required this.videoHeight,
     required this.fps,
     this.isZh = true,
+    this.generatePreview,
+    this.generateFullFrame,
   });
 
   @override
@@ -36,8 +46,12 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
   Map<String, dynamic> get p => widget.params;
   late TextEditingController _frameCtrl;
   String? _framePath;
-  String? _fullFramePath;
+  Future<String?>? _fullFrame;
+  double? _previewTime;
+  int? _previewFrameNumber;
+  int _frameRequest = 0;
   bool _extracting = false;
+  bool _selectionOpen = false;
 
   @override
   void initState() {
@@ -53,6 +67,30 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
   }
 
   @override
+  void didUpdateWidget(covariant VideoCropStepEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.videoPath != widget.videoPath ||
+        oldWidget.videoWidth != widget.videoWidth ||
+        oldWidget.videoHeight != widget.videoHeight ||
+        oldWidget.fps != widget.fps ||
+        !identical(oldWidget.params, widget.params) ||
+        (_previewFrameNumber != null &&
+            _previewFrameNumber != _frameNumber)) {
+      _invalidatePreview();
+      _frameCtrl.text = '$_frameNumber';
+    }
+  }
+
+  void _invalidatePreview() {
+    _frameRequest++;
+    _framePath = null;
+    _fullFrame = null;
+    _previewTime = null;
+    _previewFrameNumber = null;
+    _extracting = false;
+  }
+
+  @override
   void dispose() {
     _frameCtrl.dispose();
     super.dispose();
@@ -63,25 +101,55 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
     widget.onChanged();
   }
 
+  int get _frameNumber => (p['frame_number'] as num?)?.toInt() ?? 0;
+
   double get _frameTime {
-    final frame = (p['frame_number'] as num?)?.toInt() ?? 0;
     final fps = widget.fps > 0 ? widget.fps : 30.0;
-    return frame / fps;
+    return _frameNumber / fps;
   }
 
   Future<void> _extractFrame() async {
-    setState(() => _extracting = true);
-    final time = _frameTime;
+    if (!mounted) return;
+    setState(() {
+      _invalidatePreview();
+      _extracting = true;
+      _previewTime = _frameTime;
+      _previewFrameNumber = _frameNumber;
+    });
+    final request = _frameRequest;
+    String? thumbPath;
+    try {
+      final generate = widget.generatePreview;
+      thumbPath = generate != null
+          ? await generate(widget.videoPath, _previewTime!, width: 480)
+          : await FramePreview.generatePreview(
+              widget.videoPath, _previewTime!, width: 480,
+              trace: context.read<AppState>().diagnosticTrace,
+            );
+    } catch (_) {
+      // A failed extraction leaves the editor ready to retry.
+    }
+    if (!mounted || request != _frameRequest) {
+      return;
+    }
+    setState(() {
+      _framePath = thumbPath;
+      _extracting = false;
+    });
+  }
 
-    final thumbPath = await FramePreview.generatePreview(widget.videoPath, time, width: 480);
-    final fullPath = await FramePreview.generateFullFrame(widget.videoPath, time);
-
-    if (mounted) {
-      setState(() {
-        _framePath = thumbPath;
-        _fullFramePath = fullPath;
-        _extracting = false;
-      });
+  Future<String?> _loadFullFrame(String videoPath, double time) async {
+    if (!mounted) return null;
+    try {
+      final generate = widget.generateFullFrame;
+      return generate != null
+          ? await generate(videoPath, time)
+          : await FramePreview.generateFullFrame(
+              videoPath, time, trace: context.read<AppState>().diagnosticTrace,
+            );
+    } catch (_) {
+      // Selection remains usable with its low resolution preview.
+      return null;
     }
   }
 
@@ -148,21 +216,35 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
   }
 
   Future<void> _openSelectionTool() async {
-    if (_fullFramePath == null) return;
-    final regions = await showDialog<List<Rect>>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => _VideoCropOverlayDialog(
-        framePath: _fullFramePath!,
-        videoWidth: widget.videoWidth,
-        videoHeight: widget.videoHeight,
-        cropMode: p['crop_mode'] as String? ?? 'keep',
-        initialRegions: _regionsFromParams(),
-        isZh: widget.isZh,
-      ),
+    final framePath = _framePath;
+    final time = _previewTime;
+    if (framePath == null || time == null || _selectionOpen) {
+      return;
+    }
+    final request = _frameRequest;
+    final fullFrame = _fullFrame ??= _loadFullFrame(widget.videoPath, time);
+    // Freeze the dialog's source while the editor can receive a new video.
+    final dialog = _VideoCropOverlayDialog(
+      framePath: framePath,
+      fullFrame: fullFrame,
+      videoWidth: widget.videoWidth,
+      videoHeight: widget.videoHeight,
+      cropMode: p['crop_mode'] as String? ?? 'keep',
+      initialRegions: _regionsFromParams(),
+      isZh: widget.isZh,
     );
-    if (regions != null && mounted) {
-      setState(() => _saveRegions(regions));
+    _selectionOpen = true;
+    try {
+      final regions = await showDialog<List<Rect>>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => dialog,
+      );
+      if (regions != null && mounted && request == _frameRequest) {
+        setState(() => _saveRegions(regions));
+      }
+    } finally {
+      _selectionOpen = false;
     }
   }
 
@@ -211,7 +293,16 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
             decoration: InputDecoration(labelText: zh ? '帧号' : 'Frame #'),
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            onChanged: (v) => p['frame_number'] = int.tryParse(v) ?? 0,
+            onChanged: (v) {
+              final frame = int.tryParse(v) ?? 0;
+              if (frame == _frameNumber) {
+                return;
+              }
+              setState(() {
+                p['frame_number'] = frame;
+                _invalidatePreview();
+              });
+            },
           )),
           const SizedBox(width: 8),
           ElevatedButton(
@@ -241,7 +332,7 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
         const SizedBox(height: 8),
 
         SizedBox(width: double.infinity, child: ElevatedButton.icon(
-          onPressed: _fullFramePath != null ? _openSelectionTool : null,
+          onPressed: _framePath != null ? _openSelectionTool : null,
           icon: const Icon(Icons.crop_free, size: 18),
           label: Text(zh ? '打开选择工具' : 'Open Selection Tool', style: const TextStyle(fontSize: 13)),
         )),
@@ -291,6 +382,7 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
 
 class _VideoCropOverlayDialog extends StatefulWidget {
   final String framePath;
+  final Future<String?> fullFrame;
   final int videoWidth;
   final int videoHeight;
   final String cropMode;
@@ -299,6 +391,7 @@ class _VideoCropOverlayDialog extends StatefulWidget {
 
   const _VideoCropOverlayDialog({
     required this.framePath,
+    required this.fullFrame,
     required this.videoWidth,
     required this.videoHeight,
     required this.cropMode,
@@ -382,186 +475,205 @@ class _VideoCropOverlayDialogState extends State<_VideoCropOverlayDialog> {
     final zh = widget.isZh;
     final screenSize = MediaQuery.of(context).size;
 
-    return Dialog(
+    return AppModalSurface(
+      constraints: const BoxConstraints(),
       insetPadding: EdgeInsets.symmetric(
         horizontal: screenSize.width * 0.05,
         vertical: screenSize.height * 0.05,
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          color: cs.surface,
-          child: Column(children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(children: [
-                Icon(Icons.crop_free, size: 20, color: cs.primary),
-                const SizedBox(width: 8),
-                Text(zh ? '选择工具' : 'Selection Tool',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: cs.onSurface)),
-                const SizedBox(width: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: widget.cropMode == 'keep' ? cs.sem.successContainer : cs.sem.dangerContainer,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    widget.cropMode == 'keep' ? (zh ? '保留' : 'KEEP') : (zh ? '移除' : 'REMOVE'),
-                    style: TextStyle(
-                      fontSize: 11, fontWeight: FontWeight.w600,
-                      color: widget.cropMode == 'keep' ? cs.sem.success : cs.sem.danger,
-                    ),
-                  ),
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ]),
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(children: [
+            Icon(Icons.crop_free, size: 20, color: cs.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(zh ? '选择工具' : 'Selection Tool',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: cs.onSurface)),
             ),
-            const Divider(height: 1),
-
-            Expanded(child: LayoutBuilder(builder: (ctx, constraints) {
-              final vw = widget.videoWidth.toDouble();
-              final vh = widget.videoHeight.toDouble();
-              final scale = math.min(constraints.maxWidth / vw, constraints.maxHeight / vh);
-              final displayW = vw * scale;
-              final displayH = vh * scale;
-              final offsetX = (constraints.maxWidth - displayW) / 2;
-              final offsetY = (constraints.maxHeight - displayH) / 2;
-              final imgOffset = Offset(offsetX, offsetY);
-
-              return GestureDetector(
-                onPanStart: (d) {
-                  final local = d.localPosition;
-                  final hit = _hitTestEdge(local, scale, imgOffset);
-                  if (hit != null) {
-                    _activeRegionIdx = hit.$1;
-                    _activeEdge = hit.$2;
-                    _pushUndo(); // [FIX H-7] 移动/缩放前都压栈，保存拖动前快照（撤销才有反应）
-                  } else {
-                    _activeRegionIdx = null;
-                    _activeEdge = null;
-                    // [FIX H-7] 无命中时不提前压栈，避免空白误触塞入无效快照（压栈延后到 onPanEnd 且确认有效矩形）
-                  }
-                  _dragStart = local;
-                  if (_activeRegionIdx == null) {
-                    setState(() => _currentDrag = Rect.fromLTWH(local.dx, local.dy, 0, 0));
-                  }
-                },
-                onPanUpdate: (d) {
-                  if (_dragStart == null) return;
-                  final local = d.localPosition;
-                  final clampedX = local.dx.clamp(offsetX, offsetX + displayW);
-                  final clampedY = local.dy.clamp(offsetY, offsetY + displayH);
-                  final clamped = Offset(clampedX, clampedY);
-
-                  setState(() {
-                    if (_activeRegionIdx != null) {
-                      final idx = _activeRegionIdx!;
-                      final edge = _activeEdge!;
-                      var r = _toDisplay(_regions[idx], scale, imgOffset);
-
-                      if (edge == 'move') {
-                        final dx = d.delta.dx;
-                        final dy = d.delta.dy;
-                        var newLeft = r.left + dx;
-                        var newTop = r.top + dy;
-                        newLeft = newLeft.clamp(offsetX, offsetX + displayW - r.width);
-                        newTop = newTop.clamp(offsetY, offsetY + displayH - r.height);
-                        r = Rect.fromLTWH(newLeft, newTop, r.width, r.height);
-                      } else {
-                        var left = r.left, top = r.top, right = r.right, bottom = r.bottom;
-                        if (edge.contains('l') || edge == 'left') left = clampedX;
-                        if (edge.contains('r') || edge == 'right') right = clampedX;
-                        if (edge.contains('t') || edge == 'top') top = clampedY;
-                        if (edge.contains('b') || edge == 'bottom') bottom = clampedY;
-                        r = Rect.fromLTRB(
-                          math.min(left, right), math.min(top, bottom),
-                          math.max(left, right), math.max(top, bottom),
-                        );
-                      }
-                      _regions[idx] = _toVideo(r, scale, imgOffset);
-                    } else if (_currentDrag != null) {
-                      _currentDrag = Rect.fromPoints(
-                        Offset(_dragStart!.dx.clamp(offsetX, offsetX + displayW),
-                               _dragStart!.dy.clamp(offsetY, offsetY + displayH)),
-                        clamped,
-                      );
-                    }
-                  });
-                },
-                onPanEnd: (_) {
-                  if (_currentDrag != null && _currentDrag!.width > 5 && _currentDrag!.height > 5) {
-                    final r = _toVideo(_currentDrag!, scale, imgOffset);
-                    if (r.width > 2 && r.height > 2) {
-                      // [FIX H-7] 仅在有有效矩形时压栈（此时 _regions 仍为拖动前快照）
-                      _pushUndo();
-                      _regions.add(r);
-                    }
-                  }
-                  _currentDrag = null;
-                  _dragStart = null;
-                  _activeRegionIdx = null;
-                  _activeEdge = null;
-                  setState(() {});
-                },
-                child: Stack(children: [
-                  Positioned.fill(child: Container(color: Colors.black)),
-                  Positioned(
-                    left: offsetX, top: offsetY,
-                    width: displayW, height: displayH,
-                    // 按**显示**尺寸封顶解码：帧图由 FramePreview.generateFullFrame
-                    // 以视频**原生分辨率**抽出（1080p ≈ 8.3MB RGBA、4K ≈ 33MB），
-                    // 而这里最大只画到 displayW×displayH（对话框内一屏）。
-                    // 旧实现不给 cacheWidth → 按原生分辨率整帧解码，且同文件 228 行
-                    // 对同一张图用的是 cacheWidth:960，两份位图会同时挂在 ImageCache 上。
-                    child: Image.file(File(widget.framePath), fit: BoxFit.fill,
-                        cacheWidth: (displayW *
-                                MediaQuery.devicePixelRatioOf(ctx))
-                            .round()
-                            .clamp(1, 4096)),
-                  ),
-                  Positioned.fill(
-                    child: CustomPaint(
-                      painter: _RegionOverlayPainter(
-                        regions: _regions.map((r) => _toDisplay(r, scale, imgOffset)).toList(),
-                        currentDrag: _currentDrag,
-                        isRemoveMode: widget.cropMode == 'remove',
-                        imgRect: Rect.fromLTWH(offsetX, offsetY, displayW, displayH),
-                        accentKeep: ctx.sem.success,
-                        accentRemove: ctx.sem.danger,
-                      ),
-                    ),
-                  ),
-                ]),
-              );
-            })),
-
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(children: [
-                TextButton.icon(
-                  onPressed: _undoStack.isNotEmpty ? _undo : null,
-                  icon: const Icon(Icons.undo, size: 18),
-                  label: Text(zh ? '撤销' : 'Undo'),
+            const SizedBox(width: 8),
+            Flexible(child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: widget.cropMode == 'keep' ? cs.sem.successContainer : cs.sem.dangerContainer,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                widget.cropMode == 'keep' ? (zh ? '保留' : 'KEEP') : (zh ? '移除' : 'REMOVE'),
+                style: TextStyle(
+                  fontSize: 11, fontWeight: FontWeight.w600,
+                  color: widget.cropMode == 'keep' ? cs.sem.success : cs.sem.danger,
                 ),
-                const SizedBox(width: 12),
-                Text('${_regions.length} ${zh ? "个选区" : "regions"}',
-                    style: TextStyle(fontSize: 12, color: cs.outline)),
-                const Spacer(),
-                FilledButton(
-                  onPressed: () => Navigator.of(context).pop(_regions),
-                  child: Text(zh ? '保存' : 'Save'),
-                ),
-              ]),
+              ),
+            )),
+            const SizedBox(width: 8),
+            IconButton(
+              tooltip: zh ? '取消' : 'Cancel',
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              icon: const Icon(Icons.close),
+              onPressed: () => Navigator.of(context).pop(),
             ),
           ]),
         ),
-      ),
+        const Divider(height: 1),
+
+        Expanded(child: LayoutBuilder(builder: (ctx, constraints) {
+          final vw = widget.videoWidth.toDouble();
+          final vh = widget.videoHeight.toDouble();
+          final scale = math.min(constraints.maxWidth / vw, constraints.maxHeight / vh);
+          final displayW = vw * scale;
+          final displayH = vh * scale;
+          final offsetX = (constraints.maxWidth - displayW) / 2;
+          final offsetY = (constraints.maxHeight - displayH) / 2;
+          final imgOffset = Offset(offsetX, offsetY);
+
+          return GestureDetector(
+            onPanStart: (d) {
+              final local = d.localPosition;
+              final hit = _hitTestEdge(local, scale, imgOffset);
+              if (hit != null) {
+                _activeRegionIdx = hit.$1;
+                _activeEdge = hit.$2;
+                _pushUndo(); // [FIX H-7] 移动/缩放前都压栈，保存拖动前快照（撤销才有反应）
+              } else {
+                _activeRegionIdx = null;
+                _activeEdge = null;
+                // [FIX H-7] 无命中时不提前压栈，避免空白误触塞入无效快照（压栈延后到 onPanEnd 且确认有效矩形）
+              }
+              _dragStart = local;
+              if (_activeRegionIdx == null) {
+                setState(() => _currentDrag = Rect.fromLTWH(local.dx, local.dy, 0, 0));
+              }
+            },
+            onPanUpdate: (d) {
+              if (_dragStart == null) return;
+              final local = d.localPosition;
+              final clampedX = local.dx.clamp(offsetX, offsetX + displayW);
+              final clampedY = local.dy.clamp(offsetY, offsetY + displayH);
+              final clamped = Offset(clampedX, clampedY);
+
+              setState(() {
+                if (_activeRegionIdx != null) {
+                  final idx = _activeRegionIdx!;
+                  final edge = _activeEdge!;
+                  var r = _toDisplay(_regions[idx], scale, imgOffset);
+
+                  if (edge == 'move') {
+                    final dx = d.delta.dx;
+                    final dy = d.delta.dy;
+                    var newLeft = r.left + dx;
+                    var newTop = r.top + dy;
+                    newLeft = newLeft.clamp(offsetX, offsetX + displayW - r.width);
+                    newTop = newTop.clamp(offsetY, offsetY + displayH - r.height);
+                    r = Rect.fromLTWH(newLeft, newTop, r.width, r.height);
+                  } else {
+                    var left = r.left, top = r.top, right = r.right, bottom = r.bottom;
+                    if (edge.contains('l') || edge == 'left') left = clampedX;
+                    if (edge.contains('r') || edge == 'right') right = clampedX;
+                    if (edge.contains('t') || edge == 'top') top = clampedY;
+                    if (edge.contains('b') || edge == 'bottom') bottom = clampedY;
+                    r = Rect.fromLTRB(
+                      math.min(left, right), math.min(top, bottom),
+                      math.max(left, right), math.max(top, bottom),
+                    );
+                  }
+                  _regions[idx] = _toVideo(r, scale, imgOffset);
+                } else if (_currentDrag != null) {
+                  _currentDrag = Rect.fromPoints(
+                    Offset(_dragStart!.dx.clamp(offsetX, offsetX + displayW),
+                           _dragStart!.dy.clamp(offsetY, offsetY + displayH)),
+                    clamped,
+                  );
+                }
+              });
+            },
+            onPanEnd: (_) {
+              if (_currentDrag != null && _currentDrag!.width > 5 && _currentDrag!.height > 5) {
+                final r = _toVideo(_currentDrag!, scale, imgOffset);
+                if (r.width > 2 && r.height > 2) {
+                  // [FIX H-7] 仅在有有效矩形时压栈（此时 _regions 仍为拖动前快照）
+                  _pushUndo();
+                  _regions.add(r);
+                }
+              }
+              _currentDrag = null;
+              _dragStart = null;
+              _activeRegionIdx = null;
+              _activeEdge = null;
+              setState(() {});
+            },
+            child: Stack(children: [
+              Positioned.fill(child: Container(color: Colors.black)),
+              Positioned(
+                left: offsetX, top: offsetY,
+                width: displayW, height: displayH,
+                // 按**显示**尺寸封顶解码：帧图由 FramePreview.generateFullFrame
+                // 以视频**原生分辨率**抽出（1080p ≈ 8.3MB RGBA、4K ≈ 33MB），
+                // 而这里最大只画到 displayW×displayH（对话框内一屏）。
+                // 旧实现不给 cacheWidth → 按原生分辨率整帧解码，且同文件 228 行
+                // 对同一张图用的是 cacheWidth:960，两份位图会同时挂在 ImageCache 上。
+                child: FutureBuilder<String?>(
+                  future: widget.fullFrame,
+                  builder: (context, snapshot) => Image.file(
+                    File(snapshot.data ?? widget.framePath),
+                    fit: BoxFit.fill,
+                    gaplessPlayback: true,
+                    cacheWidth: (displayW *
+                            MediaQuery.devicePixelRatioOf(ctx))
+                        .round()
+                        .clamp(1, 4096),
+                  ),
+                ),
+              ),
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _RegionOverlayPainter(
+                    regions: _regions.map((r) => _toDisplay(r, scale, imgOffset)).toList(),
+                    currentDrag: _currentDrag,
+                    isRemoveMode: widget.cropMode == 'remove',
+                    imgRect: Rect.fromLTWH(offsetX, offsetY, displayW, displayH),
+                    accentKeep: ctx.sem.success,
+                    accentRemove: ctx.sem.danger,
+                  ),
+                ),
+              ),
+            ]),
+          );
+        })),
+
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Wrap(spacing: 12, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+              TextButton.icon(
+                style: AppDialogAction.styleOf(context, AppDialogActionRole.neutral),
+                onPressed: _undoStack.isNotEmpty ? _undo : null,
+                icon: const Icon(Icons.undo, size: 18),
+                label: Text(zh ? '撤销' : 'Undo'),
+              ),
+              Text('${_regions.length} ${zh ? "个选区" : "regions"}',
+                  style: TextStyle(fontSize: 12, color: cs.outline)),
+            ]),
+            const SizedBox(height: 8),
+            LayoutBuilder(builder: (context, constraints) {
+              final cancel = AppDialogAction(
+                role: AppDialogActionRole.cancel,
+                child: TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(zh ? '取消' : 'Cancel')),
+              );
+              final save = AppDialogAction(
+                role: AppDialogActionRole.primary,
+                child: FilledButton(onPressed: () => Navigator.of(context).pop(_regions), child: Text(zh ? '保存' : 'Save')),
+              );
+              if (constraints.maxWidth >= 260 && MediaQuery.textScalerOf(context).scale(1) <= 1.3) {
+                return Row(children: [Expanded(child: cancel), const SizedBox(width: 8), Expanded(child: save)]);
+              }
+              return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [cancel, const SizedBox(height: 8), save]);
+            }),
+          ]),
+        ),
+      ]),
     );
   }
 }

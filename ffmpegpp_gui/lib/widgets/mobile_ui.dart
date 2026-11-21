@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show KeyDownEvent, LogicalKeyboardKey;
 
+import '../platform/app_platform.dart';
 import '../theme/mobile_ui.dart';
 import 'mobile_glass_pill.dart';
 // 「左半 / 右半 + 操作溢出收纳」布局与 MobileSubPageTopBar 同源，共用唯一实现
@@ -109,6 +110,8 @@ class _MobilePillTopBarState extends State<MobilePillTopBar> {
 
   @override
   Widget build(BuildContext context) {
+    final height = MobileUi.pillHeightOf(context);
+    final safe = MediaQuery.paddingOf(context);
     final search = widget.searchChild;
     final searchOpen = _searchOpen;
     final duration = MediaQuery.disableAnimationsOf(context)
@@ -129,17 +132,16 @@ class _MobilePillTopBarState extends State<MobilePillTopBar> {
       child: widget.title,
     );
     final barPadding = EdgeInsets.only(
-      right: standaloneSearch ? MobileUi.pillHeight + 8 : 0,
-      bottom: 6,
+      right: standaloneSearch ? MobileUi.pillHeight + MobileUi.pillGap : 0,
     );
     final normal = Padding(
       padding: barPadding,
       child: SizedBox(
-        height: MobileUi.pillHeight,
+        height: height,
         child: MobilePillBarLayout(
           titlePill: MobileGlassPill(
-            radius: MobileUi.pillRadius,
-            height: MobileUi.pillHeight,
+            radius: height / 2,
+            height: height,
             padding: const EdgeInsets.symmetric(
               horizontal: MobileUi.titlePillPadH,
             ),
@@ -156,11 +158,11 @@ class _MobilePillTopBarState extends State<MobilePillTopBar> {
     // A fading BackdropFilter samples its own saveLayer and can flash black.
     // Fade a lightweight painted plate instead; restore live glass at rest.
     Widget flatPill(Widget child, double padding) => SizedBox(
-      height: MobileUi.pillHeight,
+      height: height,
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(MobileUi.pillRadius),
+          borderRadius: BorderRadius.circular(height / 2),
           border: Border.all(
             color: Colors.white.withValues(alpha: 0.12),
             width: 0.7,
@@ -184,17 +186,18 @@ class _MobilePillTopBarState extends State<MobilePillTopBar> {
             ),
           ),
           if (!standaloneSearch && widget.actions.isNotEmpty) ...[
-            const SizedBox(width: 8),
+            const SizedBox(width: MobileUi.pillGap),
             ConstrainedBox(
               constraints: BoxConstraints(
                 maxWidth: math.max(
                   MobileUi.pillHeight,
-                  availableWidth - MobileUi.pillHeight * 2 - 8,
+                  availableWidth - MobileUi.pillHeight * 2 - MobileUi.pillGap,
                 ),
               ),
               child: flatPill(
-                FittedBox(
-                  fit: BoxFit.scaleDown,
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  primary: false,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: widget.actions,
@@ -209,9 +212,9 @@ class _MobilePillTopBarState extends State<MobilePillTopBar> {
     );
     return Padding(
       padding: EdgeInsets.fromLTRB(
-        MobileUi.barInsetH,
-        MediaQuery.paddingOf(context).top + MobileUi.barInsetTop,
-        MobileUi.barInsetH,
+        safe.left + MobileUi.barInsetH,
+        safe.top + MobileUi.barInsetTop,
+        safe.right + MobileUi.barInsetH,
         MobileUi.barInsetBottom,
       ),
       child: search == null
@@ -220,7 +223,9 @@ class _MobilePillTopBarState extends State<MobilePillTopBar> {
               builder: (context, constraints) {
                 final screenWidth = math.max(
                   0.0,
-                  MediaQuery.sizeOf(context).width - MobileUi.barInsetH * 2,
+                  MediaQuery.sizeOf(context).width -
+                      safe.horizontal -
+                      MobileUi.barInsetH * 2,
                 );
                 final availableWidth = math.min(
                   constraints.maxWidth,
@@ -281,7 +286,7 @@ class _MobilePillTopBarState extends State<MobilePillTopBar> {
                               ? (availableWidth - expandedWidth) / 2
                               : 0,
                           width: searchOpen ? expandedWidth : collapsedWidth,
-                          height: MobileUi.pillHeight,
+                          height: height,
                           onEnd: _finishSearchTransition,
                           child: Offstage(
                             offstage:
@@ -291,8 +296,8 @@ class _MobilePillTopBarState extends State<MobilePillTopBar> {
                                     !_keepSearchSurface),
                             child: MobileGlassPill(
                               key: const ValueKey('mobile_search_surface'),
-                              radius: MobileUi.pillRadius,
-                              height: MobileUi.pillHeight,
+                              radius: height / 2,
+                              height: height,
                               padding: EdgeInsets.zero,
                               // Keep glass outside opacity layers so its backdrop stays live.
                               child: Stack(
@@ -452,7 +457,7 @@ class _MobileSearchPillState extends State<MobileSearchPill> {
             MediaQuery.sizeOf(context).width - MobileUi.barInsetH * 2,
           ),
         ),
-        height: MobileUi.pillHeight,
+        height: MobileUi.pillHeightOf(context),
         child: Row(
           children: [
             Icon(Icons.search, size: 18, color: scheme.onSurfaceVariant),
@@ -484,7 +489,7 @@ class _MobileSearchPillState extends State<MobileSearchPill> {
                   errorBorder: InputBorder.none,
                   focusedErrorBorder: InputBorder.none,
                   isCollapsed: true,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 13),
+                  contentPadding: EdgeInsets.zero,
                 ),
                 onChanged: widget.onChanged,
               ),
@@ -506,8 +511,10 @@ class _MobileSearchPillState extends State<MobileSearchPill> {
 class MobilePillTab {
   /// 可选前置图标
   final IconData? icon;
+
   /// 主标签
   final String label;
+
   /// 可选数量角标（如「节点编辑器 12」）
   final String? badge;
 
@@ -540,7 +547,11 @@ class MobileSegmentedPills extends StatelessWidget {
     required this.onSelected,
     this.radius = 24,
     this.margin = const EdgeInsets.fromLTRB(
-        MobileUi.pagePaddingH, 12, MobileUi.pagePaddingH, 6),
+      MobileUi.pagePaddingH,
+      12,
+      MobileUi.pagePaddingH,
+      6,
+    ),
   });
 
   @override
@@ -555,85 +566,124 @@ class MobileSegmentedPills extends StatelessWidget {
       child: MobileGlassPill(
         radius: radius,
         padding: const EdgeInsets.all(4),
-        child: LayoutBuilder(builder: (ctx, cons) {
-          final w = cons.maxWidth;
-          final itemW = w / tabs.length;
-          // 内层 32 + 外壳上下各 4 = 40，与原自绘分段条（配置库标签）等高，
-          // 桌面端也不产生高度差。
-          return SizedBox(
-            height: 32,
-            // 关键：Stack 默认 alignment 是 topStart，非定位的 Row 只拿 loose 约束、
-            // 按自身内容高度（约 18px）贴在 32px 盒子顶部 —— 文字中心因此比指示器
-            // 中心高约 7px，下方留白大于上方，看起来就是「选项文字偏上」。
-            // 显式 center 让内容行与 32px 高的指示器同心。
-            child: Stack(alignment: Alignment.center, children: [
-              // 滑动指示器：随选中项在等宽分区之间平滑移动
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 240),
-                curve: Curves.easeOutCubic,
-                top: 0,
-                bottom: 0,
-                left: index * itemW,
-                width: itemW,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withAlpha(isDark ? 80 : 60),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: scheme.primary.withAlpha(110)),
-                  ),
-                ),
-              ),
-              Row(children: [
-                for (var i = 0; i < tabs.length; i++)
-                  Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => onSelected(i),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            if (tabs[i].icon != null) ...[
-                              Icon(tabs[i].icon,
-                                  size: 15,
-                                  color: i == index ? scheme.primary : scheme.outline),
-                              const SizedBox(width: 6),
-                            ],
-                            Flexible(
-                              child: Text(
-                                tabs[i].label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: i == index ? scheme.primary : scheme.outline,
-                                ),
-                              ),
-                            ),
-                            if (tabs[i].badge != null) ...[
-                              const SizedBox(width: 5),
-                              Text(
-                                tabs[i].badge!,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: i == index
-                                      ? scheme.primary.withAlpha(200)
-                                      : scheme.outline.withAlpha(140),
-                                ),
-                              ),
-                            ],
-                          ],
+        child: LayoutBuilder(
+          builder: (ctx, cons) {
+            final w = cons.maxWidth;
+            final itemW = w / tabs.length;
+            final controlHeight = isMobilePlatform
+                ? math.max(44.0, MediaQuery.textScalerOf(context).scale(32))
+                : 32.0;
+            // Keep mobile targets at least 44dp and grow with large system text.
+            return SizedBox(
+              height: controlHeight,
+              // 关键：Stack 默认 alignment 是 topStart，非定位的 Row 只拿 loose 约束、
+              // 按自身内容高度（约 18px）贴在 32px 盒子顶部 —— 文字中心因此比指示器
+              // 中心高约 7px，下方留白大于上方，看起来就是「选项文字偏上」。
+              // 显式 center 让内容行与 32px 高的指示器同心。
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // 滑动指示器：随选中项在等宽分区之间平滑移动
+                  AnimatedPositioned(
+                    curve: Curves.easeOutCubic,
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 240),
+                    top: 0,
+                    bottom: 0,
+                    left: index * itemW,
+                    width: itemW,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: scheme.primary.withAlpha(isDark ? 80 : 60),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: scheme.primary.withAlpha(110),
                         ),
                       ),
                     ),
                   ),
-              ]),
-            ]),
-          );
-        }),
+                  Row(
+                    children: [
+                      for (var i = 0; i < tabs.length; i++)
+                        Expanded(
+                          child: Semantics(
+                            key: ValueKey('mobile_segmented_tab_$i'),
+                            container: true,
+                            button: true,
+                            selected: i == index,
+                            label: tabs[i].badge == null
+                                ? tabs[i].label
+                                : '${tabs[i].label}, ${tabs[i].badge}',
+                            onTap: () => onSelected(i),
+                            excludeSemantics: true,
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(20),
+                                onTap: () => onSelected(i),
+                                child: SizedBox(
+                                  height: controlHeight,
+                                  child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          if (tabs[i].icon != null) ...[
+                                            Icon(
+                                              tabs[i].icon,
+                                              size: 15,
+                                              color: i == index
+                                                  ? scheme.primary
+                                                  : scheme.outline,
+                                            ),
+                                            const SizedBox(width: 6),
+                                          ],
+                                          Flexible(
+                                            child: Text(
+                                              tabs[i].label,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w600,
+                                                color: i == index
+                                                    ? scheme.primary
+                                                    : scheme.outline,
+                                              ),
+                                            ),
+                                          ),
+                                          if (tabs[i].badge != null) ...[
+                                            const SizedBox(width: 5),
+                                            Text(
+                                              tabs[i].badge!,
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w600,
+                                                color: i == index
+                                                    ? scheme.primary.withAlpha(200)
+                                                    : scheme.outline.withAlpha(140),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }

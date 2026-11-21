@@ -5,7 +5,6 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
-#include <set>
 #include <vector>
 
 #ifdef _WIN32
@@ -251,7 +250,6 @@ Fppx2Result fppxLegacyImport(const std::string& path) {
 
     if (mode == LEGACY_MODE_NODE_EDITOR) {
         // 未知节点类型检查（与 Dart 相同的判定与文案）
-        std::set<std::string> knownTypes;
         // 注册表覆盖全部 PipelineStepType 名 + 门（门在旧格式 JSON 里 type 也是 start）
         for (const auto& n : parsed.value("nodes", json::array())) {
             std::string typeName = n.value("type", std::string(""));

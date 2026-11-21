@@ -24,6 +24,7 @@ import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../services/ai_chat_attachments.dart';
 import '../services/ai_chat_history.dart';
+import '../services/diagnostic_trace.dart';
 import '../services/fppx2_service.dart';
 import '../services/graph_executor.dart';
 // 独立面板系统窗口（desktop_multi_window，另一个 Flutter 引擎）：
@@ -41,6 +42,7 @@ import '../theme/app_theme.dart';
 import '../theme/mobile_visual_theme.dart';
 import '../widgets/ai_workflow_card.dart';
 import '../widgets/animated_popup.dart';
+import '../widgets/app_alert_dialog.dart';
 import '../widgets/app_card.dart';
 import '../widgets/app_dropdown.dart';
 // 统一滑块：条件门「命中概率」也走 AppSlider，否则这一条没有玻璃轨道与
@@ -51,7 +53,9 @@ import '../widgets/brand_logo.dart';
 import '../widgets/fppx_password.dart';
 import '../widgets/gate_symbol_painter.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/desktop_resize_scope.dart';
 import '../widgets/liquid_glass_fallback.dart';
+import '../widgets/mobile_glass_pill.dart';
 // 节点图标/配色表：与独立面板窗口共用（见该文件顶部说明）
 import '../widgets/node_icons.dart';
 import '../widgets/option_menu_bar.dart';
@@ -925,6 +929,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       fp,
       ffmpeg: _appState.config.ffmpegPath,
       isAudio: isAudio,
+      trace: _appState.diagnosticTrace,
     );
     if (!mounted) return;
     if (p != null) {
@@ -1046,7 +1051,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   void _trackControlUsage(String key, String id) {
     if (!_countedControlUsageIds.add(id)) return;
     context.read<AppState>().updateConfig((config) {
-      config.nodeUsageCount[key] = math.max(0, config.nodeUsageCount[key] ?? 0) + 1;
+      config.nodeUsageCount[key] =
+          math.max(0, config.nodeUsageCount[key] ?? 0) + 1;
       return config;
     });
   }
@@ -1055,7 +1061,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final state = context.read<AppState>();
     state.updateConfig((c) {
       if (type == PipelineStepType.unknown) return c;
-      c.nodeUsageCount[type.name] = math.max(0, c.nodeUsageCount[type.name] ?? 0) + 1;
+      c.nodeUsageCount[type.name] =
+          math.max(0, c.nodeUsageCount[type.name] ?? 0) + 1;
       // 「最近使用」记的是**最后用过**的顺序而不是次数：大图编辑时用户脑子里
       // 想的是「我刚才用了什么」，而不是统计意义上最常用的那几种。
       c.recentNodeTypes.remove(type.name);
@@ -1808,7 +1815,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       final s = AppStrings.of(context.read<AppState>().config.language);
       showDialog(
         context: context,
-        builder: (ctx) => AlertDialog(
+        builder: (ctx) => AppAlertDialog(
           title: Row(
             children: [
               Icon(Icons.error_outline, color: scheme.error, size: 22),
@@ -1885,7 +1892,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       final zh = s.isZh;
       showDialog(
         context: context,
-        builder: (ctx) => AlertDialog(
+        builder: (ctx) => AppAlertDialog(
           title: Row(
             children: [
               Icon(Icons.error_outline, size: 20, color: scheme.error),
@@ -1995,7 +2002,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       unawaited(File(tmpPath).delete().then((_) {}, onError: (Object _) {}));
       showDialog(
         context: context,
-        builder: (ctx) => AlertDialog(
+        builder: (ctx) => AppAlertDialog(
           title: Row(
             children: [
               Icon(Icons.error_outline, size: 20, color: scheme.error),
@@ -2136,7 +2143,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             : (imported.error ?? '');
         showDialog(
           context: context,
-          builder: (ctx) => AlertDialog(
+          builder: (ctx) => AppAlertDialog(
             title: Text(
               zh ? '配置加载失败' : 'Load Failed',
               style: TextStyle(color: scheme.onSurface),
@@ -2169,7 +2176,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         final ids = imported.unknownTypeIds.join(', ');
         final goOn = await showDialog<bool>(
           context: context,
-          builder: (ctx) => AlertDialog(
+          builder: (ctx) => AppAlertDialog(
             title: Row(
               children: [
                 Icon(Icons.help_outline, size: 20, color: context.sem.warning),
@@ -2316,7 +2323,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final s = AppStrings.of(context.read<AppState>().config.language);
     final result = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AppAlertDialog(
         // 不写 shape：继承主题 dialogTheme（圆角 22 + 0.6 描边）。
         // 原先写死 BorderRadius.circular(16)，两个问题叠在一起：
         //   1. 比全应用其它对话框少 6px 圆角，同一个应用里两种圆角；
@@ -2871,7 +2878,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final scheme = Theme.of(context).colorScheme;
     return showDialog<int>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AppAlertDialog(
         title: Text(
           s.isZh ? '设置循环次数' : 'Set Loop Count',
           style: TextStyle(fontSize: 16, color: scheme.onSurface),
@@ -3027,11 +3034,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               color: _nodeColor(t, scheme),
               borderRadius: BorderRadius.circular(5),
             ),
-            child: TablerIcon(
-              _stepIcon(t),
-              size: 13,
-              color: scheme.onSurface,
-            ),
+            child: TablerIcon(_stepIcon(t), size: 13, color: scheme.onSurface),
           ),
           const SizedBox(width: 8),
           Flexible(
@@ -3150,7 +3153,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               );
               final s = AppStrings.of(state.config.language);
               final scheme = Theme.of(dialogContext).colorScheme;
-              return AlertDialog(
+              return AppAlertDialog(
                 key: const ValueKey('node-picker-dialog'),
                 insetPadding: const EdgeInsets.all(16),
                 contentPadding: const EdgeInsets.symmetric(
@@ -4321,7 +4324,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         // 圆角浮层不是一套视觉语言（task-9 F）。换成同一个控件后顺带获得
         // 搜索框与「选中项药丸」；条目语义保持原样（profile: / model: / 自定义）。
         Tooltip(
-          message: showModel.isNotEmpty ? showModel : (activeProfile?.name ?? ''),
+          message: showModel.isNotEmpty
+              ? showModel
+              : (activeProfile?.name ?? ''),
           child: SizedBox(
             height: pill.height,
             child: ConstrainedBox(
@@ -4462,7 +4467,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     );
     final result = await showDialog<String>(
       context: context,
-      builder: (dCtx) => AlertDialog(
+      builder: (dCtx) => AppAlertDialog(
         title: Text(
           s.isZh ? '自定义模型' : 'Custom Model',
           style: const TextStyle(fontSize: 14),
@@ -4522,6 +4527,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final mobileSafeBottom = isMobilePlatform && !_isLandscape
         ? MediaQuery.paddingOf(context).bottom
         : 0.0;
+    final mobileToolbarInset = mobileSafeTop + _mobileToolbarHeight() + 16;
     final content = Padding(
       padding: EdgeInsets.zero,
       child: Column(
@@ -4592,15 +4598,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         // 逻辑块框选提示条（用具箱点按「循环」后出现，引导用户手指框选）
                         if (_isLogicBoxSelecting)
                           Positioned(
-                            top:
-                                mobileSafeTop +
-                                _kMobileBarHeight *
-                                    context
-                                        .read<AppState>()
-                                        .config
-                                        .editorToolbarScale
-                                        .clamp(1.0, 1.6) +
-                                16,
+                            top: mobileToolbarInset,
                             left: 8,
                             right: 8,
                             child: Container(
@@ -4658,7 +4656,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         // 宽度再收窄一档（330→300 / 0.78→0.72），菜单栏不至于过宽。
                         if (_mobilePropsShown)
                           Positioned(
-                            top: mobileSafeTop + (_isLandscape ? 44 : 56),
+                            top: mobileToolbarInset,
                             bottom: 12 + mobileSafeBottom,
                             right: 8,
                             width: math.min(
@@ -4764,6 +4762,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 历史基准，默认参数下逐像素不变（见 liquid_glass_fallback 的换算说明）。
   Widget _glassWrap(Widget child, ColorScheme scheme) => Builder(
     builder: (context) {
+      if (isMobilePlatform) {
+        return GlassPanel(radius: 12, blur: 6, child: child);
+      }
       final op = context.select<AppState, double>((s) => s.config.cardOpacity);
       final tuning = glassTuningOf(context);
       final double sigma = tunedGlassSigma(6, tuning);
@@ -4771,6 +4772,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       return ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: BackdropFilter(
+          enabled: sigma > 0 && !DesktopResizeScope.isResizingOf(context),
           // σ 走进程级缓存（见 cachedGlassBlur 说明）。
           filter: cachedGlassBlur(sigma),
           child: Container(
@@ -5036,6 +5038,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 数字必须订阅 `_scaleNotifier`：IV 缩放只改变换控制器、不会重建本 widget，
   /// 直读 `_currentScale` 会永远停在进入页面时那个值。
   Widget _buildZoomPill(ColorScheme scheme, AppStrings s) {
+    if (isMobilePlatform) {
+      return ValueListenableBuilder<double>(
+        valueListenable: _scaleNotifier,
+        builder: (context, scale, _) => Text(
+          '${(scale * 100).round()}%',
+          style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+        ),
+      );
+    }
     return Container(
       height: 26,
       decoration: BoxDecoration(
@@ -6416,7 +6427,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                                       _pushUndo();
                                       setState(() => _nodes.add(node));
                                       _commitChange();
-                                      _trackControlUsage(nodePickerGateUsageKey(gate.name), node.id);
+                                      _trackControlUsage(
+                                        nodePickerGateUsageKey(gate.name),
+                                        node.id,
+                                      );
                                       return node.id;
                                     },
                                     onSetGateParams: (nodeId, params) {
@@ -9228,23 +9242,32 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               type,
         ]..sort(
           (a, b) => compareNodePickerEntries(
-            logicBlockTypeLabel(a, false), logicBlockTypeLabel(b, false),
-            keyA: nodePickerBlockUsageKey(a.name), keyB: nodePickerBlockUsageKey(b.name),
-            sort: _toolboxSort, usageCounts: _nodePickerUsage,
+            logicBlockTypeLabel(a, false),
+            logicBlockTypeLabel(b, false),
+            keyA: nodePickerBlockUsageKey(a.name),
+            keyB: nodePickerBlockUsageKey(b.name),
+            sort: _toolboxSort,
+            usageCounts: _nodePickerUsage,
           ),
         );
-    final gates = [
-      for (final gate in LogicGateType.values)
-        if (query.isEmpty ||
-            '${gate.name} ${gate.symbol(true)} ${gate.symbol(false)}'
-                .toLowerCase()
-                .contains(query))
-          gate,
-    ]..sort((a, b) => compareNodePickerEntries(
-      a.name, b.name,
-      keyA: nodePickerGateUsageKey(a.name), keyB: nodePickerGateUsageKey(b.name),
-      sort: _toolboxSort, usageCounts: _nodePickerUsage,
-    ));
+    final gates =
+        [
+          for (final gate in LogicGateType.values)
+            if (query.isEmpty ||
+                '${gate.name} ${gate.symbol(true)} ${gate.symbol(false)}'
+                    .toLowerCase()
+                    .contains(query))
+              gate,
+        ]..sort(
+          (a, b) => compareNodePickerEntries(
+            a.name,
+            b.name,
+            keyA: nodePickerGateUsageKey(a.name),
+            keyB: nodePickerGateUsageKey(b.name),
+            sort: _toolboxSort,
+            usageCounts: _nodePickerUsage,
+          ),
+        );
     final hasLogic = showLogic && (logicTypes.isNotEmpty || gates.isNotEmpty);
     if (hits.isEmpty && !hasLogic) {
       return Padding(
@@ -11157,34 +11180,27 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   // ── 移动端专用：顶部浮动菜单栏 ──
 
+  double _mobileToolbarHeight() =>
+      _kMobileBarHeight *
+      context.read<AppState>().config.editorToolbarScale.clamp(1.0, 1.1);
+
   Widget _buildMobileTopBar(ColorScheme scheme, AppStrings s) {
     final cfg = context.read<AppState>().config;
     // Keep touch targets intact; narrow screens scroll the complete action row.
     // Keep the pill compact on phones; large scaling covered the canvas.
-    final requestedScale = cfg.editorToolbarScale.clamp(1.0, 1.1);
+    final height = _mobileToolbarHeight();
     return LayoutBuilder(
       builder: (context, constraints) {
         return SizedBox(
           // 按实际按钮数收缩，避免药丸右端留出一块空白；
           // 属性恢复按钮出现时内容超出则横向滚动。
           width: math.min(constraints.maxWidth, 330),
-          child: Container(
-            height: _kMobileBarHeight * requestedScale,
+          child: MobileGlassPill(
+            height: height,
+            radius: height / 2,
             padding: const EdgeInsets.symmetric(
               horizontal: _kMobileBarBtnPad,
               vertical: 2,
-            ),
-            decoration: BoxDecoration(
-              color: scheme.surface.withAlpha(220),
-              borderRadius: BorderRadius.circular(_kMobileBarRadius),
-              border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-              boxShadow: [
-                BoxShadow(
-                  color: scheme.shadow.withAlpha(30),
-                  blurRadius: 6,
-                  offset: const Offset(0, 2),
-                ),
-              ],
             ),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -11373,13 +11389,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   // ── 移动端画布悬浮药丸（顶部工具栏 / 左下缩放条）的统一尺寸 ──
   //
   // Both bars retain 48px touch targets; narrow toolbars scroll horizontally.
-  static const double _kMobileBarHeight = 38;
+  // The surface includes 2dp vertical padding around each 44dp action.
+  static const double _kMobileBarHeight = 48;
   static const double _kMobileBarRadius = _kMobileBarHeight / 2;
-  static const double _kMobileBarBtnIcon = 16;
+  static const double _kMobileBarBtnIcon = 18;
   static const double _kMobileBarBtnPad = 1;
 
   /// Minimum touch target for mobile action buttons, including overflow menus.
-  static const double _kMobileBarBtnBox = 34;
+  static const double _kMobileBarBtnBox = 44;
 
   /// 移动端底部缩放药丸的**实际**缩放系数（唯一来源）。
   ///
@@ -11407,23 +11424,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     return Transform.scale(
       scale: scale,
       alignment: Alignment.bottomLeft,
-      child: Container(
+      child: MobileGlassPill(
         height: _kMobileBarHeight,
+        radius: _kMobileBarRadius,
         padding: const EdgeInsets.symmetric(
           horizontal: _kMobileBarBtnPad,
           vertical: 2,
-        ),
-        decoration: BoxDecoration(
-          color: scheme.surface.withAlpha(220),
-          borderRadius: BorderRadius.circular(_kMobileBarRadius),
-          border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-          boxShadow: [
-            BoxShadow(
-              color: scheme.shadow.withAlpha(30),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -11567,43 +11573,15 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     double size = _kMobileBarBtnIcon,
     String? tooltip,
   }) {
-    final button = SizedBox.square(
-      dimension: _kMobileBarBtnBox,
-      child: Material(
-        color: bg ?? Colors.transparent,
-        clipBehavior: Clip.antiAlias,
-        // 保存键的实心底原来是圆角方形，视觉上像一个方框；有底色时用正圆。
-        borderRadius: BorderRadius.circular(
-          bg != null ? _kMobileBarBtnBox / 2 : 10,
-        ),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(
-            bg != null ? _kMobileBarBtnBox / 2 : 10,
-          ),
-          customBorder: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(
-              bg != null ? _kMobileBarBtnBox / 2 : 10,
-            ),
-          ),
-          child: Center(
-            child: Icon(
-              icon,
-              size: size,
-              color: color ?? scheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-      ),
-    );
-    final labeled = tooltip == null
-        ? button
-        : Tooltip(message: tooltip, child: button);
-    return Semantics(
-      button: true,
-      enabled: onTap != null,
-      label: tooltip,
-      child: labeled,
+    return MobileGlassPillAction(
+      icon: icon,
+      tooltip: tooltip ?? '',
+      color: color ?? scheme.onSurfaceVariant,
+      bg: bg,
+      size: _kMobileBarBtnBox,
+      iconSize: size,
+      padding: EdgeInsets.zero,
+      onTap: onTap,
     );
   }
 
@@ -11623,119 +11601,99 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                 maxHeight: MediaQuery.of(context).size.height * 0.7,
               ),
               margin: const EdgeInsets.all(16),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: scheme.surface.withAlpha(240),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: scheme.outlineVariant.withAlpha(120)),
-                boxShadow: [
-                  BoxShadow(
-                    color: scheme.shadow.withAlpha(60),
-                    blurRadius: 16,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
+              child: GlassPanel(
+                radius: 24,
+                padding: const EdgeInsets.all(12),
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        Icons.widgets_outlined,
-                        size: 16,
-                        color: scheme.primary,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        s.isZh ? '添加节点' : 'Add Node',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: scheme.onSurface,
-                        ),
-                      ),
-                      const Spacer(),
-                      // 「显示可用」：与桌面端「元素」面板同一个开关，移动端也能用
-                      Tooltip(
-                        message: _showOnlyAvailable
-                            ? (s.isZh ? '显示全部元素' : 'Show all elements')
-                            : (s.isZh
-                                  ? '只显示当前文件可用的元素'
-                                  : 'Only show elements usable for this file'),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(6),
-                          onTap: () => setState(
-                            () => _showOnlyAvailable = !_showOnlyAvailable,
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.widgets_outlined,
+                            size: 16,
+                            color: scheme.primary,
                           ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(4),
-                            child: Icon(
-                              _showOnlyAvailable
-                                  ? Icons.filter_alt
-                                  : Icons.filter_alt_outlined,
-                              size: 16,
-                              color: _showOnlyAvailable
-                                  ? scheme.primary
-                                  : scheme.outline,
+                          const SizedBox(width: 6),
+                          Text(
+                            s.isZh ? '添加节点' : 'Add Node',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurface,
                             ),
                           ),
+                          const Spacer(),
+                          // 「显示可用」：与桌面端「元素」面板同一个开关，移动端也能用
+                          MobileGlassPillAction(
+                            icon: _showOnlyAvailable
+                                ? Icons.filter_alt
+                                : Icons.filter_alt_outlined,
+                            tooltip: _showOnlyAvailable
+                                ? (s.isZh ? '显示全部元素' : 'Show all elements')
+                                : (s.isZh
+                                      ? '只显示当前文件可用的元素'
+                                      : 'Only show elements usable for this file'),
+                            color: _showOnlyAvailable
+                                ? scheme.primary
+                                : scheme.onSurfaceVariant,
+                            onTap: () => setState(
+                              () => _showOnlyAvailable = !_showOnlyAvailable,
+                            ),
+                          ),
+                          MobileGlassPillAction(
+                            icon: Icons.close,
+                            tooltip: MaterialLocalizations.of(
+                              context,
+                            ).closeButtonTooltip,
+                            color: scheme.onSurfaceVariant,
+                            onTap: () =>
+                                setState(() => _mobileToolboxOpen = false),
+                          ),
+                        ],
+                      ),
+                      // 移动端操作说明：点击=添加到画布中心；逻辑块需要先在画布框选元素
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2, bottom: 6),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.touch_app_outlined,
+                              size: 11,
+                              color: scheme.outline,
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                s.isZh
+                                    ? '点击节点即添加到画布中心；循环/选择循环需在画布框选元素'
+                                    : 'Tap a node to add it at canvas center; loops require box-selecting elements',
+                                style: TextStyle(
+                                  fontSize: 9.5,
+                                  color: scheme.outline,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      IconButton(
-                        icon: Icon(
-                          Icons.close,
-                          size: 18,
-                          color: scheme.outline,
-                        ),
-                        onPressed: () =>
-                            setState(() => _mobileToolboxOpen = false),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                          minWidth: 28,
-                          minHeight: 28,
+                      const SizedBox(height: 8),
+                      Flexible(
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildToolboxSearch(scheme, s, dense: false),
+                              _buildToolboxBody(scheme, s, dense: false),
+                            ],
+                          ),
                         ),
                       ),
                     ],
                   ),
-                  // 移动端操作说明：点击=添加到画布中心；逻辑块需要先在画布框选元素
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2, bottom: 6),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.touch_app_outlined,
-                          size: 11,
-                          color: scheme.outline,
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            s.isZh
-                                ? '点击节点即添加到画布中心；循环/选择循环需在画布框选元素'
-                                : 'Tap a node to add it at canvas center; loops require box-selecting elements',
-                            style: TextStyle(
-                              fontSize: 9.5,
-                              color: scheme.outline,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Flexible(
-                    child: SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildToolboxSearch(scheme, s, dense: false),
-                          _buildToolboxBody(scheme, s, dense: false),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -13197,16 +13155,17 @@ double mobileAiSidebarWidth(double panelWidth) =>
 
 // Chat token updates rebuild headers frequently. Cache text measurements by
 // font, system scale and candidate IDs instead of laying out every model again.
-final _aiModelMenuWidths = <(TextStyle?, double, TextDirection, String), double>{};
+final _aiModelMenuWidths =
+    <(TextStyle?, double, TextDirection, String), double>{};
 
 // The overlay clamps this preferred width to the window; long names wrap.
 double _aiModelMenuWidth(BuildContext context, Iterable<String> labels) {
-  final style = Theme.of(context).textTheme.bodyMedium?.copyWith(
-    fontSize: 12.5,
-    fontWeight: FontWeight.w600,
-  );
-  final scale = AppTextScale.systemScaleOf(context).clamp(
-    AppTextScale.minScale, AppTextScale.maxScale);
+  final style = Theme.of(
+    context,
+  ).textTheme.bodyMedium?.copyWith(fontSize: 12.5, fontWeight: FontWeight.w600);
+  final scale = AppTextScale.systemScaleOf(
+    context,
+  ).clamp(AppTextScale.minScale, AppTextScale.maxScale);
   final direction = Directionality.of(context);
   final names = labels.toList(growable: false);
   final key = (style, scale, direction, names.join('\u0000'));
@@ -13319,15 +13278,64 @@ String aiModelProviderLabel(AppConfig cfg, String model, AiProfile? active) {
 /// 订阅置 null、把 _loading 改来改去。改成每请求实例 + 身份判断
 /// （identical(_activeRequest, request)）后，旧请求的回调只影响它自己。
 class _AiStreamRequest {
+  _AiStreamRequest(this.trace);
+
+  final DiagnosticSpan? trace;
   final Completer<void> stopSignal = Completer<void>();
   StreamSubscription<ai.StreamChunk>? subscription;
   bool stopRequested = false;
   bool finished = false;
+  int attempts = 0;
+  int streamRounds = 0;
+  int chunks = 0;
+  int responseChars = 0;
+  int thinkingChars = 0;
+  int continuations = 0;
+  int toolCalls = 0;
+  int graphOperations = 0;
+  int inputTokens = 0;
+  int outputTokens = 0;
+  void Function()? summarizeStream;
+  void Function()? disposeClient;
+  bool _traceFinished = false;
 
-  void requestStop() {
+  void finishTrace({
+    required bool success,
+    Object? error,
+    bool disposed = false,
+  }) {
+    if (_traceFinished) return;
+    _traceFinished = true;
+    summarizeStream?.call();
+    summarizeStream = null;
+    trace?.finish(
+      success: success,
+      cancelled: stopRequested,
+      error: error,
+      details: {
+        'reason': stopRequested
+            ? (disposed ? 'dispose' : 'user')
+            : (error == null ? 'completed' : 'failed'),
+        'attempts': attempts,
+        'streamRounds': streamRounds,
+        'chunks': chunks,
+        'responseChars': responseChars,
+        'thinkingChars': thinkingChars,
+        'continuations': continuations,
+        'toolCalls': toolCalls,
+        'graphOperations': graphOperations,
+        'inputTokens': inputTokens,
+        'outputTokens': outputTokens,
+      },
+    );
+  }
+
+  void requestStop({bool disposed = false}) {
     if (stopRequested) return;
     stopRequested = true;
+    finishTrace(success: false, disposed: disposed);
     if (!stopSignal.isCompleted) stopSignal.complete();
+    disposeClient?.call();
     unawaited(subscription?.cancel());
   }
 }
@@ -13563,9 +13571,6 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   // 多 Key 轮换计数（会话内递增，按 Key 池长度取模）
   int _aiKeyRotation = 0;
 
-  bool get toolsOpen =>
-      _toolsOpen ||
-      (_historyOpen && _mobileSidebarPage == _AiMobileSidebarPage.tools);
   Future<void> openHistoryAt() => _toggleHistoryAt();
 
   // 被禁用的工具（右键工具项 → 禁用）。禁用 = 从系统提示词移除 + 调用被拦截。
@@ -13599,6 +13604,7 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   // 标题请求是否在途：标题请求与主请求是两个独立 client，可能并发；
   // 防重入避免同一次对话发出多次标题请求（task-2 的竞态检查项）。
   bool _titleRequestInFlight = false;
+  _AiStreamRequest? _titleRequest;
 
   // ── token / 速度统计 ──
   int _totalInputTokens = 0;
@@ -14106,7 +14112,7 @@ Available actions: __TOOLS__''';
     final s = widget.strings;
     final ok = await showDialog<bool>(
       context: context,
-      builder: (dCtx) => AlertDialog(
+      builder: (dCtx) => AppAlertDialog(
         title: Text(
           s.isZh ? 'AI 请求执行操作' : 'AI requests to run an action',
           style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
@@ -14147,10 +14153,18 @@ Available actions: __TOOLS__''';
     final appState = context.read<AppState>();
     final cfg = appState.config;
     final results = <ai.Message>[];
+    final owner = _activeRequest;
+    owner?.toolCalls += calls.length;
+    var blocked = 0;
+    var failed = 0;
+    var graphOperations = 0;
+    var nodeOperations = 0;
+    var connectionOperations = 0;
     // 记录本批工具属于哪个请求：停止后迟到的结果不再写 UI。
-    _toolCallOwner = _activeRequest;
+    _toolCallOwner = owner;
     _activeToolCallId = null;
     for (final call in calls) {
+      if (!mounted || owner?.stopRequested == true) break;
       final action = call.arguments['action'];
       final arguments = call.arguments['arguments'];
       final tool = action is String ? action : '';
@@ -14165,6 +14179,7 @@ Available actions: __TOOLS__''';
         ..reset()
         ..start();
       if (!_toolActions.contains(tool)) {
+        blocked++;
         _addToolResult(
           'blocked',
           'Unknown or unavailable action.',
@@ -14192,6 +14207,7 @@ Available actions: __TOOLS__''';
       }
       // 被禁用的工具：即使 AI 调用了也不执行（也不告诉 AI 结果）
       if (_disabledTools.contains(tool)) {
+        blocked++;
         _addToolResult(
           'blocked',
           'Tool $tool is disabled by user',
@@ -14231,10 +14247,27 @@ Available actions: __TOOLS__''';
           );
           return;
         }
-        if (confirm) {
-          await _confirmThen(tool, tool, action);
-        } else {
+        Future<void> execute() async {
+          if (!mounted || owner?.stopRequested == true) return;
+          const nodeTools = {
+            'modify_node', 'add_node', 'add_gate', 'set_gate_params',
+            'delete_node', 'rename_node',
+          };
+          const connectionTools = {'connect_nodes', 'disconnect_nodes'};
+          const graphTools = {'clear_all', 'undo', 'redo'};
+          if (nodeTools.contains(tool) || connectionTools.contains(tool) ||
+              graphTools.contains(tool)) {
+            graphOperations++;
+            owner?.graphOperations++;
+            if (nodeTools.contains(tool)) nodeOperations++;
+            if (connectionTools.contains(tool)) connectionOperations++;
+          }
           await action();
+        }
+        if (confirm) {
+          await _confirmThen(tool, tool, execute);
+        } else {
+          await execute();
         }
       }
 
@@ -14545,6 +14578,8 @@ Available actions: __TOOLS__''';
         );
       }
       final result = _lastToolResultText;
+      if (result.startsWith('Blocked:')) blocked++;
+      if (result.startsWith('Error:')) failed++;
       results.add(
         ai.Message.toolResult(
           toolCallId: call.id,
@@ -14554,8 +14589,20 @@ Available actions: __TOOLS__''';
         ),
       );
     }
-    _activeToolCallId = null;
-    _toolCallOwner = null;
+    owner?.trace?.record('ai.tools.summary', details: {
+      'toolCalls': calls.length,
+      'results': results.length,
+      'blocked': blocked,
+      'failed': failed,
+      'graphOperations': graphOperations,
+      'nodeOperations': nodeOperations,
+      'connectionOperations': connectionOperations,
+      'stopped': owner.stopRequested,
+    });
+    if (identical(_toolCallOwner, owner)) {
+      _activeToolCallId = null;
+      _toolCallOwner = null;
+    }
     return results;
   }
 
@@ -14869,8 +14916,10 @@ Available actions: __TOOLS__''';
       unawaited(AiChatAttachments.discard(attachment));
     }
     // 只停当前请求；旧请求 finally 里的身份判断会阻止它再 setState。
-    _activeRequest?.requestStop();
+    _activeRequest?.requestStop(disposed: true);
     _activeRequest = null;
+    _titleRequest?.requestStop(disposed: true);
+    _titleRequest = null;
     _ctrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
@@ -15157,7 +15206,18 @@ Available actions: __TOOLS__''';
     // 分支也要把它记进会话统计。
     var totalInputTokens = 0;
     var totalOutputTokens = 0;
-    final request = _AiStreamRequest();
+    final request = _AiStreamRequest(appState.diagnosticTrace.begin(
+      'ai.request',
+      details: {
+        // SDK enum names are fixed protocol labels; provider/model names are not.
+        'protocol': _sdkProvider(effProvider).name,
+        'maxTokens': effectiveMaxTokens,
+        'contextWindow': contextWindow,
+        'temperature': effTemp,
+        'topP': ?effTopP,
+        'attachmentCount': _attachments.length,
+      },
+    ));
     _activeRequest = request;
     setState(() {
       _messages.add((
@@ -15189,6 +15249,9 @@ Available actions: __TOOLS__''';
     final showThinking = context.read<AppState>().config.aiShowThinking;
 
     ai.FlutterAI? sdkClient;
+    Object? requestError;
+    request.disposeClient = () => sdkClient?.dispose();
+    var requestAttachmentCount = 0;
     // 每个请求独立一份续写预算（最多 3 轮），换气泡时 reset。
     final autoContinue = AiAutoContinuePolicy();
     try {
@@ -15248,6 +15311,7 @@ Available actions: __TOOLS__''';
       // Prepare the latest user turn first so older vision attachments cannot
       // consume the request-wide inline-image budget before the current prompt.
       final attachments = AiChatAttachments.fromBlocks(currentUser.blocks);
+      requestAttachmentCount = attachments.length;
       final currentContent = await AiChatAttachments.sdkContent(
         currentUser.content,
         attachments,
@@ -15267,6 +15331,7 @@ Available actions: __TOOLS__''';
             .where((block) => block['type'] == 'tool_result')
             .toList();
         final attachments = AiChatAttachments.fromBlocks(message.blocks);
+        requestAttachmentCount += attachments.length;
         // 空占位（流式中途停止/出错留下的空 assistant）不进请求；但带
         // tool_use / tool_result 的空正文消息必须保留，否则跨轮工具结构丢失。
         if (message.content.trim().isEmpty &&
@@ -15385,11 +15450,64 @@ Available actions: __TOOLS__''';
         var receivedToolCall = false;
         ai.FinishReason? streamFinishReason;
         final completeToolCalls = <ai.ToolCallContent>[];
+        request.attempts++;
+        request.streamRounds++;
+        request.trace?.record('ai.request.attempt', details: {
+          'attempt': request.attempts,
+          'kind': 'stream',
+          'round': request.streamRounds,
+          'messageCount': sdkClient!.context.getMessagesForRequest().length,
+          'attachmentCount': requestAttachmentCount,
+          'maxTokens': sdkClient.config.maxTokens,
+        });
+        final streamWatch = request.trace?.enabled == true
+            ? (Stopwatch()..start())
+            : null;
+        var streamChunks = 0;
+        var textChunks = 0;
+        var thinkingChunks = 0;
+        var streamChars = 0;
+        var streamThinkingChars = 0;
+        int? firstTokenMs;
+        request.summarizeStream = () {
+          streamWatch?.stop();
+          request.trace?.record('ai.stream.summary', details: {
+            'attempt': request.attempts,
+            'round': request.streamRounds,
+            'chunks': streamChunks,
+            'textChunks': textChunks,
+            'thinkingChunks': thinkingChunks,
+            'responseChars': streamChars,
+            'thinkingChars': streamThinkingChars,
+            'firstTokenMs': ?firstTokenMs,
+            'finishReason': streamFinishReason?.name ?? 'missing',
+            'stopped': request.stopRequested,
+          });
+        };
         late final StreamSubscription<ai.StreamChunk> subscription;
         subscription = sdkClient!
             .streamChat('', addToContext: false)
             .listen(
               (chunk) {
+                if (request.stopRequested) return;
+                if (request.trace?.enabled == true) {
+                  streamChunks++;
+                  request.chunks++;
+                  if (chunk.isDelta) {
+                    textChunks++;
+                    streamChars += chunk.delta?.length ?? 0;
+                    request.responseChars += chunk.delta?.length ?? 0;
+                  }
+                  if (chunk.isThinkingDelta) {
+                    thinkingChunks++;
+                    streamThinkingChars += chunk.delta?.length ?? 0;
+                    request.thinkingChars += chunk.delta?.length ?? 0;
+                  }
+                  if ((chunk.isDelta || chunk.isThinkingDelta) &&
+                      chunk.delta?.isNotEmpty == true) {
+                    firstTokenMs ??= streamWatch?.elapsedMilliseconds;
+                  }
+                }
                 if (chunk.isError) {
                   streamError = chunk.error ?? StateError('AI stream failed.');
                   if (!requestDone.isCompleted) requestDone.complete();
@@ -15448,15 +15566,18 @@ Available actions: __TOOLS__''';
             );
         request.subscription = subscription;
         await Future.any<void>([requestDone.future, request.stopSignal.future]);
-        if (request.stopRequested) {
-          await subscription.cancel();
-          break;
-        }
         await subscription.cancel();
         if (identical(request.subscription, subscription)) {
           request.subscription = null;
         }
+        request.summarizeStream?.call();
+        request.summarizeStream = null;
+        if (request.stopRequested) break;
         if (streamError != null) {
+          request.trace?.record('ai.request.attempt_error', details: {
+            'attempt': request.attempts,
+            'failureType': streamError.runtimeType.toString(),
+          });
           Error.throwWithStackTrace(streamError!, StackTrace.current);
         }
 
@@ -15473,12 +15594,27 @@ Available actions: __TOOLS__''';
           // 流式请求仍是同一轮的完整快照（SDK 没有只补 tool_calls 的接口），
           // 成本上多一次生成，但正文用 mergeToolRoundText 定规则：
           // 非流式更短/内容分叉时保留已展示的流式文本，绝不回退丢字。
+          request.attempts++;
+          request.trace?.record('ai.request.retry', details: {
+            'reason': 'tool_call_completion',
+            'attempt': request.attempts,
+          });
+          request.trace?.record('ai.request.attempt', details: {
+            'attempt': request.attempts,
+            'kind': 'tool_completion',
+            'messageCount': sdkClient.context.getMessagesForRequest().length,
+            'attachmentCount': requestAttachmentCount,
+            'maxTokens': sdkClient.config.maxTokens,
+          });
           response = await Future.any<ai.AIResponse?>([
             sdkClient.chatWithContent(const [], addToContext: false),
             request.stopSignal.future.then<ai.AIResponse?>((_) => null),
           ]);
           if (response == null || request.stopRequested) break;
           toolCalls = response.toolCalls ?? const <ai.ToolCallContent>[];
+          if (request.trace?.enabled == true) {
+            request.responseChars += response.text.length;
+          }
         }
 
         final rawRoundText = mergeToolRoundText(
@@ -15497,6 +15633,8 @@ Available actions: __TOOLS__''';
         // usage 字段在不同供应商/SDK 版本里可能是 num：统一收敛成 int 再累加。
         totalInputTokens += (inTok as num?)?.toInt() ?? 0;
         totalOutputTokens += (outTok as num?)?.toInt() ?? 0;
+        request.inputTokens = totalInputTokens;
+        request.outputTokens = totalOutputTokens;
         // 续写轮只追加新增文本（见 addedPartialAssistant 注释）。
         final contextAssistantText = addedPartialAssistant
             ? roundText
@@ -15558,12 +15696,24 @@ Available actions: __TOOLS__''';
               requestedMaxTokens: effectiveMaxTokens,
             );
             if (continuationMaxTokens == 0) {
+              request.trace?.record('ai.request.continue_skipped', details: {
+                'reason': 'context_full',
+                'continuations': request.continuations,
+              });
               final notice = widget.strings.isZh
                   ? '（上下文窗口已满，回答可能不完整。）'
                   : '(The context window is full; this answer may be incomplete.)';
               finalContent = '$bubbleContent\n\n$notice';
               break;
             }
+            request.continuations++;
+            request.trace?.record('ai.request.continue', details: {
+              'reason': finishReason == ai.FinishReason.maxTokens
+                  ? 'max_tokens' : 'truncated',
+              'continuation': request.continuations,
+              'maxTokens': continuationMaxTokens,
+            });
+            requestAttachmentCount = attachments.length;
             // Rebuild a compact continuation context. The SDK's sliding window
             // counts the partial answer as input for the next round and could
             // otherwise evict the current user turn before the continuation.
@@ -15693,6 +15843,7 @@ Available actions: __TOOLS__''';
       // _titleRequestInFlight 防重入，避免和下一轮主请求并发时重复发标题请求。
       unawaited(_maybeGenerateTitle());
     } catch (e) {
+      requestError = e;
       // 用户主动停止时 close() 会让 stream 抛 HttpException —— 那不是真错误，
       // 气泡里已经有部分内容，不再追加 "Error: ..."（否则「停止」看起来像失败）。
       if (request.stopRequested) {
@@ -15737,8 +15888,15 @@ Available actions: __TOOLS__''';
       });
       _scrollToBottom();
     } finally {
+      request.finishTrace(
+        success: !request.stopRequested && requestError == null,
+        error: request.stopRequested ? null : requestError,
+      );
       sdkClient?.dispose();
+      request.disposeClient = null;
       unawaited(request.subscription?.cancel());
+      request.subscription = null;
+      request.finished = true;
       // 工具批次若因异常/停止没走到正常收尾，这里兜底释放归属，避免后续
       // 工具结果被错误抑制。
       if (identical(_toolCallOwner, request)) {
@@ -15809,35 +15967,62 @@ Available actions: __TOOLS__''';
     if (recent.isEmpty) return;
     _titleGenerated = true;
     _titleRequestInFlight = true;
-    final client = _createAiClient(
-      provider: provider,
-      apiKey: key,
-      apiUrl: url,
-      model: model,
-      maxTokens: 32,
-      contextWindow: profile?.contextWindow ?? cfg.aiContextWindow,
-      temperature: 0,
-      systemPrompt: cfg.aiTitlePrompt,
-      customHeaders: profile?.customHeaders,
-      exposePipelineTools: false,
-    );
+    final request = _AiStreamRequest(appState.diagnosticTrace.begin(
+      'ai.title',
+      details: {
+        'protocol': _sdkProvider(provider).name,
+        'messageCount': 2,
+        'sourceMessageCount': recentMessages.length,
+        'maxTokens': 32,
+        'contextWindow': profile?.contextWindow ?? cfg.aiContextWindow,
+      },
+    ));
+    request.attempts = 1;
+    _titleRequest = request;
+    ai.FlutterAI? client;
+    Object? titleError;
+    request.disposeClient = () => client?.dispose();
     try {
-      final response = await client
-          .chat('Summarize this conversation:\n$recent')
-          .timeout(const Duration(seconds: 15));
-      if (!mounted) return;
+      client = _createAiClient(
+        provider: provider,
+        apiKey: key,
+        apiUrl: url,
+        model: model,
+        maxTokens: 32,
+        contextWindow: profile?.contextWindow ?? cfg.aiContextWindow,
+        temperature: 0,
+        systemPrompt: cfg.aiTitlePrompt,
+        customHeaders: profile?.customHeaders,
+        exposePipelineTools: false,
+      );
+      final response = await Future.any<ai.AIResponse?>([
+        client.chat('Summarize this conversation:\n$recent')
+            .timeout(const Duration(seconds: 15)),
+        request.stopSignal.future.then<ai.AIResponse?>((_) => null),
+      ]);
+      if (response == null || !mounted || request.stopRequested) return;
+      request.responseChars = response.text.length;
+      request.inputTokens = response.usage?.promptTokens ?? 0;
+      request.outputTokens = response.usage?.completionTokens ?? 0;
       final title = response.text.trim().replaceAll(RegExp(r'[\n"]+'), '');
       if (title.isNotEmpty) widget.onTitleGenerated?.call(title);
     } catch (error) {
-      if (mounted) {
+      titleError = error;
+      if (mounted && !request.stopRequested) {
         appState.addLog(
-          '[AI] Title generation failed: $error',
+          '[AI] Title generation failed.',
           category: 'warn',
         );
       }
     } finally {
+      request.finishTrace(
+        success: !request.stopRequested && titleError == null,
+        error: request.stopRequested ? null : titleError,
+      );
+      request.disposeClient = null;
       _titleRequestInFlight = false;
-      client.dispose();
+      if (identical(_titleRequest, request)) _titleRequest = null;
+      client?.dispose();
     }
   }
 
@@ -17575,7 +17760,7 @@ Available actions: __TOOLS__''';
     final ctrl = TextEditingController(text: session['title'] as String? ?? '');
     final title = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => AppAlertDialog(
         title: Text(s.isZh ? '重命名对话' : 'Rename chat'),
         content: TextField(
           controller: ctrl,
@@ -18010,7 +18195,8 @@ Available actions: __TOOLS__''';
     // 移动端正文与气泡整体放大一档：12px 正文 + 28px 头像在手机上偏小，
     // 中文长段落读起来吃力（桌面端维持原尺寸，观感逐像素不变）。
     final mobile = widget.mobileSheet;
-    final messageStyle = Theme.of(context).textTheme.bodyMedium ?? const TextStyle(fontSize: 14);
+    final messageStyle =
+        Theme.of(context).textTheme.bodyMedium ?? const TextStyle(fontSize: 14);
     final fs = messageStyle.fontSize ?? 14.0;
     const avatarR = 14.0;
     // 头像列宽（直径 + 与气泡的 8px 间隙），同组后续消息用它占位。
@@ -18018,7 +18204,9 @@ Available actions: __TOOLS__''';
     // 气泡圆角：靠头像那一角收小（聊天气泡的通用语言）。四个角一律 12 时，
     // 一组对话看上去像几块并列的卡片，方向感全靠头像硬撑。
     const Radius rTail = Radius.circular(4);
-    final Radius rBig = Radius.circular(MobileVisualTheme.of(context).bubbleRadius(isMobilePlatform ? 15 : 14));
+    final Radius rBig = Radius.circular(
+      MobileVisualTheme.of(context).bubbleRadius(isMobilePlatform ? 15 : 14),
+    );
     final BorderRadius bubbleRadius = isUser
         ? BorderRadius.only(
             topLeft: rBig,
@@ -18866,7 +19054,7 @@ class _ExportConfigDialogState extends State<_ExportConfigDialog> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final zh = widget.zh;
-    return AlertDialog(
+    return AppAlertDialog(
       title: Row(
         children: [
           Icon(Icons.file_upload_outlined, size: 20, color: scheme.primary),

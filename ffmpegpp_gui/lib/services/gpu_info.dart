@@ -32,24 +32,16 @@ class GpuInfo {
     try {
       String? name;
       if (Platform.isWindows) {
-        final nvidia = await Process.run(
-            'nvidia-smi', ['--query-gpu=name', '--format=csv,noheader,nounits']);
-        if (nvidia.exitCode == 0) {
-          name = nvidia.stdout.toString().trim().split('\n').first;
-        } else {
-          final cim = await Process.run('powershell',
-              ['-NoProfile', '-Command', r'(Get-CimInstance Win32_VideoController).Name']);
-          if (cim.exitCode == 0) {
-            name = cim.stdout.toString().trim().split('\n').first;
-          }
-        }
+        name = await detectWindowsName();
       } else if (Platform.isLinux) {
-        final glx = await Process.run(
-            'glxinfo', ['-B'],
-            runInShell: true);
-        final line = glx.stdout.toString().split('\n').firstWhere(
-            (l) => l.contains('OpenGL renderer string'),
-            orElse: () => '');
+        final glx = await Process.run('glxinfo', ['-B'], runInShell: true);
+        final line = glx.stdout
+            .toString()
+            .split('\n')
+            .firstWhere(
+              (l) => l.contains('OpenGL renderer string'),
+              orElse: () => '',
+            );
         name = line.split(':').last.trim();
       }
       // 空结果不缓存（下次启动可重试），避免临时故障永久屏蔽检测
@@ -58,6 +50,40 @@ class GpuInfo {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Detects a Windows GPU without using the shared platform cache.
+  ///
+  /// [runner] allows testing the Windows probes on any host platform.
+  static Future<String?> detectWindowsName({
+    Future<ProcessResult> Function(String, List<String>)? runner,
+  }) async {
+    final run = runner ?? Process.run;
+    try {
+      final nvidia = await run('nvidia-smi', [
+        '--query-gpu=name',
+        '--format=csv,noheader,nounits',
+      ]);
+      if (nvidia.exitCode == 0) {
+        return nvidia.stdout.toString().trim().split('\n').first;
+      }
+    } catch (_) {
+      // NVIDIA's optional utility may be missing; still query Windows via CIM.
+    }
+
+    try {
+      final cim = await run('powershell', [
+        '-NoProfile',
+        '-Command',
+        r'(Get-CimInstance Win32_VideoController).Name',
+      ]);
+      if (cim.exitCode == 0) {
+        return cim.stdout.toString().trim().split('\n').first;
+      }
+    } catch (_) {
+      // Detection is best-effort, including when PowerShell is unavailable.
+    }
+    return null;
   }
 
   /// 是否为软件/基础渲染器（玻璃模糊在这些环境下极慢，应自动降级）

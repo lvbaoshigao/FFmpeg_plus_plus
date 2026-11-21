@@ -2,6 +2,20 @@ import 'package:flutter/widgets.dart';
 
 import '../platform/app_platform.dart';
 
+/// Computes the actual bottom-nav clearance for the shared default tab bar.
+///
+/// This lives beside the placement scope so theme/layout tokens can use the
+/// same geometry without importing `liquid_glass_mobile_nav.dart` back into
+/// `mobile_ui.dart`. A missing mobile override keeps the legacy desktop-safe
+/// value; mobile text scaling and safe-area padding are included when context
+/// is available.
+double mobileNavClearanceOf(BuildContext context) {
+  if (!isMobilePlatform) return kMobileNavClearance;
+  final labelHeight = MediaQuery.textScalerOf(context).scale(10.5) * 1.2;
+  final capsuleHeight = (22 + 6 + labelHeight + 8).clamp(52.0, double.infinity);
+  return MediaQuery.paddingOf(context).bottom + 8 + capsuleHeight + 2 * 4 + 6;
+}
+
 /// 当前生效的移动端主导航位置（bottom / left / right），由 AppShell 下发。
 ///
 /// **为什么用 InheritedWidget，而不是全局变量或让页面自己去读配置：**

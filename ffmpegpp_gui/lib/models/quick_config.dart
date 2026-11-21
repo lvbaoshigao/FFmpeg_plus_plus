@@ -40,8 +40,6 @@ enum QuickFileType {
       _ => null,
     };
   }
-
-  static QuickFileType? fromName(String? name) => fromJson(name);
 }
 
 /// 单条快捷配置项：一个可开关的常见操作及其参数。

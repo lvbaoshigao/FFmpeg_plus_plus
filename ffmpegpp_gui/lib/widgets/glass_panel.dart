@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_neutral_surface.dart';
-import 'app_card.dart' show SurfaceStyle;
+import 'app_card.dart' show MobileSmokeGlassSurface, SurfaceStyle;
 import 'desktop_resize_scope.dart';
 import 'liquid_glass_fallback.dart';
 import 'mobile_glass_pill.dart';
@@ -85,9 +85,6 @@ class GlassPanel extends StatelessWidget {
     );
     final noCardGlass = context.select<AppState, bool>(
       (s) => s.config.noCardGlass,
-    );
-    final settingsFrostedGlass = context.select<AppState, bool>(
-      (s) => s.config.settingsFrostedGlass,
     );
     // 玻璃细节（模糊度 / 通透度 / 高光强度与位置 / 边缘光）+ 主题色协调度。
     // 高光/边缘光由 [LiquidGlassBackdrop] 内部读同一份配置，这里只取模糊与通透。
@@ -178,58 +175,19 @@ class GlassPanel extends StatelessWidget {
           ),
         );
       }
-      if (settingsFrostedGlass && effect == 'liquid') {
-        // 压低 alpha：alpha 过高时玻璃层的 tint 会盖住背景模糊（观感偏实心）。
-        // 与 mobile_glass_pill 一致的 120/105 上限。
-        final frostedAlpha = (((isDark ? 105 : 120) * op) * tuning.tintScale)
-            .round()
-            .clamp(0, 255);
-        // [FIX UI-玻璃脱节] 此处**不能**包 RepaintBoundary。
-        // 历史代码在这里包了一层 RepaintBoundary，直接违反了本文件 241 / 368 行
-        // 已明确写下的规则：「含 BackdropFilter 的图层一旦成为光栅缓存候选，
-        // Skia/Impeller 会在玻璃自身内容不变时复用上一次的滤波快照 —— 背后内容
-        // 滚动后玻璃里仍是旧画面，与当前位置的背景错位（玻璃与背景脱节）」。
-        // 当时的处理是「把 alpha 压低到 105/120 让脱节不易被察觉」，属于掩盖症状；
-        // 根因就是这层 RepaintBoundary。移除后与 blur / 液态回退分支写法一致。
-        final int topAlpha = (frostedAlpha * 1.08).round().clamp(0, 255);
-        final int bottomAlpha = (frostedAlpha * 0.72).round().clamp(0, 255);
-        return DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: br,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withAlpha(isDark ? 64 : 26),
-                blurRadius: 20,
-                offset: const Offset(0, 7),
-              ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: br,
-            child: BackdropFilter(
-              filter: cachedGlassBlur(sigma),
-              child: Container(
-                padding: padding,
-                decoration: BoxDecoration(
-                  borderRadius: br,
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      baseColor.withAlpha(topAlpha),
-                      baseColor.withAlpha(frostedAlpha),
-                      baseColor.withAlpha(bottomAlpha),
-                    ],
-                  ),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: isDark ? 0.16 : 0.28),
-                    width: 0.7,
-                  ),
-                ),
-                child: child,
-              ),
-            ),
-          ),
+      if (effect == SurfaceStyle.liquid || effect == SurfaceStyle.blur) {
+        // Settings-frosted and ordinary glass cards now share the same quiet
+        // mobile material; the old setting still selects a matte, readable
+        // surface rather than the animated/refraction treatment.
+        return MobileSmokeGlassSurface(
+          borderRadius: br,
+          padding: padding,
+          sigma: sigma,
+          opacity: op,
+          tintScale: tuning.tintScale,
+          edge: tuning.edge,
+          themeAccent: follow && useThemeColor ? accent : null,
+          child: child,
         );
       }
       return MobileGlassPill(

@@ -5,11 +5,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 
+import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 // cachedGlassBlur：轨道玻璃的 σ 走进程级实例缓存（避免设置页里几十个滑块
 // 各自在每帧 build 时新建一份持有 native handle 的 ImageFilter）；
 // effectiveGlassSigma：桌面端的 σ 上限钳制。
-import 'liquid_glass_fallback.dart' show cachedGlassBlur, effectiveGlassSigma;
+import 'desktop_resize_scope.dart';
+import 'liquid_glass_fallback.dart'
+    show
+        cachedGlassBlur,
+        effectiveGlassSigma,
+        mobileGlassEffectsReducedOf,
+        mobileGlassSigma;
 
 // ═══════════════════════════════════════════
 // 统一滑块 / 进度条（全应用唯一来源）
@@ -278,20 +285,28 @@ class AppTrackGlass extends StatelessWidget {
         ? scheme.surfaceContainerHighest.withAlpha(isDark ? 200 : 220)
         : base.withAlpha(cfg.follow ? (isDark ? 34 : 46) : (isDark ? 28 : 104));
 
+    final bool mobile = isMobilePlatform;
+    final bool reduced = mobile && mobileGlassEffectsReducedOf(context);
+    final double sigma = mobile
+        ? mobileGlassSigma(_kTrackGlassSigma)
+        : effectiveGlassSigma(_kTrackGlassSigma);
+    final Color outline = MediaQuery.highContrastOf(context)
+        ? scheme.onSurface
+        : (cfg.noGlass
+              ? scheme.outlineVariant.withAlpha(isDark ? 60 : 80)
+              : Colors.white.withAlpha(isDark ? 46 : 150));
     final Widget fill = DecoratedBox(
       decoration: BoxDecoration(
         color: tint,
         borderRadius: br,
         border: Border.all(
-          color: cfg.noGlass
-              ? scheme.outlineVariant.withAlpha(isDark ? 60 : 80)
-              : Colors.white.withAlpha(isDark ? 46 : 150),
-          width: 0.7,
+          color: outline,
+          width: MediaQuery.highContrastOf(context) ? 1.5 : 0.7,
         ),
       ),
     );
 
-    if (cfg.noGlass) {
+    if (cfg.noGlass || reduced || sigma <= 0) {
       // 省电档：不建 BackdropFilter，也就没有离屏纹理与额外 saveLayer。
       return SizedBox(height: height, width: double.infinity, child: fill);
     }
@@ -303,6 +318,7 @@ class AppTrackGlass extends StatelessWidget {
       child: ClipRRect(
         borderRadius: br,
         child: BackdropFilter(
+          enabled: !DesktopResizeScope.isResizingOf(context),
           // 轨道 σ 恒定，走缓存 → 设置页里几十个滑块不再各自新建 filter。
           filter: cachedGlassBlur(effectiveGlassSigma(_kTrackGlassSigma)),
           child: fill,

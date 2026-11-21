@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'app_card.dart';
-import 'glass_panel.dart';
+
+import 'app_alert_dialog.dart';
 
 /// 通用字体选择器 — 点击弹出字体列表对话框
 class FontPicker extends StatelessWidget {
@@ -463,13 +463,12 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
 
     // 预览条字体：优先悬停项，其次当前选中项
     final previewFamily = _hoverFamily ?? widget.currentFont;
+    final media = MediaQuery.of(context);
+    final listHeight = ((media.size.height - media.viewInsets.bottom) * 0.4)
+        .clamp(80.0, 240.0);
 
-    return Dialog(
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      child: GlassPanel(
-        radius: 20,
-        style: SurfaceStyle.gray,
+    return AppModalSurface(
+      child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
@@ -510,275 +509,307 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
                       ),
                     ),
                   const SizedBox(width: 6),
-                  Material(
-                    color: Colors.transparent,
-                    borderRadius: BorderRadius.circular(8),
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      onTap: () => Navigator.pop(context),
-                      borderRadius: BorderRadius.circular(8),
-                      child: Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: Icon(
-                          Icons.close,
-                          size: 18,
-                          color: scheme.outline,
-                        ),
-                      ),
+                  IconButton(
+                    tooltip: isZh ? '取消' : 'Cancel',
+                    onPressed: () => Navigator.pop(context),
+                    constraints: const BoxConstraints(
+                      minWidth: 44,
+                      minHeight: 44,
                     ),
+                    icon: Icon(Icons.close, size: 18, color: scheme.outline),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
-              // 搜索框：主题化圆角填充样式
-              TextField(
-                controller: _ctrl,
-                autofocus: true,
-                style: TextStyle(fontSize: 13, color: scheme.onSurface),
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: isZh ? '搜索字体...' : 'Search fonts...',
-                  hintStyle: TextStyle(fontSize: 12, color: scheme.outline),
-                  prefixIcon: Icon(
-                    Icons.search,
-                    size: 18,
-                    color: scheme.outline,
-                  ),
-                  suffixIcon: _filter.isEmpty
-                      ? null
-                      : IconButton(
-                          icon: Icon(
-                            Icons.close,
-                            size: 16,
+              // The body scrolls independently so the dismissal action stays
+              // reachable when the keyboard or large text reduces dialog space.
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 搜索框：主题化圆角填充样式
+                      TextField(
+                        controller: _ctrl,
+                        autofocus: true,
+                        style: TextStyle(fontSize: 13, color: scheme.onSurface),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          hintText: isZh ? '搜索字体...' : 'Search fonts...',
+                          hintStyle: TextStyle(
+                            fontSize: 12,
                             color: scheme.outline,
                           ),
-                          onPressed: () {
-                            _ctrl.clear();
-                            setState(() {
-                              _filter = '';
-                              _applyFilter();
-                            });
-                          },
-                        ),
-                  filled: true,
-                  fillColor: scheme.surfaceContainerHighest.withAlpha(90),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(
-                      color: scheme.outlineVariant,
-                      width: 1,
-                    ),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(
-                      color: scheme.outlineVariant.withAlpha(160),
-                      width: 1,
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: scheme.primary, width: 1.5),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                ),
-                onChanged: (v) => setState(() {
-                  _filter = v;
-                  _applyFilter();
-                }),
-              ),
-              const SizedBox(height: 8),
-              // 字体列表
-              if (_loading)
-                const SizedBox(
-                  height: 240,
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (_failed)
-                // 枚举失败：给出可重试的失败态（既不永久转圈，也不谎报「无匹配字体」）
-                SizedBox(
-                  height: 240,
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          isZh ? '字体列表读取失败' : 'Failed to read the font list',
-                          style: TextStyle(fontSize: 12, color: scheme.outline),
-                        ),
-                        const SizedBox(height: 6),
-                        TextButton.icon(
-                          onPressed: () {
-                            setState(() {
-                              _loading = true;
-                              _failed = false;
-                            });
-                            _loadFonts();
-                          },
-                          icon: const Icon(Icons.refresh, size: 16),
-                          label: Text(isZh ? '重试' : 'Retry'),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              else if (filtered.isEmpty)
-                SizedBox(
-                  height: 240,
-                  child: Center(
-                    child: Text(
-                      isZh ? '未找到匹配字体' : 'No matching fonts',
-                      style: TextStyle(fontSize: 12, color: scheme.outline),
-                    ),
-                  ),
-                )
-              else
-                SizedBox(
-                  height: 240,
-                  child: ListView.builder(
-                    itemCount: filtered.length,
-                    // 列表项高度压缩：只占一行、更紧凑
-                    itemExtent: 34,
-                    itemBuilder: (_, i) {
-                      final (label, family) = filtered[i];
-                      final isSelected = family == widget.currentFont;
-                      final isHover = family == _hoverFamily;
-                      return MouseRegion(
-                        // 只有悬停项真的变了才 setState：同一行的重复进入/离开
-                        // 不该重建整个对话框（含搜索框和列表）
-                        onEnter: (_) {
-                          if (_hoverFamily != family) {
-                            setState(() => _hoverFamily = family);
-                          }
-                        },
-                        onExit: (_) {
-                          if (_hoverFamily != null) {
-                            setState(() => _hoverFamily = null);
-                          }
-                        },
-                        child: Material(
-                          color: Colors.transparent,
-                          borderRadius: BorderRadius.circular(8),
-                          clipBehavior: Clip.antiAlias,
-                          child: InkWell(
-                            onTap: () => widget.onSelected(family),
-                            borderRadius: BorderRadius.circular(8),
-                            // 右键：放大预览
-                            onSecondaryTap: () =>
-                                _showFontPreview(context, label, family),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isSelected
-                                    ? scheme.primary.withAlpha(30)
-                                    : (isHover
-                                          ? scheme.surfaceContainerHighest
-                                                .withAlpha(120)
-                                          : null),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      label,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        // 列表项不加载字体（避免打开瞬间卡顿）；仅选中项用字体样式预览
-                                        fontFamily:
-                                            isSelected && family.isNotEmpty
-                                            ? family
-                                            : null,
-                                        color: scheme.onSurface,
-                                        fontWeight: isSelected
-                                            ? FontWeight.w600
-                                            : FontWeight.normal,
-                                      ),
-                                    ),
+                          prefixIcon: Icon(
+                            Icons.search,
+                            size: 18,
+                            color: scheme.outline,
+                          ),
+                          suffixIcon: _filter.isEmpty
+                              ? null
+                              : IconButton(
+                                  icon: Icon(
+                                    Icons.close,
+                                    size: 16,
+                                    color: scheme.outline,
                                   ),
-                                  if (family.isNotEmpty && family != label)
-                                    Flexible(
-                                      child: Text(
-                                        family,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          color: scheme.outline,
-                                        ),
-                                      ),
-                                    ),
-                                  if (isSelected)
-                                    Icon(
-                                      Icons.check_circle,
-                                      size: 16,
-                                      color: scheme.primary,
-                                    ),
-                                ],
+                                  onPressed: () {
+                                    _ctrl.clear();
+                                    setState(() {
+                                      _filter = '';
+                                      _applyFilter();
+                                    });
+                                  },
+                                ),
+                          filled: true,
+                          fillColor: scheme.surfaceContainerHighest.withAlpha(
+                            90,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(
+                              color: scheme.outlineVariant,
+                              width: 1,
+                            ),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(
+                              color: scheme.outlineVariant.withAlpha(160),
+                              width: 1,
+                            ),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(
+                              color: scheme.primary,
+                              width: 1.5,
+                            ),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                        ),
+                        onChanged: (v) => setState(() {
+                          _filter = v;
+                          _applyFilter();
+                        }),
+                      ),
+                      const SizedBox(height: 8),
+                      // 字体列表
+                      if (_loading)
+                        SizedBox(
+                          height: listHeight,
+                          child: const Center(
+                            child: CircularProgressIndicator(),
+                          ),
+                        )
+                      else if (_failed)
+                        // 枚举失败：给出可重试的失败态（既不永久转圈，也不谎报「无匹配字体」）
+                        SizedBox(
+                          height: listHeight,
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  isZh
+                                      ? '字体列表读取失败'
+                                      : 'Failed to read the font list',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: scheme.outline,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                TextButton.icon(
+                                  onPressed: () {
+                                    setState(() {
+                                      _loading = true;
+                                      _failed = false;
+                                    });
+                                    _loadFonts();
+                                  },
+                                  icon: const Icon(Icons.refresh, size: 16),
+                                  label: Text(isZh ? '重试' : 'Retry'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      else if (filtered.isEmpty)
+                        SizedBox(
+                          height: listHeight,
+                          child: Center(
+                            child: Text(
+                              isZh ? '未找到匹配字体' : 'No matching fonts',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: scheme.outline,
                               ),
                             ),
                           ),
+                        )
+                      else
+                        SizedBox(
+                          height: listHeight,
+                          child: ListView.builder(
+                            itemCount: filtered.length,
+                            // Keep one scaled text line and a touch-sized row.
+                            itemExtent: (media.textScaler.scale(13) * 1.45 + 10)
+                                .clamp(44.0, double.infinity),
+                            itemBuilder: (_, i) {
+                              final (label, family) = filtered[i];
+                              final isSelected = family == widget.currentFont;
+                              final isHover = family == _hoverFamily;
+                              return MouseRegion(
+                                // 只有悬停项真的变了才 setState：同一行的重复进入/离开
+                                // 不该重建整个对话框（含搜索框和列表）
+                                onEnter: (_) {
+                                  if (_hoverFamily != family) {
+                                    setState(() => _hoverFamily = family);
+                                  }
+                                },
+                                onExit: (_) {
+                                  if (_hoverFamily != null) {
+                                    setState(() => _hoverFamily = null);
+                                  }
+                                },
+                                child: Material(
+                                  color: Colors.transparent,
+                                  borderRadius: BorderRadius.circular(8),
+                                  clipBehavior: Clip.antiAlias,
+                                  child: InkWell(
+                                    onTap: () => widget.onSelected(family),
+                                    borderRadius: BorderRadius.circular(8),
+                                    // 右键：放大预览
+                                    onSecondaryTap: () => _showFontPreview(
+                                      context,
+                                      label,
+                                      family,
+                                    ),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: isSelected
+                                            ? scheme.primary.withAlpha(30)
+                                            : (isHover
+                                                  ? scheme
+                                                        .surfaceContainerHighest
+                                                        .withAlpha(120)
+                                                  : null),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              label,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                // 列表项不加载字体（避免打开瞬间卡顿）；仅选中项用字体样式预览
+                                                fontFamily:
+                                                    isSelected &&
+                                                        family.isNotEmpty
+                                                    ? family
+                                                    : null,
+                                                color: scheme.onSurface,
+                                                fontWeight: isSelected
+                                                    ? FontWeight.w600
+                                                    : FontWeight.normal,
+                                              ),
+                                            ),
+                                          ),
+                                          if (family.isNotEmpty &&
+                                              family != label)
+                                            Flexible(
+                                              child: Text(
+                                                family,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: scheme.outline,
+                                                ),
+                                              ),
+                                            ),
+                                          if (isSelected)
+                                            Icon(
+                                              Icons.check_circle,
+                                              size: 16,
+                                              color: scheme.primary,
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
                         ),
-                      );
-                    },
-                  ),
-                ),
-              const SizedBox(height: 10),
-              // 实时预览条：悬停/选中的字体真实渲染
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withAlpha(110),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: scheme.outlineVariant.withAlpha(90),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '字体预览 Font Preview 123',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 17,
-                          fontFamily: previewFamily.isNotEmpty
-                              ? previewFamily
-                              : null,
-                          color: scheme.onSurface,
+                      const SizedBox(height: 10),
+                      // 实时预览条：悬停/选中的字体真实渲染
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: scheme.surfaceContainerHighest.withAlpha(110),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: scheme.outlineVariant.withAlpha(90),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '字体预览 Font Preview 123',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 17,
+                                  fontFamily: previewFamily.isNotEmpty
+                                      ? previewFamily
+                                      : null,
+                                  color: scheme.onSurface,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Icon(
+                              Icons.text_fields,
+                              size: 16,
+                              color: scheme.outline,
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Icon(Icons.text_fields, size: 16, color: scheme.outline),
-                  ],
+                      const SizedBox(height: 6),
+                      Text(
+                        isZh ? '右键字体可放大预览' : 'Right-click a font to preview',
+                        style: TextStyle(fontSize: 10, color: scheme.outline),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Text(
-                    isZh ? '右键字体可放大预览' : 'Right-click a font to preview',
-                    style: TextStyle(fontSize: 10, color: scheme.outline),
-                  ),
-                  const Spacer(),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: Text(isZh ? '取消' : 'Cancel'),
-                  ),
-                ],
+              const SizedBox(height: 10),
+              AppDialogAction(
+                role: AppDialogActionRole.cancel,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(isZh ? '取消' : 'Cancel'),
+                ),
               ),
             ],
           ),
@@ -793,12 +824,8 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
     final isZh = widget.language == 'zh';
     showDialog(
       context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        child: GlassPanel(
-          radius: 18,
-          style: SurfaceStyle.gray,
+      builder: (ctx) => AppModalSurface(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -846,14 +873,12 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
                 ),
               ),
               const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: Text(isZh ? '关闭' : 'Close'),
-                  ),
-                ],
+              AppDialogAction(
+                role: AppDialogActionRole.cancel,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(isZh ? '关闭' : 'Close'),
+                ),
               ),
             ],
           ),

@@ -13,6 +13,40 @@
 namespace ffmpegpp {
 namespace fppx_detail {
 
+namespace {
+uint8_t mediaKindFromParam(const json& params) {
+    if (!params.is_object()) return MK_NONE;
+    const auto it = params.find("media_type");
+    if (it == params.end() || !it->is_string()) return MK_NONE;
+    const std::string& type = it->get_ref<const std::string&>();
+    if (type == "video") return MK_VIDEO;
+    if (type == "image") return MK_IMAGE;
+    if (type == "audio") return MK_AUDIO;
+    return MK_NONE;
+}
+} // namespace
+
+void resolveGenericMediaPorts(VNode& node, const json& params,
+                              std::vector<std::string>& errors) {
+    // 注册了 media_type 的节点由用户选择实际媒体类型；允许范围仍以注册表为准。
+    if (!node.spec || node.spec->isGate || !node.spec->paramKeys.count("media_type")) return;
+    const uint8_t supported = node.spec->mediaIn;
+
+    const uint8_t selected = mediaKindFromParam(params);
+    if (selected == MK_NONE) {
+        errors.push_back("通用节点「" + node.label + "」缺少有效的 media_type（video/image/audio）");
+        return;
+    }
+    if ((supported & selected) == 0) {
+        const char* kind = selected == MK_AUDIO ? "audio" :
+                           selected == MK_IMAGE ? "image" : "video";
+        errors.push_back("通用节点「" + node.label + "」不支持 media_type=" + kind);
+        return;
+    }
+    node.mediaIn = selected;
+    node.mediaOut = selected;
+}
+
 std::string shortId(const std::string& uuid) {
     return uuid.size() > 8 ? uuid.substr(0, 8) : uuid;
 }
@@ -85,7 +119,10 @@ void buildVNodesFromJson(const json& nodes, std::vector<VNode>& out,
                 v.label = v.spec->zhLabel;
                 v.isStart = (v.spec->name == std::string("start"));
                 v.isOutput = (v.spec->name == std::string("output"));
-                if (v.isStart) v.mediaOut = startMediaOut(n.value("params", json::object()));
+                const json params = n.contains("params") && n["params"].is_object()
+                                        ? n["params"] : json::object();
+                if (v.isStart) v.mediaOut = startMediaOut(params);
+                resolveGenericMediaPorts(v, params, errors);
             }
         }
         out.push_back(v);
@@ -159,7 +196,8 @@ void validateGraphSemantics(const std::vector<VNode>& nodes, const std::vector<V
                 !nodes[e.from].spec->isGate && !nodes[e.to].spec->isGate) {
                 uint8_t outM = nodes[e.from].mediaOut ? nodes[e.from].mediaOut
                                                       : nodes[e.from].spec->mediaOut;
-                uint8_t inM = nodes[e.to].spec->mediaIn;
+                uint8_t inM = nodes[e.to].mediaIn ? nodes[e.to].mediaIn
+                                                    : nodes[e.to].spec->mediaIn;
                 if ((outM & inM) == 0) {
                     auto mk = [](uint8_t m) {
                         std::string s;

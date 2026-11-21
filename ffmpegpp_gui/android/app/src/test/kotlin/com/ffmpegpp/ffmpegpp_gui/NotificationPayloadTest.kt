@@ -5,6 +5,8 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NotificationPayloadTest {
+    private val oppoDebug = ColorOsIntegrationConfig.resolve(true, null, null, null)!!
+
     private fun xiaomi(progress: Int?) = JSONObject(XiaomiIslandPayload.build(
         "transcode", "FFmpeg++", "sample.mp4", "Processing", "miui.land.pic_task",
         true, false, 60, 5, false, progress,
@@ -49,7 +51,7 @@ class NotificationPayloadTest {
     }
 
     @Test fun oppoDebugIntentMatchesOfficialDebugServiceIds() {
-        val payload = JSONObject(ColorOsIntentPayload.buildProgressIntent("sample.mp4", 42, 0))
+        val payload = JSONObject(ColorOsIntentPayload.buildProgressIntent(oppoDebug, "sample.mp4", 42, 0))
         assertEquals("Example.Progress", payload.getString("intentName"))
         assertEquals("999900001", payload.getJSONObject("serviceId").getString("fluidCloud"))
         assertEquals("999800001", payload.getJSONObject("serviceId").getString("launcher"))
@@ -57,7 +59,7 @@ class NotificationPayloadTest {
 
     @Test fun oppoProgressAndCapsuleAlwaysAgreeAndAreClamped() {
         for (input in listOf(-4, 0, 42, 100, 200)) {
-            val entity = JSONObject(ColorOsIntentPayload.buildProgressIntent("sample.mp4", input, 1))
+            val entity = JSONObject(ColorOsIntentPayload.buildProgressIntent(oppoDebug, "sample.mp4", input, 1))
                 .getJSONObject("intentEntity")
             val secondary = entity.getJSONObject("secondaryData")
             assertEquals("PROGRESS", secondary.getString("type"))
@@ -67,14 +69,68 @@ class NotificationPayloadTest {
     }
 
     @Test fun oppoCreateRefreshAndEndKeepEntityIdentity() {
-        val created = JSONObject(ColorOsIntentPayload.buildProgressIntent("first.mp4", 10, 0))
-        val refreshed = JSONObject(ColorOsIntentPayload.buildProgressIntent("next.mp4", 50, 1))
-        val ended = JSONObject(ColorOsIntentPayload.buildProgressEndIntent())
+        val created = JSONObject(ColorOsIntentPayload.buildProgressIntent(oppoDebug, "first.mp4", 10, 0))
+        val refreshed = JSONObject(ColorOsIntentPayload.buildProgressIntent(oppoDebug, "next.mp4", 50, 1))
+        val ended = JSONObject(ColorOsIntentPayload.buildProgressEndIntent(oppoDebug))
         for ((payload, action) in listOf(created to 0, refreshed to 1, ended to 2)) {
             assertEquals(action, payload.getJSONObject("intentAction").getInt("actionStatus"))
             assertEquals("ffmpegpp_progress", payload.getJSONObject("intentEntity").getString("entityId"))
         }
         assertFalse(ended.getJSONObject("intentEntity").has("secondaryData"))
         assertNotEquals(created.getString("identifier"), refreshed.getString("identifier"))
+    }
+
+    @Test fun releaseConfigurationRequiresEveryOPPOIssuedValue() {
+        assertNull(ColorOsIntegrationConfig.resolve(false, null, null, null))
+        assertNull(ColorOsIntegrationConfig.resolve(false, "FFmpeg.Progress", null, "cloud-id"))
+        assertNull(ColorOsIntegrationConfig.resolve(false, "FFmpeg.Progress", " ", "cloud-id"))
+        val configured = ColorOsIntegrationConfig.resolve(
+            false, "FFmpeg.Progress", "approved-launcher-id", "approved-fluid-cloud-id",
+        )
+        assertNotNull(configured)
+        assertFalse(configured!!.isDebugTemplate)
+        assertTrue(ColorOsIntegrationConfig.isProductionConfigured(
+            false, "FFmpeg.Progress", "approved-launcher-id", "approved-fluid-cloud-id",
+        ))
+        assertFalse(ColorOsIntegrationConfig.isProductionConfigured(
+            true, "FFmpeg.Progress", "approved-launcher-id", "approved-fluid-cloud-id",
+        ))
+    }
+
+    @Test fun productionPayloadUsesConfiguredValuesAndNeverSampleIDs() {
+        val configured = ColorOsIntegrationConfig.resolve(
+            false, "FFmpeg.Progress", "approved-launcher-id", "approved-fluid-cloud-id",
+        )!!
+        val payload = JSONObject(
+            ColorOsIntentPayload.buildProgressIntent(configured, "sample.mp4", 42, 0),
+        )
+        assertEquals("FFmpeg.Progress", payload.getString("intentName"))
+        val serviceIds = payload.getJSONObject("serviceId")
+        assertEquals("approved-launcher-id", serviceIds.getString("launcher"))
+        assertEquals("approved-fluid-cloud-id", serviceIds.getString("fluidCloud"))
+        assertNotEquals("999800001", serviceIds.getString("launcher"))
+        assertNotEquals("999900001", serviceIds.getString("fluidCloud"))
+    }
+
+    @Test fun providerResultPreservesSuccessAndRejectionDiagnostics() {
+        val accepted = JSONObject()
+            .put("code", 0)
+            .put("message", "accepted")
+        val parsedAccepted = ColorOsIntentPayload.parseShareResult(accepted.toString())
+        assertTrue(parsedAccepted.success)
+        assertEquals("0", parsedAccepted.code)
+        assertEquals("accepted", parsedAccepted.message)
+
+        val rejected = JSONObject()
+            .put("code", 10101001)
+            .put("message", "permission denied")
+        val parsedRejected = ColorOsIntentPayload.parseShareResult(rejected.toString())
+        assertFalse(parsedRejected.success)
+        assertEquals("10101001", parsedRejected.code)
+        assertEquals("permission denied", parsedRejected.message)
+
+        val missing = ColorOsIntentPayload.parseShareResult(null)
+        assertFalse(missing.success)
+        assertEquals("missing_result", missing.code)
     }
 }

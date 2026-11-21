@@ -253,6 +253,7 @@ class _ThumbWidgetState extends State<_ThumbWidget> {
     final p = await ThumbnailService.ensureThumbnail(
       widget.filepath,
       ffmpeg: widget.ffmpeg,
+      trace: context.read<AppState>().diagnosticTrace,
       isAudio: widget.isAudio,
     );
     if (mounted && p != null) setState(() => _thumbPath = p);

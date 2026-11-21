@@ -70,17 +70,19 @@ class _SidebarState extends State<Sidebar> {
     );
     final clr = scheme.onSurfaceVariant;
 
-    final debug = context.select<AppState, bool>((s) => s.config.debugMode);
+    final showLogs = context.select<AppState, bool>(
+      (state) => state.config.debugMode || state.config.veryVerboseLogs,
+    );
     final items = <(TablerGlyph, String)>[
       (TablerGlyph.movie, s.navProjects),
       (TablerGlyph.listDetails, s.navQueue),
       (TablerGlyph.terminal2, s.navCommand),
       (TablerGlyph.folders, lang == 'zh' ? '配置库' : 'Configs'),
       (TablerGlyph.settings, s.navSettings),
-      if (debug) (TablerGlyph.fileText, lang == 'zh' ? '日志' : 'Logs'),
+      if (showLogs) (TablerGlyph.fileText, lang == 'zh' ? '日志' : 'Logs'),
     ];
 
-    // 当 debug 模式关闭时，如果当前选中的是 Logs 页面，自动切回设置页面
+    // 日志入口隐藏时，将当前日志页切回设置。
     if (widget.selectedIndex >= items.length && items.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         widget.onSelected(items.length - 1);

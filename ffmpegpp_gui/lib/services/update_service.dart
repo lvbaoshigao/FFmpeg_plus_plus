@@ -4,6 +4,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 
+import 'diagnostic_trace.dart';
+
 const _currentVersion = '6.0.0-beta2';
 
 const _lanzouUrls = {
@@ -155,7 +157,25 @@ int compareVersions(String a, String b) {
 
 String get currentVersion => _currentVersion;
 
-Future<UpdateResult> checkForUpdate({required bool preferLanzou}) async {
+Future<UpdateResult> checkForUpdate({
+  required bool preferLanzou, DiagnosticTrace? trace,
+}) async {
+  final span = trace?.begin('update.check', details: {'preferLanzou': preferLanzou});
+  try {
+    final result = await _checkForUpdate(preferLanzou: preferLanzou);
+    span?.finish(success: result.error == null, details: {
+      'source': result.source.name, 'hasUpdate': result.hasUpdate,
+      'releaseNotesError': result.releaseNotesError,
+      'hasChecksum': result.downloadSha256 != null,
+    });
+    return result;
+  } catch (error) {
+    span?.finish(success: false, error: error);
+    rethrow;
+  }
+}
+
+Future<UpdateResult> _checkForUpdate({required bool preferLanzou}) async {
   // Always try to get GitHub release notes
   final ghFuture = _checkGithub();
 
@@ -366,11 +386,13 @@ Future<String> downloadUpdate(
   String url, {
   void Function(int received, int total)? onProgress,
   String? expectedSha256,
+  DiagnosticTrace? trace,
 }) async {
   final result = await downloadUpdateWithResult(
     url,
     onProgress: onProgress,
     expectedSha256: expectedSha256,
+    trace: trace,
   );
   return result.path;
 }
@@ -392,11 +414,42 @@ Future<DownloadResult> downloadUpdateWithResult(
   String url, {
   void Function(int received, int total)? onProgress,
   String? expectedSha256,
+  DiagnosticTrace? trace,
 }) async {
-  final uri = Uri.parse(url);
-  // 明文 http 一律拒绝：更新包会被以应用（Linux 下甚至提权）身份执行
-  if (uri.scheme != 'https') {
-    throw Exception('拒绝下载：更新包必须使用 https（当前 ${uri.scheme}）');
+  final span = trace?.begin('update.download', details: {
+    'checksumProvided': expectedSha256?.trim().isNotEmpty == true,
+  });
+  try {
+    final result = await _downloadUpdateWithResult(
+      url, onProgress: onProgress, expectedSha256: expectedSha256, span: span,
+    );
+    span?.finish(success: true, details: {
+      'byteCount': result.bytes, 'verified': result.verified,
+      'warningCount': result.warnings.length,
+    });
+    return result;
+  } catch (error) {
+    span?.finish(success: false, error: error, details: {'phase': 'prepare'});
+    rethrow;
+  }
+}
+
+Future<DownloadResult> _downloadUpdateWithResult(
+  String url, {
+  void Function(int received, int total)? onProgress,
+  String? expectedSha256,
+  DiagnosticSpan? span,
+}) async {
+  final Uri uri;
+  try {
+    uri = Uri.parse(url);
+    // 明文 http 一律拒绝：更新包会被以应用（Linux 下甚至提权）身份执行
+    if (uri.scheme != 'https') {
+      throw Exception('拒绝下载：更新包必须使用 https（当前 ${uri.scheme}）');
+    }
+  } catch (error) {
+    span?.finish(success: false, error: error, details: {'phase': 'validate_url'});
+    rethrow;
   }
   final dir = Directory('${_dataDir()}${_s}update');
   if (!dir.existsSync()) dir.createSync(recursive: true);
@@ -418,6 +471,10 @@ Future<DownloadResult> downloadUpdateWithResult(
     request.followRedirects = true;
     request.maxRedirects = 10;
     final response = await request.close();
+    span?.record('update.download.response', details: {
+      'httpStatus': response.statusCode, 'contentLength': response.contentLength,
+      'redirects': response.redirects.length,
+    });
 
     // 原先不看状态码：404/403 返回的 HTML 错误页会被当成安装包存下来，
     // 然后 installAndRestart 直接执行它。
@@ -433,9 +490,19 @@ Future<DownloadResult> downloadUpdateWithResult(
       _warn(warnings, '服务端未返回 Content-Length，无法校验下载长度（已按实际收到的字节数继续）');
     }
     sink = file.openWrite();
+    var progressBucket = -1;
     await for (final chunk in response) {
       sink.add(chunk);
       received += chunk.length;
+      if (span?.enabled == true && total > 0) {
+        final bucket = (received * 10 ~/ total).clamp(0, 10);
+        if (bucket != progressBucket) {
+          progressBucket = bucket;
+          span?.record('update.download.progress', details: {
+            'receivedBytes': received, 'totalBytes': total,
+          });
+        }
+      }
       onProgress?.call(received, total);
     }
     await sink.flush();
@@ -460,7 +527,8 @@ Future<DownloadResult> downloadUpdateWithResult(
       _checkBasicPackage(bytes: received, fileName: fileName);
       _warn(warnings, '发布方未提供 SHA-256，仅完成基础校验（非空 + 扩展名/平台匹配），未做完整性强校验');
     }
-  } catch (_) {
+  } catch (error) {
+    span?.finish(success: false, error: error, details: {'phase': 'download_or_verify', 'receivedBytes': received});
     // 失败时清掉半截文件，避免下次被误当成有效安装包执行
     if (sink != null) {
       try {

@@ -314,10 +314,19 @@ void main() {
         ..writeAsStringSync('cover');
       final spectrum = _graph([_node(PipelineStepType.audioSpectrum)]);
       final waveform = _graph([_node(PipelineStepType.audioWaveform)]);
-      expect(resolved(spectrum), endsWith('/song_spectrum.png'));
-      expect(resolved(waveform), endsWith('/song_waveform.png'));
+      expect(
+        File(resolved(spectrum)).uri,
+        directory.uri.resolve('song_spectrum.png'),
+      );
+      expect(
+        File(resolved(waveform)).uri,
+        directory.uri.resolve('song_waveform.png'),
+      );
       File(resolved(spectrum)).writeAsStringSync('existing spectrum');
-      expect(resolved(spectrum), endsWith('/song_spectrum_2.png'));
+      expect(
+        File(resolved(spectrum)).uri,
+        directory.uri.resolve('song_spectrum_2.png'),
+      );
       expect(cover.readAsStringSync(), 'cover');
     });
 
@@ -334,18 +343,18 @@ void main() {
         outputParams: {'naming_mode': 'custom', 'naming_value': 'cover.jpg'},
       );
       final output = resolved(graph);
-      expect(output, endsWith('/cover.webp'));
+      expect(File(output).uri, directory.uri.resolve('cover.webp'));
       final call = _calls(
         graph,
         output: output,
       ).where((call) => call.action != '_cleanup').last;
       expect(call.params['output'], output);
       expect(
-        AudioVisualization.uniqueOutput(output, [output]),
-        endsWith('/cover_2.webp'),
+        File(AudioVisualization.uniqueOutput(output, [output])).uri,
+        directory.uri.resolve('cover_2.webp'),
       );
       File(output).writeAsStringSync('existing');
-      expect(resolved(graph), endsWith('/cover_2.webp'));
+      expect(File(resolved(graph)).uri, directory.uri.resolve('cover_2.webp'));
     });
 
     test('should retain explicit video container after image synthesis', () {
@@ -553,10 +562,10 @@ void main() {
             ),
           );
         }
-        expect(state.tasks.map((task) => task.outputPath.split('/').last), [
-          'song_spectrum.webp',
-          'song_spectrum_2.webp',
-          'song_spectrum_3.webp',
+        expect(state.tasks.map((task) => File(task.outputPath).uri), [
+          directory.uri.resolve('song_spectrum.webp'),
+          directory.uri.resolve('song_spectrum_2.webp'),
+          directory.uri.resolve('song_spectrum_3.webp'),
         ]);
         for (final task in state.tasks) {
           expect(
@@ -786,13 +795,16 @@ void main() {
       'should preserve quoted paths, map audio and write exactly one image',
       () {
         final config = AudioVisualization.fromParams({'output_format': 'webp'});
+        final root = Directory.systemTemp.absolute.path;
+        final input = '$root${Platform.pathSeparator}' r'audio $(literal) "a".wav';
+        final output = '$root${Platform.pathSeparator}result %03d.webp';
         final args = config.arguments(
-          input: r'/tmp/audio $(literal) "a".wav',
-          output: '/tmp/result %03d.webp',
+          input: input,
+          output: output,
           waveform: true,
         );
-        expect(args[args.indexOf('-i') + 1], r'/tmp/audio $(literal) "a".wav');
-        expect(args.last, '/tmp/result %03d.webp');
+        expect(args[args.indexOf('-i') + 1], input);
+        expect(args.last, output);
         expect(
           args[args.indexOf('-filter_complex') + 1],
           startsWith('[0:a:0]showwavespic='),

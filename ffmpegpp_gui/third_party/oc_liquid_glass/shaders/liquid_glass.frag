@@ -228,8 +228,13 @@ void main(){
   }
   float falloff = min(px(uDistortFalloffPx), minHalf*0.92);
 
+  // Optical depth belongs to the shape, not the screen. Previously the offset
+  // was a fraction of R.y, making identical pills warp differently per viewport.
+  // 2*minHalf is the local short side in normalized SDF space.
+  float opticalDepth = min(minHalf * 2.0, px(uDistortFalloffPx) * 2.0);
   vec2 off = grad * pow(smoothstep(-falloff,0.0,dU),
-                        uDistortExponent) * uRefractStrength * mask;
+                        uDistortExponent) * uRefractStrength * opticalDepth
+                        * 2.4 * mask;
 
   /* 折射采样：off 是在「按高度归一化」空间里算出来的位移（1.0 = R.y 像素），
      必须乘 UV_PER_PX 换算回纹理 uv（逐轴 Δuv = Δpx/R），否则水平折射被放大

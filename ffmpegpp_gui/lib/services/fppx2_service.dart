@@ -1,5 +1,6 @@
 import '../models/models.dart';
 import 'backend_client.dart';
+import 'diagnostic_trace.dart';
 
 /// FPPX 配置文件的统一导入/导出入口。
 ///
@@ -30,63 +31,72 @@ class FppxService {
   /// 口令错误时 success=false 且 error 为统一文案，可保持对话框打开重试。
   Future<FppxImportResult> importFile(String path,
       {bool force = false, String password = ''}) async {
-    final resp =
-        await backend.fppxImport(path, force: force, password: password);
-
-    final respData = resp['data'] as Map<String, dynamic>?;
-
-    // 需要口令：不是错误，交由 GUI 弹框（规范 §6.9）
-    if (resp['success'] != true && respData?['need_password'] == true) {
-      return FppxImportResult(
-        success: false,
-        needPassword: true,
-        encrypted: true,
-        errors: _strList(respData?['errors']),
-        warnings: _strList(respData?['warnings']),
-      );
-    }
-
-    if (resp['success'] != true) {
-      final dataErrors = _strList(respData?['errors']);
-      return FppxImportResult(
-        success: false,
-        error: (resp['error'] as String?) ?? dataErrors.firstOrNull ?? '导入失败',
-        errors: dataErrors,
-        warnings: _strList(respData?['warnings']),
-      );
-    }
-
-    final data = (resp['data'] as Map<String, dynamic>?) ?? const {};
-    final graphJson = data['graph'];
-    PipelineGraph? graph;
-    if (graphJson is Map<String, dynamic>) {
-      try {
-        graph = PipelineGraph.fromJson(graphJson);
-      } catch (_) {
-        return const FppxImportResult(
-          success: false,
-          error: '节点图数据解析失败',
-        );
-      }
-    }
-    final quickItems = (data['quick_items'] as List?)
-            ?.whereType<Map<String, dynamic>>()
-            .toList() ??
-        const <Map<String, dynamic>>[];
-
-    return FppxImportResult(
-      success: true,
-      isNewFormat: data['is_new_format'] == true,
-      mode: (data['mode'] as num?)?.toInt() ?? 0,
-      description: (data['description'] as String?) ?? '',
-      encrypted: data['encrypted'] == true,
-      graph: graph,
-      quickItems: quickItems,
-      errors: _strList(data['errors']),
-      warnings: _strList(data['warnings']),
-      unknownTypeIds: _strList(data['unknown_type_ids']),
-      forced: data['forced'] == true,
+    final span = backend.diagnosticTrace?.begin(
+      'fppx.import',
+      details: {'forced': force},
     );
+    try {
+      final resp =
+          await backend.fppxImport(path, force: force, password: password);
+      final respData = resp['data'] as Map<String, dynamic>?;
+
+      // 需要口令：不是错误，交由 GUI 弹框（规范 §6.9）
+      if (resp['success'] != true && respData?['need_password'] == true) {
+        return _finishImport(span, FppxImportResult(
+          success: false,
+          needPassword: true,
+          encrypted: true,
+          errors: _strList(respData?['errors']),
+          warnings: _strList(respData?['warnings']),
+        ));
+      }
+
+      if (resp['success'] != true) {
+        final dataErrors = _strList(respData?['errors']);
+        return _finishImport(span, FppxImportResult(
+          success: false,
+          error: (resp['error'] as String?) ?? dataErrors.firstOrNull ?? '导入失败',
+          errors: dataErrors,
+          warnings: _strList(respData?['warnings']),
+        ));
+      }
+
+      final data = (resp['data'] as Map<String, dynamic>?) ?? const {};
+      final graphJson = data['graph'];
+      PipelineGraph? graph;
+      if (graphJson is Map<String, dynamic>) {
+        try {
+          graph = PipelineGraph.fromJson(graphJson);
+        } catch (_) {
+          return _finishImport(
+            span,
+            const FppxImportResult(success: false, error: '节点图数据解析失败'),
+            failureKind: 'graph_parse_failed',
+          );
+        }
+      }
+      final quickItems = (data['quick_items'] as List?)
+              ?.whereType<Map<String, dynamic>>()
+              .toList() ??
+          const <Map<String, dynamic>>[];
+
+      return _finishImport(span, FppxImportResult(
+        success: true,
+        isNewFormat: data['is_new_format'] == true,
+        mode: (data['mode'] as num?)?.toInt() ?? 0,
+        description: (data['description'] as String?) ?? '',
+        encrypted: data['encrypted'] == true,
+        graph: graph,
+        quickItems: quickItems,
+        errors: _strList(data['errors']),
+        warnings: _strList(data['warnings']),
+        unknownTypeIds: _strList(data['unknown_type_ids']),
+        forced: data['forced'] == true,
+      ));
+    } catch (error) {
+      _finishFailure(span, error);
+      rethrow;
+    }
   }
 
   // ── 导出 ──
@@ -105,18 +115,26 @@ class FppxService {
     String password = '',
     int encryptAlgo = algoAes256Cbc,
   }) async {
-    final graphJson = graph.toJson();
-    final resp = newFormat
-        ? await backend.fppx2Export(path,
-            mode: modeNodeEditor,
-            description: description,
-            graph: graphJson,
-            encrypted: encrypted,
-            password: password,
-            encryptAlgo: encryptAlgo)
-        : await backend.fppxLegacyExport(path, graph: graphJson, description: description);
+    return _traceExport('fppx.export_graph', {
+      'mode': modeNodeEditor,
+      'newFormat': newFormat,
+      'encrypted': newFormat && encrypted,
+      'nodeCount': graph.nodes.length,
+    }, () async {
+      final graphJson = graph.toJson();
+      final resp = newFormat
+          ? await backend.fppx2Export(path,
+              mode: modeNodeEditor,
+              description: description,
+              graph: graphJson,
+              encrypted: encrypted,
+              password: password,
+              encryptAlgo: encryptAlgo)
+          : await backend.fppxLegacyExport(
+              path, graph: graphJson, description: description);
 
-    return _toExportResult(resp);
+      return _toExportResult(resp);
+    });
   }
 
   /// 导出快速模式参数项为新版 .fppx（0x02，逻辑块无节点 ID，只存命令参数）。
@@ -128,14 +146,84 @@ class FppxService {
     String password = '',
     int encryptAlgo = algoAes256Cbc,
   }) async {
-    final resp = await backend.fppx2Export(path,
-        mode: modeQuick,
-        description: description,
-        quickItems: items,
-        encrypted: encrypted,
-        password: password,
-        encryptAlgo: encryptAlgo);
-    return _toExportResult(resp);
+    return _traceExport('fppx.export_quick', {
+      'mode': modeQuick,
+      'newFormat': true,
+      'encrypted': encrypted,
+      'itemCount': items.length,
+    }, () async {
+      final resp = await backend.fppx2Export(path,
+          mode: modeQuick,
+          description: description,
+          quickItems: items,
+          encrypted: encrypted,
+          password: password,
+          encryptAlgo: encryptAlgo);
+      return _toExportResult(resp);
+    });
+  }
+
+  FppxImportResult _finishImport(
+    DiagnosticSpan? span,
+    FppxImportResult result, {
+    String? failureKind,
+  }) {
+    if (span?.enabled != true || backend.diagnosticTrace == null) return result;
+    span!.finish(success: result.success, details: {
+      'mode': result.mode,
+      'newFormat': result.isNewFormat,
+      'encrypted': result.encrypted,
+      'needPassword': result.needPassword,
+      'forced': result.forced,
+      'unknownCount': result.unknownTypeIds.length,
+      'nodeCount': result.graph?.nodes.length ?? 0,
+      'itemCount': result.quickItems.length,
+      'warningCount': result.warnings.length,
+      'errorCount': result.errors.length,
+      if (failureKind != null)
+        'failureKind': failureKind
+      else if (result.needsPassword)
+        'failureKind': 'password_required'
+      else if (result.needsForceConfirm)
+        'failureKind': 'unknown_nodes'
+      else if (!result.success)
+        'failureKind': result.errors.isEmpty ? 'backend_rejected' : 'validation_failed',
+    });
+    return result;
+  }
+
+  Future<FppxExportResult> _traceExport(
+    String operation,
+    Map<String, Object?> details,
+    Future<FppxExportResult> Function() export,
+  ) async {
+    final span = backend.diagnosticTrace?.begin(operation, details: details);
+    if (span == null) return export();
+    try {
+      final result = await export();
+      if (backend.diagnosticTrace != null) {
+        span.finish(success: result.success, details: {
+          ...details,
+          'warningCount': result.warnings.length,
+          'errorCount': result.errors.length,
+          if (!result.success)
+            'failureKind': result.errors.isEmpty ? 'backend_rejected' : 'validation_failed',
+        });
+      }
+      return result;
+    } catch (error) {
+      _finishFailure(span, error);
+      rethrow;
+    }
+  }
+
+  void _finishFailure(DiagnosticSpan? span, Object error) {
+    if (backend.diagnosticTrace == null) return;
+    span?.finish(success: false, details: {
+      'failureKind': error is TypeError || error is FormatException
+          ? 'malformed_response'
+          : 'transport_failure',
+    });
   }
 
   FppxExportResult _toExportResult(Map<String, dynamic> resp) {

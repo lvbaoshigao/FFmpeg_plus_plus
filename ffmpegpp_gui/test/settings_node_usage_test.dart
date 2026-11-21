@@ -154,6 +154,9 @@ void main() {
           ),
           findsOneWidget,
         );
+        // The shared dialog scrolls its title, explanation, and actions together.
+        await tester.ensureVisible(find.byKey(_confirm));
+        await tester.pumpAndSettle();
         expect(find.byKey(_confirm).hitTestable(), findsOneWidget);
         expect(tester.takeException(), isNull);
         await tester.tap(find.byKey(_confirm));

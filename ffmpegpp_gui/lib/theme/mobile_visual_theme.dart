@@ -9,8 +9,6 @@ class MobileVisualTheme extends ThemeExtension<MobileVisualTheme> {
   const MobileVisualTheme({this.enabled = false});
   final bool enabled;
   double get menuRadius => enabled ? 20 : 12;
-  double get chatRadius => enabled ? 20 : 16;
-  double get chatInset => enabled ? 16 : 12;
   double bubbleRadius(double fallback) => enabled ? 20 : fallback;
 
   /// 卡片 / 面板圆角。
@@ -31,6 +29,12 @@ class MobileVisualTheme extends ThemeExtension<MobileVisualTheme> {
     final page = AppNeutralSurface.background(scheme.brightness);
     final card = AppNeutralSurface.card(scheme.brightness);
     final cardHigh = AppNeutralSurface.cardHigh(scheme.brightness);
+    final modalBase = scheme.brightness == Brightness.dark
+        ? const Color(0xFF35322C)
+        : cardHigh;
+    final modalSurface = modalBase.withValues(
+      alpha: base.dialogTheme.backgroundColor?.a ?? 1,
+    );
     return base.copyWith(
       colorScheme: scheme.copyWith(
         surface: page,
@@ -44,7 +48,14 @@ class MobileVisualTheme extends ThemeExtension<MobileVisualTheme> {
       // 下面这几个主题的底色是**在 AppTheme 构建时**用 fromSeed 的 scheme
       // 烘死的，只改 colorScheme 不会让它们跟着变（典型症状：Miuix 下卡片已经
       // 是中性灰，对话框/弹出菜单却还是带主题色调的旧色）。
-      dialogTheme: base.dialogTheme.copyWith(backgroundColor: cardHigh),
+      dialogTheme: base.dialogTheme.copyWith(backgroundColor: modalSurface),
+      datePickerTheme: base.datePickerTheme.copyWith(
+        backgroundColor: modalSurface,
+        headerBackgroundColor: modalSurface,
+      ),
+      timePickerTheme: base.timePickerTheme.copyWith(
+        backgroundColor: modalSurface,
+      ),
       popupMenuTheme: base.popupMenuTheme.copyWith(color: cardHigh),
       bottomSheetTheme: base.bottomSheetTheme.copyWith(backgroundColor: card),
       extensions: [

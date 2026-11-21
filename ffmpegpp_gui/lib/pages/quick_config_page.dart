@@ -7,8 +7,9 @@ import 'package:provider/provider.dart';
 import '../models/quick_config.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
-import '../widgets/app_card.dart';
 // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）
+import '../widgets/app_alert_dialog.dart';
+import '../widgets/app_dropdown.dart';
 import '../widgets/option_menu_bar.dart';
 
 /// 预设选项：值 + 显示标签。
@@ -55,14 +56,16 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
       createdAt: src.createdAt,
       updatedAt: src.updatedAt,
       items: src.items
-          .map((it) => QuickConfigItem(
-                key: it.key,
-                title: it.title,
-                titleZh: it.titleZh,
-                titleEn: it.titleEn,
-                params: Map<String, dynamic>.from(it.params),
-                enabled: it.enabled,
-              ))
+          .map(
+            (it) => QuickConfigItem(
+              key: it.key,
+              title: it.title,
+              titleZh: it.titleZh,
+              titleEn: it.titleEn,
+              params: Map<String, dynamic>.from(it.params),
+              enabled: it.enabled,
+            ),
+          )
           .toList(),
     );
   }
@@ -96,9 +99,15 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
     } catch (_) {
       if (!mounted) return;
       final isZh = AppStrings.of(context.read<AppState>().config.language).isZh;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(isZh ? '保存失败，更改仍保留，请重试。' : 'Save failed. Your changes are retained. Please retry.'),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isZh
+                ? '保存失败，更改仍保留，请重试。'
+                : 'Save failed. Your changes are retained. Please retry.',
+          ),
+        ),
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -111,8 +120,7 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
     final isZh = AppStrings.of(context.read<AppState>().config.language).isZh;
     final result = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      builder: (ctx) => AppAlertDialog(
         title: Text(
           isZh ? '放弃更改?' : 'Discard changes?',
           style: TextStyle(color: scheme.onSurface),
@@ -149,30 +157,53 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
   /// 参数名本地化标签。
   String _paramLabel(String key, bool isZh) {
     switch (key) {
-      case 'bitrate': return isZh ? '码率' : 'Bitrate';
-      case 'crf': return 'CRF';
-      case 'angle': return isZh ? '角度' : 'Angle';
+      case 'bitrate':
+        return isZh ? '码率' : 'Bitrate';
+      case 'crf':
+        return 'CRF';
+      case 'angle':
+        return isZh ? '角度' : 'Angle';
       case 'subtitle_path':
-      case 'subtitle_file': return isZh ? '字幕文件' : 'Subtitle File';
-      case 'w': return isZh ? '宽度' : 'Width';
-      case 'h': return isZh ? '高度' : 'Height';
-      case 'x': return isZh ? 'X 偏移' : 'X Offset';
-      case 'y': return isZh ? 'Y 偏移' : 'Y Offset';
-      case 'quality': return isZh ? '质量' : 'Quality';
-      case 'format': return isZh ? '格式' : 'Format';
-      case 'codec': return isZh ? '编码器' : 'Codec';
-      case 'preset': return isZh ? '预设' : 'Preset';
-      case 'position': return isZh ? '位置' : 'Position';
-      case 'image': return isZh ? '水印图片' : 'Watermark Image';
-      case 'brightness': return isZh ? '亮度' : 'Brightness';
-      case 'contrast': return isZh ? '对比度' : 'Contrast';
-      case 'saturation': return isZh ? '饱和度' : 'Saturation';
-      case 'fit': return isZh ? '适配' : 'Fit Mode';
-      case 'rate': return isZh ? '采样率 (Hz)' : 'Sample Rate (Hz)';
-      case 'count': return isZh ? '声道数' : 'Channels';
-      case 'level': return isZh ? '目标响度 (LUFS)' : 'Level (LUFS)';
-      case 'burn': return isZh ? '烧录字幕' : 'Burn Subtitles';
-      default: return _humanizeKey(key);
+      case 'subtitle_file':
+        return isZh ? '字幕文件' : 'Subtitle File';
+      case 'w':
+        return isZh ? '宽度' : 'Width';
+      case 'h':
+        return isZh ? '高度' : 'Height';
+      case 'x':
+        return isZh ? 'X 偏移' : 'X Offset';
+      case 'y':
+        return isZh ? 'Y 偏移' : 'Y Offset';
+      case 'quality':
+        return isZh ? '质量' : 'Quality';
+      case 'format':
+        return isZh ? '格式' : 'Format';
+      case 'codec':
+        return isZh ? '编码器' : 'Codec';
+      case 'preset':
+        return isZh ? '预设' : 'Preset';
+      case 'position':
+        return isZh ? '位置' : 'Position';
+      case 'image':
+        return isZh ? '水印图片' : 'Watermark Image';
+      case 'brightness':
+        return isZh ? '亮度' : 'Brightness';
+      case 'contrast':
+        return isZh ? '对比度' : 'Contrast';
+      case 'saturation':
+        return isZh ? '饱和度' : 'Saturation';
+      case 'fit':
+        return isZh ? '适配' : 'Fit Mode';
+      case 'rate':
+        return isZh ? '采样率 (Hz)' : 'Sample Rate (Hz)';
+      case 'count':
+        return isZh ? '声道数' : 'Channels';
+      case 'level':
+        return isZh ? '目标响度 (LUFS)' : 'Level (LUFS)';
+      case 'burn':
+        return isZh ? '烧录字幕' : 'Burn Subtitles';
+      default:
+        return _humanizeKey(key);
     }
   }
 
@@ -208,7 +239,18 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
         ];
       case 'preset':
         return <_Preset>[
-          for (final e in const ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow', 'placebo'])
+          for (final e in const [
+            'ultrafast',
+            'superfast',
+            'veryfast',
+            'faster',
+            'fast',
+            'medium',
+            'slow',
+            'slower',
+            'veryslow',
+            'placebo',
+          ])
             (value: e, label: e),
         ];
       case 'codec':
@@ -218,8 +260,22 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
         return <_Preset>[for (final e in list) (value: e, label: e)];
       case 'format':
         final list = switch (ft) {
-          QuickFileType.video => const ['mp4', 'mkv', 'mov', 'avi', 'webm', 'mpeg'],
-          QuickFileType.audio => const ['mp3', 'aac', 'wav', 'flac', 'ogg', 'm4a'],
+          QuickFileType.video => const [
+            'mp4',
+            'mkv',
+            'mov',
+            'avi',
+            'webm',
+            'mpeg',
+          ],
+          QuickFileType.audio => const [
+            'mp3',
+            'aac',
+            'wav',
+            'flac',
+            'ogg',
+            'm4a',
+          ],
           QuickFileType.image => const ['jpg', 'png', 'webp', 'bmp', 'tiff'],
         };
         return <_Preset>[for (final e in list) (value: e, label: e)];
@@ -232,7 +288,10 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
           (value: 'outside', label: isZh ? '仅放大' : 'Outside'),
         ];
       case 'rate':
-        return <_Preset>[for (final e in const [8000, 22050, 44100, 48000, 96000]) (value: e, label: '$e')];
+        return <_Preset>[
+          for (final e in const [8000, 22050, 44100, 48000, 96000])
+            (value: e, label: '$e'),
+        ];
       case 'count':
         return [
           (value: 1, label: isZh ? '单声道 (1)' : 'Mono (1)'),
@@ -245,9 +304,15 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
             : const ['500k', '1M', '2M', '4M', '8M', '20M'];
         return <_Preset>[for (final e in list) (value: e, label: e)];
       case 'quality':
-        return <_Preset>[for (final e in const [60, 70, 75, 80, 85, 90, 95]) (value: e, label: '$e')];
+        return <_Preset>[
+          for (final e in const [60, 70, 75, 80, 85, 90, 95])
+            (value: e, label: '$e'),
+        ];
       case 'level':
-        return <_Preset>[for (final e in const [-23, -20, -16, -14, -12]) (value: e, label: '$e LUFS')];
+        return <_Preset>[
+          for (final e in const [-23, -20, -16, -14, -12])
+            (value: e, label: '$e LUFS'),
+        ];
       default:
         return null;
     }
@@ -255,27 +320,43 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
 
   IconData _itemIcon(String key) {
     switch (key) {
-      case 'bitrate': return Icons.speed;
-      case 'subtitle': return Icons.subtitles;
-      case 'crop': return Icons.crop;
-      case 'rotate': return Icons.rotate_right;
-      case 'watermark': return Icons.branding_watermark;
-      case 'compress': return Icons.compress;
-      case 'resize': return Icons.photo_size_select_large;
-      case 'convert_format': return Icons.swap_horiz;
-      case 'filters': return Icons.tune;
-      case 'sample_rate': return Icons.multitrack_audio;
-      case 'channels': return Icons.surround_sound;
-      case 'normalize': return Icons.volume_up;
-      default: return Icons.tune_outlined;
+      case 'bitrate':
+        return Icons.speed;
+      case 'subtitle':
+        return Icons.subtitles;
+      case 'crop':
+        return Icons.crop;
+      case 'rotate':
+        return Icons.rotate_right;
+      case 'watermark':
+        return Icons.branding_watermark;
+      case 'compress':
+        return Icons.compress;
+      case 'resize':
+        return Icons.photo_size_select_large;
+      case 'convert_format':
+        return Icons.swap_horiz;
+      case 'filters':
+        return Icons.tune;
+      case 'sample_rate':
+        return Icons.multitrack_audio;
+      case 'channels':
+        return Icons.surround_sound;
+      case 'normalize':
+        return Icons.volume_up;
+      default:
+        return Icons.tune_outlined;
     }
   }
 
   Color _fileTypeColor(QuickFileType type, ColorScheme scheme) {
     switch (type) {
-      case QuickFileType.video: return scheme.primary;
-      case QuickFileType.audio: return scheme.tertiary;
-      case QuickFileType.image: return scheme.secondary;
+      case QuickFileType.video:
+        return scheme.primary;
+      case QuickFileType.audio:
+        return scheme.tertiary;
+      case QuickFileType.image:
+        return scheme.secondary;
     }
   }
 
@@ -295,10 +376,16 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
     final winW = narrow
         ? media.size.width
         : math.min(960.0, media.size.width * 0.92);
-    final keyboardInset = media.viewInsets.bottom > 0 ? media.viewInsets.bottom : 0.0;
+    final keyboardInset = media.viewInsets.bottom > 0
+        ? media.viewInsets.bottom
+        : 0.0;
     final winH = narrow
-        ? media.size.height - keyboardInset.clamp(0, media.size.height * 0.5)
+        ? (media.size.height - keyboardInset).clamp(0.0, media.size.height)
         : math.min(700.0, media.size.height * 0.86);
+    final scrollCompactLayout =
+        narrow &&
+        media.size.width < 720 &&
+        (winH < 420 || media.textScaler.scale(1) > 1.3);
 
     return PopScope(
       canPop: false,
@@ -309,134 +396,203 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
       },
       child: AbsorbPointer(
         absorbing: _saving,
-        child: Dialog(
-        backgroundColor: Colors.transparent,
-        surfaceTintColor: Colors.transparent,
-        insetPadding: EdgeInsets.zero,
-        child: SizedBox(
-          width: winW,
-          height: winH,
-          child: AppCard(
-            style: app.config.cardStyle,
-            radius: narrow ? 0 : 22,
-            padding: EdgeInsets.zero,
-            child: SafeArea(
-              top: false,
-              bottom: false,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Padding(
-                    // 手机上让出状态栏，避免标题被挖孔/刘海压住。
-                    padding: EdgeInsets.only(top: media.padding.top),
-                    child: _buildHeader(scheme, isZh),
-                  ),
-                  Divider(height: 1, color: scheme.outlineVariant.withAlpha(70)),
-                  Expanded(
-                    child: LayoutBuilder(
-                      builder: (_, constraints) {
-                        if (constraints.maxWidth < 720) {
-                          return _buildVerticalLayout(scheme, isZh, constraints);
-                        }
-                        return _buildHorizontalLayout(scheme, isZh);
-                      },
-                    ),
-                  ),
-                ],
+        child: AppModalSurface(
+          constraints: BoxConstraints(maxWidth: winW),
+          child: SizedBox(
+            width: winW,
+            height: winH,
+            child: MediaQuery(
+              data: media,
+              child: SafeArea(
+                top: false,
+                bottom: false,
+                child: scrollCompactLayout
+                    ? SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Padding(
+                              padding: EdgeInsets.only(top: media.padding.top),
+                              child: _buildHeader(scheme, isZh),
+                            ),
+                            Divider(
+                              height: 1,
+                              color: scheme.outlineVariant.withAlpha(70),
+                            ),
+                            SizedBox(
+                              height: winH,
+                              child: LayoutBuilder(
+                                builder: (_, constraints) =>
+                                    _buildVerticalLayout(
+                                      scheme,
+                                      isZh,
+                                      constraints,
+                                    ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Padding(
+                            // 手机上让出状态栏，避免标题被挖孔/刘海压住。
+                            padding: EdgeInsets.only(top: media.padding.top),
+                            child: _buildHeader(scheme, isZh),
+                          ),
+                          Divider(
+                            height: 1,
+                            color: scheme.outlineVariant.withAlpha(70),
+                          ),
+                          Expanded(
+                            child: LayoutBuilder(
+                              builder: (_, constraints) {
+                                if (constraints.maxWidth < 720) {
+                                  return _buildVerticalLayout(
+                                    scheme,
+                                    isZh,
+                                    constraints,
+                                  );
+                                }
+                                return _buildHorizontalLayout(scheme, isZh);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
               ),
             ),
           ),
         ),
-      ),
       ),
     );
   }
 
   /// 窗口顶栏：标题 + 文件类型徽章 + 保存/关闭。
   Widget _buildHeader(ColorScheme scheme, bool isZh) {
-    return Padding(
-      // 垂直内边距上下同为 12（左右 18/12 是玻璃圆角留白）；Row 显式居中对齐，
-      // 让标题、文件类型徽标、保存/关闭按钮在任意字号下保持同一条垂直中心线。
-      padding: const EdgeInsets.fromLTRB(18, 12, 12, 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
+    final title = Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _config.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurface,
+                ),
+              ),
+              if (_config.description.isNotEmpty) ...[
+                const SizedBox(height: 2),
                 Text(
-                  _config.name,
-                  // 标题单行省略：大字号下不再折成两行把顶栏撑高（保存/关闭按钮会跟着下移）
-                  maxLines: 1,
+                  _config.description,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurface,
+                    fontSize: 12,
+                    color: scheme.onSurfaceVariant,
                   ),
                 ),
-                if (_config.description.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    _config.description,
-                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                  ),
-                ],
               ],
-            ),
+            ],
           ),
-          const SizedBox(width: 8),
-          Container(
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
               color: _fileTypeColor(_config.fileType, scheme).withAlpha(30),
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: _fileTypeColor(_config.fileType, scheme).withAlpha(80)),
             ),
             child: Text(
               _config.fileType.label(isZh),
-              // 徽标随字号加宽会顶开右侧按钮：单行省略，高度始终与顶栏一致
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _fileTypeColor(_config.fileType, scheme)),
+              style: TextStyle(
+                fontSize: 11,
+                color: _fileTypeColor(_config.fileType, scheme),
+              ),
             ),
           ),
-          if (_dirty) ...[
-            const SizedBox(width: 8),
-            Container(
-              width: 8, height: 8,
-              decoration: const BoxDecoration(color: Colors.orangeAccent, shape: BoxShape.circle),
-            ),
-          ],
+        ),
+        if (_dirty) ...[
           const SizedBox(width: 8),
-          FilledButton.icon(
-            icon: const Icon(Icons.save_outlined, size: 16),
-            // 按钮文字单行省略（窄窗口/大字号下不再折行把按钮撑高）
-            label: Text(isZh ? '保存' : 'Save', maxLines: 1, overflow: TextOverflow.ellipsis),
-            onPressed: _dirty && !_saving ? _save : null,
-            style: FilledButton.styleFrom(
-              padding: EdgeInsets.symmetric(horizontal: 14, vertical: isMobileContext ? 0 : 0),
-              // 修复：原先 minimumSize.zero + shrinkWrap 把按钮压成一条扁条，
-              // 移动端不足 44dp 触控规范。这里给足触控高度并保持可读字号。
-              minimumSize: Size(0, isMobileContext ? 44 : 36),
-              tapTargetSize: MaterialTapTargetSize.padded,
-              textStyle: const TextStyle(fontSize: 13),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.orangeAccent,
+              shape: BoxShape.circle,
             ),
-          ),
-          const SizedBox(width: 4),
-          IconButton(
-            icon: const Icon(Icons.close, size: 20),
-            tooltip: isZh ? '关闭' : 'Close',
-            onPressed: () async {
-              final nav = Navigator.of(context);
-              if (await _onWillPop() && nav.mounted) nav.pop();
-            },
-            constraints: BoxConstraints(minWidth: isMobileContext ? 44 : 36, minHeight: isMobileContext ? 44 : 36),
-            padding: EdgeInsets.zero,
+            child: SizedBox(width: 8, height: 8),
           ),
         ],
+      ],
+    );
+    final actions = LayoutBuilder(
+      builder: (context, constraints) {
+        final cancel = AppDialogAction(
+          role: AppDialogActionRole.cancel,
+          child: TextButton(
+            onPressed: _saving
+                ? null
+                : () async {
+                    final nav = Navigator.of(context);
+                    if (await _onWillPop() && nav.mounted) nav.pop();
+                  },
+            child: Text(isZh ? '取消' : 'Cancel'),
+          ),
+        );
+        final save = AppDialogAction(
+          role: AppDialogActionRole.primary,
+          child: FilledButton(
+            onPressed: _dirty && !_saving ? _save : null,
+            child: Text(isZh ? '保存' : 'Save'),
+          ),
+        );
+        if (constraints.maxWidth >= 260 &&
+            MediaQuery.textScalerOf(context).scale(1) <= 1.3) {
+          return Row(
+            children: [
+              Expanded(child: cancel),
+              const SizedBox(width: 8),
+              Expanded(child: save),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [cancel, const SizedBox(height: 8), save],
+        );
+      },
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth >= 600 &&
+              MediaQuery.textScalerOf(context).scale(1) <= 1.3) {
+            return Row(
+              children: [
+                Expanded(child: title),
+                const SizedBox(width: 16),
+                SizedBox(width: 260, child: actions),
+              ],
+            );
+          }
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [title, const SizedBox(height: 12), actions],
+          );
+        },
       ),
     );
   }
@@ -455,9 +611,39 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
     );
   }
 
-  Widget _buildVerticalLayout(ColorScheme scheme, bool isZh, BoxConstraints constraints) {
-    // 修复：原先固定 200px 的左侧列表在手机竖屏上被压得极扁、排版拥挤；
-    // 现按可用高度的 42% 动态分配（限制在 170~300px），窄屏两栏比例协调。
+  Widget _buildVerticalLayout(
+    ColorScheme scheme,
+    bool isZh,
+    BoxConstraints constraints,
+  ) {
+    if (constraints.maxHeight < 380) {
+      final selected = _config.items
+          .where((item) => item.key == _selectedKey)
+          .firstOrNull;
+      return Column(
+        children: [
+          if (_config.items.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: AppDropdown<String>(
+                label: isZh ? '配置项' : 'Config item',
+                value: selected?.key ?? _config.items.first.key,
+                height: 44,
+                items: [
+                  for (final item in _config.items)
+                    AppDropdownItem<String>(item.key, item.titleFor(isZh)),
+                ],
+                onChanged: (key) => setState(() => _selectedKey = key),
+              ),
+            ),
+          Expanded(
+            child: _config.items.isEmpty
+                ? Center(child: Text(isZh ? '暂无配置项' : 'No items'))
+                : _buildRightPanel(scheme, isZh),
+          ),
+        ],
+      );
+    }
     final leftH = (constraints.maxHeight * 0.42).clamp(170.0, 300.0);
     return Column(
       children: [
@@ -489,11 +675,22 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
                   // 头部行高度固定：标签与数量都单行省略，大字号下不会折行加高
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: scheme.outline),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.outline,
+                  ),
                 ),
               ),
-              Text('${_config.items.length}', maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: scheme.outline.withAlpha(120))),
+              Text(
+                '${_config.items.length}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: scheme.outline.withAlpha(120),
+                ),
+              ),
             ],
           ),
         ),
@@ -503,20 +700,29 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
               ? Center(
                   child: Text(
                     isZh ? '暂无配置项' : 'No items',
-                    style: TextStyle(color: scheme.outline.withAlpha(100), fontSize: 13),
+                    style: TextStyle(
+                      color: scheme.outline.withAlpha(100),
+                      fontSize: 13,
+                    ),
                   ),
                 )
               : ListView.builder(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   itemCount: _config.items.length,
-                  itemBuilder: (_, i) => _buildItemTile(_config.items[i], i, scheme, isZh),
+                  itemBuilder: (_, i) =>
+                      _buildItemTile(_config.items[i], i, scheme, isZh),
                 ),
         ),
       ],
     );
   }
 
-  Widget _buildItemTile(QuickConfigItem item, int index, ColorScheme scheme, bool isZh) {
+  Widget _buildItemTile(
+    QuickConfigItem item,
+    int index,
+    ColorScheme scheme,
+    bool isZh,
+  ) {
     final selected = _selectedKey == item.key;
     final title = item.titleFor(isZh);
     final summary = _itemSummary(item, isZh);
@@ -528,13 +734,16 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            border: selected ? Border(left: BorderSide(color: scheme.primary, width: 3)) : null,
+            border: selected
+                ? Border(left: BorderSide(color: scheme.primary, width: 3))
+                : null,
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               SizedBox(
-                width: 28, height: 28,
+                width: 28,
+                height: 28,
                 child: Checkbox(
                   value: item.enabled,
                   onChanged: (_) => _toggleItemEnabled(index),
@@ -544,15 +753,20 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
               ),
               const SizedBox(width: 8),
               Container(
-                width: 32, height: 32,
+                width: 32,
+                height: 32,
                 decoration: BoxDecoration(
-                  color: item.enabled ? scheme.primaryContainer.withAlpha(120) : scheme.surfaceContainerHighest.withAlpha(80),
+                  color: item.enabled
+                      ? scheme.primaryContainer.withAlpha(120)
+                      : scheme.surfaceContainerHighest.withAlpha(80),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(
                   _itemIcon(item.key),
                   size: 16,
-                  color: item.enabled ? scheme.onPrimaryContainer : scheme.outline.withAlpha(100),
+                  color: item.enabled
+                      ? scheme.onPrimaryContainer
+                      : scheme.outline.withAlpha(100),
                 ),
               ),
               const SizedBox(width: 10),
@@ -569,7 +783,9 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
-                        color: item.enabled ? scheme.onSurface : scheme.outline.withAlpha(120),
+                        color: item.enabled
+                            ? scheme.onSurface
+                            : scheme.outline.withAlpha(120),
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -579,7 +795,9 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 11,
-                        color: item.enabled ? scheme.onSurfaceVariant : scheme.outline.withAlpha(80),
+                        color: item.enabled
+                            ? scheme.onSurfaceVariant
+                            : scheme.outline.withAlpha(80),
                       ),
                     ),
                   ],
@@ -600,10 +818,19 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.touch_app_outlined, size: 44, color: scheme.outline.withAlpha(60)),
+            Icon(
+              Icons.touch_app_outlined,
+              size: 44,
+              color: scheme.outline.withAlpha(60),
+            ),
             const SizedBox(height: 12),
-            Text(isZh ? '请从左侧选择一个配置项' : 'Select an item from the left',
-                style: TextStyle(fontSize: 14, color: scheme.outline.withAlpha(120))),
+            Text(
+              isZh ? '请从左侧选择一个配置项' : 'Select an item from the left',
+              style: TextStyle(
+                fontSize: 14,
+                color: scheme.outline.withAlpha(120),
+              ),
+            ),
           ],
         ),
       );
@@ -612,8 +839,10 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
     final idx = _config.items.indexWhere((it) => it.key == _selectedKey);
     if (idx < 0) {
       return Center(
-        child: Text(isZh ? '配置项未找到' : 'Item not found',
-            style: TextStyle(color: scheme.error, fontSize: 14)),
+        child: Text(
+          isZh ? '配置项未找到' : 'Item not found',
+          style: TextStyle(color: scheme.error, fontSize: 14),
+        ),
       );
     }
 
@@ -638,13 +867,19 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: scheme.onSurface),
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
                 ),
               ),
               Switch(
                 value: item.enabled,
                 onChanged: (_) {
-                  final idx2 = _config.items.indexWhere((it) => it.key == item.key);
+                  final idx2 = _config.items.indexWhere(
+                    (it) => it.key == item.key,
+                  );
                   if (idx2 >= 0) _toggleItemEnabled(idx2);
                 },
                 materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -654,7 +889,10 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
           const SizedBox(height: 4),
           Text(
             isZh ? '键: ${item.key}' : 'Key: ${item.key}',
-            style: TextStyle(fontSize: 11, color: scheme.outline.withAlpha(120)),
+            style: TextStyle(
+              fontSize: 11,
+              color: scheme.outline.withAlpha(120),
+            ),
           ),
           const SizedBox(height: 20),
           const Divider(height: 1),
@@ -665,7 +903,10 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
               child: Center(
                 child: Text(
                   isZh ? '此配置项没有可编辑的参数' : 'No editable parameters',
-                  style: TextStyle(fontSize: 13, color: scheme.outline.withAlpha(120)),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: scheme.outline.withAlpha(120),
+                  ),
                 ),
               ),
             )
@@ -673,7 +914,14 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
             ...item.params.entries.map((entry) {
               return Padding(
                 padding: const EdgeInsets.only(bottom: 16),
-                child: _buildParamField(item.key, entry.key, entry.value, _config.fileType, scheme, isZh),
+                child: _buildParamField(
+                  item.key,
+                  entry.key,
+                  entry.value,
+                  _config.fileType,
+                  scheme,
+                  isZh,
+                ),
               );
             }),
         ],
@@ -727,7 +975,9 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
     if (value is int) {
       return _NumberField(
         key: ValueKey('$itemKey:$paramKey'),
-        label: label, value: value, isInt: true,
+        label: label,
+        value: value,
+        isInt: true,
         onChanged: (v) => _updateParam(itemKey, paramKey, v),
       );
     }
@@ -735,7 +985,9 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
     if (value is double) {
       return _NumberField(
         key: ValueKey('$itemKey:$paramKey'),
-        label: label, value: value, isInt: false,
+        label: label,
+        value: value,
+        isInt: false,
         onChanged: (v) => _updateParam(itemKey, paramKey, v),
       );
     }
@@ -752,27 +1004,32 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
 
     if (value is String) {
       final isNumeric = RegExp(r'^\d+$').hasMatch(value);
-      final isPath = (paramKey == 'subtitle_path' ||
+      final isPath =
+          (paramKey == 'subtitle_path' ||
               paramKey == 'subtitle_file' ||
               paramKey == 'image') ||
           ((value.contains('/') || value.contains('.')) && !isNumeric);
       if (isPath) {
         return _PathField(
           key: ValueKey('$itemKey:$paramKey'),
-          label: label, value: value, isZh: isZh,
+          label: label,
+          value: value,
+          isZh: isZh,
           onChanged: (v) => _updateParam(itemKey, paramKey, v),
         );
       }
       return _TextField(
         key: ValueKey('$itemKey:$paramKey'),
-        label: label, value: value,
+        label: label,
+        value: value,
         onChanged: (v) => _updateParam(itemKey, paramKey, v),
       );
     }
 
     return _TextField(
       key: ValueKey('$itemKey:$paramKey'),
-      label: label, value: '$value',
+      label: label,
+      value: '$value',
       onChanged: (v) => _updateParam(itemKey, paramKey, v),
     );
   }
@@ -846,8 +1103,14 @@ class _NumberFieldState extends State<_NumberField> {
       children: [
         Padding(
           padding: const EdgeInsets.only(bottom: 6),
-          child: Text(widget.label,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurfaceVariant)),
+          child: Text(
+            widget.label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
         ),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 220),
@@ -858,8 +1121,13 @@ class _NumberFieldState extends State<_NumberField> {
             style: TextStyle(fontSize: 14, color: scheme.onSurface),
             decoration: InputDecoration(
               isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
               suffixIcon: IconButton(
                 icon: const Icon(Icons.check, size: 16),
                 padding: EdgeInsets.zero,
@@ -923,8 +1191,14 @@ class _TextFieldState extends State<_TextField> {
       children: [
         Padding(
           padding: const EdgeInsets.only(bottom: 6),
-          child: Text(widget.label,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurfaceVariant)),
+          child: Text(
+            widget.label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
         ),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 300),
@@ -933,8 +1207,13 @@ class _TextFieldState extends State<_TextField> {
             style: TextStyle(fontSize: 14, color: scheme.onSurface),
             decoration: InputDecoration(
               isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
               suffixIcon: IconButton(
                 icon: const Icon(Icons.check, size: 16),
                 padding: EdgeInsets.zero,
@@ -1009,8 +1288,14 @@ class _PathFieldState extends State<_PathField> {
       children: [
         Padding(
           padding: const EdgeInsets.only(bottom: 6),
-          child: Text(widget.label,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurfaceVariant)),
+          child: Text(
+            widget.label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
         ),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
@@ -1022,8 +1307,13 @@ class _PathFieldState extends State<_PathField> {
                   style: TextStyle(fontSize: 13, color: scheme.onSurface),
                   decoration: InputDecoration(
                     isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                   onSubmitted: (v) => widget.onChanged(v),
                 ),
@@ -1034,8 +1324,12 @@ class _PathFieldState extends State<_PathField> {
                 tooltip: widget.isZh ? '浏览' : 'Browse',
                 onPressed: _pickFile,
                 style: IconButton.styleFrom(
-                  backgroundColor: scheme.surfaceContainerHighest.withAlpha(100),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  backgroundColor: scheme.surfaceContainerHighest.withAlpha(
+                    100,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
                 constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               ),
@@ -1068,8 +1362,14 @@ class _BoolSwitch extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Expanded(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant))),
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+          ),
+        ),
         Switch(
           value: value,
           onChanged: onChanged,
@@ -1103,17 +1403,21 @@ class _NumberDropdown extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.only(bottom: 6),
-          child: Text(label,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurfaceVariant)),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
         ),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 220),
           // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）
           child: OptionMenuBar<int>(
             value: options.contains(value) ? value : options.first,
-            items: [
-              for (final v in options) OptionItem(v, '$v°'),
-            ],
+            items: [for (final v in options) OptionItem(v, '$v°')],
             onChanged: onChanged,
           ),
         ),
@@ -1154,8 +1458,14 @@ class _PresetDropdown extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.only(bottom: 6),
-          child: Text(label,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurfaceVariant)),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
         ),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 260),
@@ -1167,9 +1477,7 @@ class _PresetDropdown extends StatelessWidget {
             searchable: entries.length > 7,
             searchHint: isZh ? '搜索选项' : 'Search options',
             emptyLabel: isZh ? '无匹配项' : 'No matches',
-            items: [
-              for (final e in entries) OptionItem(e.value, e.label),
-            ],
+            items: [for (final e in entries) OptionItem(e.value, e.label)],
             onChanged: onChanged,
           ),
         ),
@@ -1201,17 +1509,21 @@ class _DropdownField extends StatelessWidget {
       children: [
         Padding(
           padding: const EdgeInsets.only(bottom: 6),
-          child: Text(label,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: scheme.onSurfaceVariant)),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
         ),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 220),
           // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）
           child: OptionMenuBar<dynamic>(
             value: options.contains(value) ? value : options.firstOrNull,
-            items: [
-              for (final v in options) OptionItem<dynamic>(v, '$v'),
-            ],
+            items: [for (final v in options) OptionItem<dynamic>(v, '$v')],
             onChanged: onChanged,
           ),
         ),

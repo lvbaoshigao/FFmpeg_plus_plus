@@ -3,6 +3,7 @@
 // 覆盖：gzip 往返 / v2 导出导入往返 / 未知 ID 强制导入 / CRC 损坏 / 截断 /
 //       尾随垃圾 / 张冠李戴 / 图语义校验 / 快速模式 / 旧版格式迁移
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -419,6 +420,56 @@ int main() {
         }
     }
 
+    // ── 通用节点：实际媒体类型必须在导出和导入侧参与连线校验 ──
+    {
+        const char* names[] = {"mediaConvert", "mediaScale", "mediaCrop", "mediaRotate",
+                               "mediaColor", "mediaSharpen", "mediaOverlay", "metadataStrip"};
+        const struct { const char* name; uint8_t mask; const char* next; } media[] = {
+            {"video", MK_VIDEO, "avProcess"},
+            {"image", MK_IMAGE, "imageConvert"},
+            {"audio", MK_AUDIO, "audioConvert"},
+        };
+        for (const char* name : names) {
+            for (const auto& kind : media) {
+                json g = sampleGraph();
+                g["nodes"][0]["params"]["file_media_type"] = kind.name;
+                g["nodes"][1]["type"] = name;
+                g["nodes"][1]["params"] = {{"media_type", kind.name}};
+                const std::string tag = std::string(name) + "_" + kind.name;
+                const fs::path file = tmpFile("generic_" + tag + ".fppx");
+                const bool supported = (findTypeByName(name)->mediaIn & kind.mask) != 0;
+                const auto exported = exportGraph(g, file.string());
+                CHECK(exported.success == supported, (tag + " validates supported media").c_str());
+                if (!supported || !exported.success) continue;
+                const auto imported = fppx2Import(file.string(), false);
+                CHECK(imported.success && imported.graph["nodes"][1]["params"] == g["nodes"][1]["params"],
+                      (tag + " preserves selected media on import").c_str());
+
+                const auto& wrong = kind.mask == MK_VIDEO ? media[2] : media[0];
+                g["nodes"][0]["params"]["file_media_type"] = wrong.name;
+                CHECK(!exportGraph(g, file.string()).success,
+                      (tag + " rejects mismatched source media").c_str());
+
+                g["nodes"][0]["params"]["file_media_type"] = kind.name;
+                g["nodes"].push_back({{"id", "next"}, {"type", wrong.next}, {"params", json::object()}});
+                g["connections"][1]["to"] = "next";
+                g["connections"].push_back({{"from", "next"}, {"to", "uuid-c"}});
+                CHECK(!exportGraph(g, file.string()).success,
+                      (tag + " rejects mismatched downstream media").c_str());
+            }
+            for (const json& value : json::array({nullptr, "", "invalid", 7})) {
+                json g = sampleGraph();
+                g["nodes"][1]["type"] = name;
+                g["nodes"][1]["params"] = json::object();
+                if (!value.is_null()) g["nodes"][1]["params"]["media_type"] = value;
+                const auto exported = exportGraph(g, tmpFile("generic_invalid.fppx").string());
+                CHECK(!exported.success && !exported.errors.empty() &&
+                          exported.errors.front().find("media_type") != std::string::npos,
+                      (std::string(name) + " rejects missing/invalid selected media").c_str());
+            }
+        }
+    }
+
     // ── 10. 逻辑块往返 ──
     {
         json g = sampleGraph();
@@ -472,6 +523,36 @@ int main() {
         }
         return false;
     };
+
+    // 直接修改合法文件属性并重算 CRC，确保导入不依赖导出侧的关卡。
+    {
+        json g = sampleGraph();
+        g["nodes"][1]["type"] = "mediaConvert";
+        g["nodes"][1]["params"] = {{"media_type", "video"}};
+        const auto file = tmpFile("generic_import_source.fppx");
+        CHECK(exportGraph(g, file.string()).success, "生成通用媒体节点导入校验用例");
+        const auto original = readBin(file);
+        for (const std::string value : {"audio", "bogus"}) {
+            auto bytes = original;
+            const std::string before = "\"media_type\":\"video\"";
+            const std::string after = "\"media_type\":\"" + value + "\"";
+            auto pos = std::search(bytes.begin(), bytes.end(), before.begin(), before.end());
+            CHECK(pos != bytes.end(), "定位通用节点的 media_type 属性");
+            if (pos == bytes.end()) continue;
+            std::copy(after.begin(), after.end(), pos);
+            size_t crcOffset = 0;
+            uint32_t crcSize = 0;
+            if (!findMod(bytes, FPPX2_MODULE_CRC32, crcOffset, crcSize)) continue;
+            const auto crc = fppxCrc32(bytes.data(), crcOffset);
+            for (int b = 0; b < 4; ++b)
+                bytes[crcOffset + 5 + b] = static_cast<uint8_t>(crc >> (24 - b * 8));
+            const auto bad = tmpFile("generic_import_" + value + ".fppx");
+            writeBin(bad, bytes);
+            const auto imported = fppx2Import(bad.string(), false);
+            CHECK(!imported.success && !imported.errors.empty(),
+                  "导入侧拒绝通用节点媒体类型错配或非法取值");
+        }
+    }
 
     // ── 11. 索引模块布局 ──
     {

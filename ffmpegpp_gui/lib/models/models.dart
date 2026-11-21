@@ -125,7 +125,6 @@ enum PipelineStepType {
   audioDenoise, // 音频降噪（afftdn）
   audioSilenceTrim, // 首尾静音裁剪（silenceremove）
   videoDeinterlace, // 视频去隔行（yadif）
-
   /// 新版 .fppx 强制导入的未知类型节点：真实类型 ID 存 [PipelineNode.unknownTypeId]，
   /// 仅可编辑/保存/原样导出，不参与转码执行。
   unknown,
@@ -1837,51 +1836,56 @@ class TranscodeConfig {
     'audio_convert_sample_rate': audioConvertSampleRate,
   };
 
-  factory TranscodeConfig.fromJson(Map<String, dynamic> json) => TranscodeConfig(
-    videoCodec: json['video_codec'] as String? ?? 'h264',
-    gpu: json['gpu'] as String? ?? 'CPU',
-    preset: json['preset'] as String? ?? 'medium',
-    crf: (json['crf'] as num?)?.toInt(),
-    videoBitrate: (json['video_bitrate'] as num?)?.toInt(),
-    framerate: (json['framerate'] as num?)?.toDouble(),
-    resolutionW: (json['resolution_w'] as num?)?.toInt(),
-    resolutionH: (json['resolution_h'] as num?)?.toInt(),
-    audioCodec: json['audio_codec'] as String? ?? 'aac',
-    audioBitrate: json.containsKey('audio_bitrate') ? (json['audio_bitrate'] as num?)?.toInt() : 128,
-    audioChannels: (json['audio_channels'] as num?)?.toInt(),
-    subtitleEnabled: json['subtitle_enabled'] as bool? ?? false,
-    subtitleSource: json['subtitle_source'] as String? ?? 'external',
-    subtitleFile: json['subtitle_file'] as String?,
-    subtitleIndex: (json['subtitle_index'] as num?)?.toInt() ?? 0,
-    subtitleIndex2: (json['subtitle_index2'] as num?)?.toInt(),
-    subtitleFontName: json['subtitle_font_name'] as String? ?? 'Arial',
-    subtitleFontSize: (json['subtitle_font_size'] as num?)?.toInt() ?? 24,
-    subtitleFontColor: json['subtitle_font_color'] as String? ?? '#FFFFFF',
-    subtitleOutlineWidth: (json['subtitle_outline_width'] as num?)?.toInt() ?? 2,
-    subtitleOutlineColor: json['subtitle_outline_color'] as String? ?? '#000000',
-    outputFormat: json['output_format'] as String? ?? 'keep',
-    namingMode: json['naming_mode'] as String? ?? 'keep',
-    namingValue: json['naming_value'] as String? ?? '_processed',
-    startTime: (json['start_time'] as num?)?.toDouble(),
-    endTime: (json['end_time'] as num?)?.toDouble(),
-    speed: (json['speed'] as num?)?.toDouble(),
-    frameExtractMode: json['frame_extract_mode'] as String? ?? 'none',
-    frameTime: (json['frame_time'] as num?)?.toDouble(),
-    frameRangeStart: (json['frame_range_start'] as num?)?.toDouble(),
-    frameRangeEnd: (json['frame_range_end'] as num?)?.toDouble(),
-    frameFps: (json['frame_fps'] as num?)?.toDouble(),
-    frameFormat: json['frame_format'] as String? ?? 'png',
-    imageOutputFormat: json['image_output_format'] as String?,
-    imageQuality: (json['image_quality'] as num?)?.toInt() ?? 95,
-    cropX: (json['crop_x'] as num?)?.toInt(),
-    cropY: (json['crop_y'] as num?)?.toInt(),
-    cropW: (json['crop_w'] as num?)?.toInt(),
-    cropH: (json['crop_h'] as num?)?.toInt(),
-    audioConvertCodec: json['audio_convert_codec'] as String?,
-    audioConvertFormat: json['audio_convert_format'] as String?,
-    audioConvertBitrate: (json['audio_convert_bitrate'] as num?)?.toInt(),
-    audioConvertSampleRate: json['audio_convert_sample_rate'] as String?,
-  );
+  factory TranscodeConfig.fromJson(Map<String, dynamic> json) =>
+      TranscodeConfig(
+        videoCodec: json['video_codec'] as String? ?? 'h264',
+        gpu: json['gpu'] as String? ?? 'CPU',
+        preset: json['preset'] as String? ?? 'medium',
+        crf: (json['crf'] as num?)?.toInt(),
+        videoBitrate: (json['video_bitrate'] as num?)?.toInt(),
+        framerate: (json['framerate'] as num?)?.toDouble(),
+        resolutionW: (json['resolution_w'] as num?)?.toInt(),
+        resolutionH: (json['resolution_h'] as num?)?.toInt(),
+        audioCodec: json['audio_codec'] as String? ?? 'aac',
+        audioBitrate: json.containsKey('audio_bitrate')
+            ? (json['audio_bitrate'] as num?)?.toInt()
+            : 128,
+        audioChannels: (json['audio_channels'] as num?)?.toInt(),
+        subtitleEnabled: json['subtitle_enabled'] as bool? ?? false,
+        subtitleSource: json['subtitle_source'] as String? ?? 'external',
+        subtitleFile: json['subtitle_file'] as String?,
+        subtitleIndex: (json['subtitle_index'] as num?)?.toInt() ?? 0,
+        subtitleIndex2: (json['subtitle_index2'] as num?)?.toInt(),
+        subtitleFontName: json['subtitle_font_name'] as String? ?? 'Arial',
+        subtitleFontSize: (json['subtitle_font_size'] as num?)?.toInt() ?? 24,
+        subtitleFontColor: json['subtitle_font_color'] as String? ?? '#FFFFFF',
+        subtitleOutlineWidth:
+            (json['subtitle_outline_width'] as num?)?.toInt() ?? 2,
+        subtitleOutlineColor:
+            json['subtitle_outline_color'] as String? ?? '#000000',
+        outputFormat: json['output_format'] as String? ?? 'keep',
+        namingMode: json['naming_mode'] as String? ?? 'keep',
+        namingValue: json['naming_value'] as String? ?? '_processed',
+        startTime: (json['start_time'] as num?)?.toDouble(),
+        endTime: (json['end_time'] as num?)?.toDouble(),
+        speed: (json['speed'] as num?)?.toDouble(),
+        frameExtractMode: json['frame_extract_mode'] as String? ?? 'none',
+        frameTime: (json['frame_time'] as num?)?.toDouble(),
+        frameRangeStart: (json['frame_range_start'] as num?)?.toDouble(),
+        frameRangeEnd: (json['frame_range_end'] as num?)?.toDouble(),
+        frameFps: (json['frame_fps'] as num?)?.toDouble(),
+        frameFormat: json['frame_format'] as String? ?? 'png',
+        imageOutputFormat: json['image_output_format'] as String?,
+        imageQuality: (json['image_quality'] as num?)?.toInt() ?? 95,
+        cropX: (json['crop_x'] as num?)?.toInt(),
+        cropY: (json['crop_y'] as num?)?.toInt(),
+        cropW: (json['crop_w'] as num?)?.toInt(),
+        cropH: (json['crop_h'] as num?)?.toInt(),
+        audioConvertCodec: json['audio_convert_codec'] as String?,
+        audioConvertFormat: json['audio_convert_format'] as String?,
+        audioConvertBitrate: (json['audio_convert_bitrate'] as num?)?.toInt(),
+        audioConvertSampleRate: json['audio_convert_sample_rate'] as String?,
+      );
 
   Map<String, dynamic> toBackendOptions() {
     final opts = <String, dynamic>{
@@ -2147,7 +2151,9 @@ class TaskInfo {
         (json['log_lines'] as List?)?.map((e) => e.toString()).toList() ??
         const [],
     config: json['config'] is Map
-        ? TranscodeConfig.fromJson((json['config'] as Map).cast<String, dynamic>())
+        ? TranscodeConfig.fromJson(
+            (json['config'] as Map).cast<String, dynamic>(),
+          )
         : TranscodeConfig(),
     outputSize: (json['output_size'] as num?)?.toInt(),
     duration: (json['duration'] as num?)?.toDouble(),
@@ -2625,6 +2631,9 @@ class AppConfig {
   /// 「最近使用」保留条数（与整份配置一起落盘，不宜过大）。
   static const int recentNodeLimit = 6;
   bool debugMode;
+
+  /// Whether opt-in operation-boundary trace logging is enabled.
+  bool veryVerboseLogs;
   bool saveLogs;
   bool enableSystemNotification;
 
@@ -2804,6 +2813,7 @@ class AppConfig {
     List<String>? favoriteNodeTypes,
     List<String>? recentNodeTypes,
     this.debugMode = false,
+    this.veryVerboseLogs = false,
     this.saveLogs = false,
     this.enableSystemNotification = false,
     this.fluidCloudProgress = false,
@@ -2983,7 +2993,13 @@ class AppConfig {
     mobileTheme: json['mobile_theme'] == 'miuix' ? 'miuix' : 'follow',
     dropdownAppearance: () {
       final value = json['dropdown_appearance'];
-      return const ['theme', 'liquid', 'frosted', 'highlight', 'gray'].contains(value)
+      return const [
+            'theme',
+            'liquid',
+            'frosted',
+            'highlight',
+            'gray',
+          ].contains(value)
           ? value as String
           : 'theme';
     }(),
@@ -3022,6 +3038,7 @@ class AppConfig {
     ), // [FIX H-14] 透明度钳制 0~1
     canvasBg: json['canvas_bg'] as String? ?? 'global',
     debugMode: json['debug_mode'] as bool? ?? false,
+    veryVerboseLogs: _softBool(json['very_verbose_logs']) ?? false,
     saveLogs: json['save_logs'] as bool? ?? false,
     enableSystemNotification:
         json['enable_system_notification'] as bool? ?? false,
@@ -3173,6 +3190,7 @@ class AppConfig {
     'card_opacity': cardOpacity,
     'canvas_bg': canvasBg,
     'debug_mode': debugMode,
+    'very_verbose_logs': veryVerboseLogs,
     'save_logs': saveLogs,
     'enable_system_notification': enableSystemNotification,
     'fluid_cloud_progress': fluidCloudProgress,

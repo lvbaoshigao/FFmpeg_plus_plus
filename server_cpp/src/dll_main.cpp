@@ -295,10 +295,8 @@ FFMPEGPP_API int ffmpegpp_init() {
                 g_pendingRequestIds.clear();
             }
             Subprocess::clearAllPaused();
-            JsonWriter::start();
             g_shutdownFlag.store(false);
             g_cancelFlag.store(false);
-            resetInputWake();
 
             startCancelledTaskCleanup();
             g_workerThread = std::thread(workerLoop);
@@ -321,7 +319,6 @@ FFMPEGPP_API int ffmpegpp_init() {
             // Roll back every independent resource even if another cleanup
             // fails. Never detach a thread that still uses DLL globals.
             try { stopCancelledTaskCleanup(); } catch (...) {}
-            try { JsonWriter::stop(); } catch (...) {}
             try { resetMessageQueues(); } catch (...) {}
             try { slog("dll init: failed; rollback attempted"); } catch (...) {}
             try { slog_cleanup(); } catch (...) {}
@@ -554,7 +551,6 @@ FFMPEGPP_API void ffmpegpp_shutdown() {
     }
 
     stopCancelledTaskCleanup();
-    JsonWriter::stop();
     g_running.store(false);
     slog("dll shutdown: done");
     slog_cleanup();

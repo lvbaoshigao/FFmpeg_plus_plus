@@ -27,6 +27,7 @@ import 'theme/app_strings.dart';
 import 'theme/app_text_scale.dart';
 import 'theme/app_theme.dart';
 import 'theme/mobile_visual_theme.dart';
+import 'widgets/app_alert_dialog.dart';
 import 'widgets/app_slider.dart';
 import 'widgets/desktop_resize_scope.dart';
 import 'widgets/liquid_glass_mobile_nav.dart';
@@ -247,7 +248,10 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
         final dynamicSeed = k.useDynamicColor
             ? (k.monetSeed ?? k.themeColor)
             : null;
-        final mobileVisual = resolveMobileVisualTheme(k.mobileTheme, isMobile: isMobilePlatform);
+        final mobileVisual = resolveMobileVisualTheme(
+          k.mobileTheme,
+          isMobile: isMobilePlatform,
+        );
         // 必须走 applyTo，而不是「只把扩展塞进 extensions」：applyTo 才会把
         // surface / surfaceContainer* 换成中性灰，并同步 dialog / popupMenu /
         // bottomSheet 的底色。旧写法只在 extensions 里挂了一个 enabled 标记，
@@ -267,26 +271,30 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
-          theme: withMobileVisual(AppTheme.light(
-            seedColor: k.themeColor,
-            useThemeColor: k.useThemeColor,
-            fontFamily: k.fontFamily,
-            fontSize: k.fontSize,
-            fontWeight: k.fontWeight,
-            dynamicSeed: dynamicSeed,
-            predictiveBack: k.predictiveBack,
-            glassEffect: k.glassEffect,
-          )),
-          darkTheme: withMobileVisual(AppTheme.dark(
-            seedColor: k.themeColor,
-            useThemeColor: k.useThemeColor,
-            fontFamily: k.fontFamily,
-            fontSize: k.fontSize,
-            fontWeight: k.fontWeight,
-            dynamicSeed: dynamicSeed,
-            predictiveBack: k.predictiveBack,
-            glassEffect: k.glassEffect,
-          )),
+          theme: withMobileVisual(
+            AppTheme.light(
+              seedColor: k.themeColor,
+              useThemeColor: k.useThemeColor,
+              fontFamily: k.fontFamily,
+              fontSize: k.fontSize,
+              fontWeight: k.fontWeight,
+              dynamicSeed: dynamicSeed,
+              predictiveBack: k.predictiveBack,
+              glassEffect: k.glassEffect,
+            ),
+          ),
+          darkTheme: withMobileVisual(
+            AppTheme.dark(
+              seedColor: k.themeColor,
+              useThemeColor: k.useThemeColor,
+              fontFamily: k.fontFamily,
+              fontSize: k.fontSize,
+              fontWeight: k.fontWeight,
+              dynamicSeed: dynamicSeed,
+              predictiveBack: k.predictiveBack,
+              glassEffect: k.glassEffect,
+            ),
+          ),
           themeMode: k.darkMode ? ThemeMode.dark : ThemeMode.light,
           // 禁用 Android 12+ 的「拉伸过滚动」效果：它在 Impeller 下用
           // ImageFiltered(shader) 把整页内容截进离屏纹理再做形变——液态玻璃
@@ -695,7 +703,7 @@ class _AppShellState extends State<AppShell>
       final scheme = Theme.of(context).colorScheme;
       showDialog(
         context: context,
-        builder: (_) => AlertDialog(
+        builder: (_) => AppAlertDialog(
           icon: Icon(Icons.check_circle, color: scheme.sem.success, size: 32),
           title: Text(
             s.isZh ? '更新完成' : 'Update Complete',
@@ -1010,10 +1018,7 @@ class _AppShellState extends State<AppShell>
       context: context,
       builder: (ctx) {
         final scheme = Theme.of(ctx).colorScheme;
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+        return AppAlertDialog(
           title: Text(
             zh ? '移除所有项目？' : 'Remove all projects?',
             style: TextStyle(color: scheme.onSurface),
@@ -1293,7 +1298,7 @@ class _AppShellState extends State<AppShell>
           2 => const CommandPage(),
           3 => const ConfigLibraryPage(),
           4 => const SettingsPage(),
-          5 => const LogPage(),
+          5 => const LogPage(embedded: true),
           _ => const SizedBox.shrink(),
         };
     _pageCache[index] = page;
@@ -1320,8 +1325,7 @@ class _AppShellState extends State<AppShell>
       return;
     }
     final noPreload = context.read<AppState>().config.noPreload;
-    final capacity =
-        _pendingPageLimit ?? (noPreload ? 1 : _kMaxAlivePages);
+    final capacity = _pendingPageLimit ?? (noPreload ? 1 : _kMaxAlivePages);
     _pendingPageLimit = null;
     var retained = _pageCache.where((page) => page != null).length;
     var evicted = false;
