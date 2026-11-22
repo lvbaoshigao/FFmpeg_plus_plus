@@ -154,6 +154,9 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
       // 顶部留白 = 顶栏实际高度（insetOf），否则首行被药丸压住。
       content = ImmersiveTopBar(
         bar: MobileSubPageTopBar(
+          // 两组共 4 个操作直接显示为两颗药丸，不按条数折叠；屏幕太窄 /
+          // 大字号放不下时仍由宽度判定收进「…」。
+          inlineActionLimit: 4,
           title: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -193,6 +196,8 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
               color: scheme.onSurface,
               onTap: () => _rename(state, container, s),
             ),
+            // 分组：容器本身（编辑节点图 / 重命名）| 容器内容（添加文件 / 排序）。
+            const MobileActionGroupBreak(),
             MobileGlassPillAction(
               icon: Icons.add,
               tooltip: s.containerAddFiles,

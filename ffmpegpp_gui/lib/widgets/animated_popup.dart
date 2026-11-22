@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../platform/app_platform.dart';
+import '../providers/app_state.dart';
+import 'liquid_glass_fallback.dart';
+import 'option_menu_bar.dart' show optionMenuPanel;
 
 /// 弹出菜单的统一宽度约束。
 ///
@@ -278,17 +282,41 @@ class _AnimatedMenuBody<T> extends StatelessWidget {
         ],
       ),
     );
+    // 给定宽度时直接用它：省掉 IntrinsicWidth 对整个条目列表的固有尺寸遍历。
+    final body = width != null
+        ? SizedBox(width: width, child: list)
+        : IntrinsicWidth(stepWidth: 1, child: list);
+    // 右键 / 更多菜单与下拉浮层共用同一套材质（设置 → 下拉菜单外观）：
+    // 选「液态 / 毛玻璃」时为着色玻璃菜单，「主题 / 灰色」仍是实色。
+    // 仅移动端：桌面端右键菜单保持原来的主题实色面板。
+    final appearance = !isMobilePlatform || MediaQuery.highContrastOf(context)
+        ? 'theme'
+        : context.select<AppState?, String>(
+            (s) => s?.config.dropdownAppearance ?? 'theme',
+          );
+    if (!isMobilePlatform || appearance == 'theme') {
+      // 主题档 / 桌面端保持旧外观（主题 popupMenuTheme 的颜色与阴影）。
+      return ConstrainedBox(
+        constraints: constraints,
+        child: Material(
+          color: popupTheme.color ?? scheme.surface,
+          elevation: popupTheme.elevation ?? 8,
+          borderRadius: radius,
+          clipBehavior: Clip.antiAlias,
+          child: body,
+        ),
+      );
+    }
     return ConstrainedBox(
       constraints: constraints,
-      child: Material(
-        color: popupTheme.color ?? scheme.surface,
-        elevation: popupTheme.elevation ?? 8,
-        borderRadius: radius,
-        clipBehavior: Clip.antiAlias,
-        // 给定宽度时直接用它：省掉 IntrinsicWidth 对整个条目列表的固有尺寸遍历。
-        child: width != null
-            ? SizedBox(width: width, child: list)
-            : IntrinsicWidth(stepWidth: 1, child: list),
+      child: optionMenuPanel(
+        context: context,
+        scheme: scheme,
+        appearance: appearance,
+        tuning: glassTuningOf(context),
+        radius: radius.topLeft.x,
+        gpuGlass: gpuGlassEnabledOf(context),
+        child: body,
       ),
     );
   }

@@ -78,6 +78,22 @@ void main() {
     );
   });
 
+  test('miuix dark modal surfaces stay neutral', () {
+    final themed = resolveMobileVisualTheme(
+      'miuix',
+      isMobile: true,
+    ).applyTo(AppTheme.dark());
+    for (final surface in [
+      themed.dialogTheme.backgroundColor!,
+      themed.datePickerTheme.backgroundColor!,
+      themed.timePickerTheme.backgroundColor!,
+      themed.bottomSheetTheme.backgroundColor!,
+    ]) {
+      expect(surface.r, surface.g);
+      expect(surface.g, surface.b);
+    }
+  });
+
   test('miuix modal themes replace date and time picker surfaces', () {
     final base = AppTheme.light();
     final themed = resolveMobileVisualTheme(

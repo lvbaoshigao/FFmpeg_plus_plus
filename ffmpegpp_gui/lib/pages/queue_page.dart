@@ -411,6 +411,9 @@ class _QueuePageState extends State<QueuePage> with WidgetsBindingObserver {
           color: scheme.onSurface,
           onTap: () => state.processAllTasks(),
         ),
+      // 分组：运行控制（继续 / 停止 / 开始）| 清理（清除已完成 / 清空）| 资源读数。
+      // 条件项都隐藏时空组会被自动丢弃，不会留下空药丸。
+      const MobileActionGroupBreak(),
       if (state.tasks.any(
         (t) =>
             t.status == TaskStatus.completed ||
@@ -430,6 +433,7 @@ class _QueuePageState extends State<QueuePage> with WidgetsBindingObserver {
           color: scheme.onSurface,
           onTap: () => state.clearAllTasks(),
         ),
+      const MobileActionGroupBreak(),
       // 紧凑资源占用（CPU/内存/GPU）：左右各 4px 由药丸内边距承担，
       // 与 34×34 圆形按钮垂直居中对齐（不再额外加 SizedBox）。
       //

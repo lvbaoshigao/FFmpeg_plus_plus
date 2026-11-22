@@ -102,8 +102,16 @@ Widget optionMenuPanel({
   final highlight = appearance == 'highlight';
   final glass = liquid || frosted || highlight;
   final neutral = neutralGray(scheme.surface);
+  // Tinted Glass Menu：浅色用盐雾白 #EFF5F2（暖白 / 灰绿），深色用中性烟灰；
+  // 主题色只留给选中标记，菜单文字始终是墨色 / onSurface。
+  // 以下「着色玻璃菜单」调整仅作用于移动端；桌面端保持原有外观。
+  final menuTint = mobile && !dark ? const Color(0xFFEFF5F2) : neutral;
+  // 菜单与浮层圆角 22–28；纯色 / 高对比保持调用方给的圆角。
+  final menuRadius = mobile && glass && !highContrast
+      ? math.max(radius, 22.0)
+      : radius;
   final baseSigma = liquid
-      ? tunedGlassSigma(6, tuning)
+      ? tunedGlassSigma(mobile ? 10 : 6, tuning)
       : tunedGlassSigma(frosted ? 8 : (highlight ? 4 : 0), tuning);
   final sigma = highContrast || effectsReduced
       ? 0.0
@@ -111,7 +119,19 @@ Widget optionMenuPanel({
       ? mobileGlassSigma(baseSigma)
       : baseSigma;
   final useGpuGlass = gpuGlass && !highContrast && !effectsReduced;
-  final baseFill = liquid
+  // 菜单比悬浮药丸更不透明（规范 Tinted glass ≈ 0.86），短标签在任意背景上
+  // 都清楚；旧 liquid 0.42 / 0.50 会让背后的文字透进菜单。
+  final baseFill = mobile
+      ? (liquid
+            ? menuTint.withAlpha(tunedGlassAlpha(dark ? 196 : 219, tuning))
+            : frosted
+            ? menuTint.withAlpha(tunedGlassAlpha(dark ? 216 : 228, tuning))
+            : highlight
+            ? menuTint.withAlpha(tunedGlassAlpha(dark ? 176 : 190, tuning))
+            : appearance == 'gray'
+            ? neutral
+            : scheme.surface)
+      : liquid
       ? neutral.withAlpha(tunedGlassAlpha(dark ? 108 : 128, tuning))
       : frosted
       ? Color.lerp(
@@ -131,12 +151,13 @@ Widget optionMenuPanel({
       : glass && highContrast
       ? neutral
       : baseFill;
-  final r = BorderRadius.circular(radius);
+  final r = BorderRadius.circular(menuRadius);
   final light = tuning.highlight.clamp(0.0, 1.6);
   final position = tuning.lightPos.clamp(0.0, 1.0);
   final lightAngle = -3 * math.pi / 4 + position * math.pi;
   final begin = Alignment(math.cos(lightAngle), math.sin(lightAngle));
   final end = Alignment(-begin.x, -begin.y);
+  // 斜向光泽本来就只画在桌面端，桌面外观不变。
   final sheen = !mobile && (liquid || highlight)
       ? LinearGradient(
           begin: begin,
@@ -157,7 +178,8 @@ Widget optionMenuPanel({
       decoration: BoxDecoration(gradient: sheen),
       child: CustomPaint(
         foregroundPainter: _MenuRimPainter(
-          radius: radius,
+          radius: menuRadius,
+          topGlint: mobile,
           glass: glass,
           highContrast: highContrast,
           color: highContrast
@@ -176,7 +198,11 @@ Widget optionMenuPanel({
   if (useGpuGlass && liquid) {
     panel = OCLiquidGlassGroup(
       settings: liquidGlassSettingsFor(tuning),
-      child: OCLiquidGlass(borderRadius: radius, color: fill, child: panel),
+      child: OCLiquidGlass(
+        borderRadius: menuRadius,
+        color: fill,
+        child: panel,
+      ),
     );
   } else if (liquid && mobile) {
     if (sigma > 0) {
@@ -199,11 +225,16 @@ Widget optionMenuPanel({
     decoration: BoxDecoration(
       borderRadius: r,
       boxShadow: [
+        // Transient panel：0 16px 40px rgba(19,37,41,0.18)；深色场景加深。
         BoxShadow(
-          color: Colors.black.withValues(alpha: dark ? 0.20 : 0.10),
-          blurRadius: glass ? 24 : 16,
-          spreadRadius: -4,
-          offset: const Offset(0, 8),
+          color: glass && mobile
+              ? (dark
+                    ? Colors.black.withValues(alpha: 0.32)
+                    : const Color(0xFF132529).withValues(alpha: 0.18))
+              : Colors.black.withValues(alpha: dark ? 0.20 : 0.10),
+          blurRadius: glass ? (mobile ? 40 : 24) : 16,
+          spreadRadius: glass && mobile ? -6 : -4,
+          offset: Offset(0, glass && mobile ? 16 : 8),
         ),
       ],
     ),
@@ -216,6 +247,7 @@ class _MenuRimPainter extends CustomPainter {
   const _MenuRimPainter({
     required this.radius,
     required this.glass,
+    this.topGlint = false,
     required this.highContrast,
     required this.color,
     required this.strength,
@@ -224,6 +256,9 @@ class _MenuRimPainter extends CustomPainter {
   });
   final double radius;
   final bool glass;
+
+  /// 移动端：只在顶部留一条细高光；桌面端保持原来的方向性整圈边缘光。
+  final bool topGlint;
   final bool highContrast;
   final Color color;
   final double strength;
@@ -239,7 +274,7 @@ class _MenuRimPainter extends CustomPainter {
       ..strokeWidth = highContrast ? 1.5 : (glass ? 0.85 : 0.6);
     if (highContrast) {
       paint.color = color;
-    } else if (glass) {
+    } else if (glass && !topGlint) {
       paint.shader = LinearGradient(
         begin: begin,
         end: end,
@@ -249,6 +284,22 @@ class _MenuRimPainter extends CustomPainter {
           color.withValues(alpha: 0.24 * strength),
         ],
         stops: const [0, 0.48, 1],
+      ).createShader(rect);
+    } else if (glass) {
+      // 顶部一条细高光（inset 0 1px 0 rgba(255,255,255,0.78)），沿圆角淡出；
+      // 两侧与底部只留极淡的结构边，避免整圈发光框。
+      final fade = size.height <= 0
+          ? 0.2
+          : (radius / size.height).clamp(0.08, 0.45);
+      paint.shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          color.withValues(alpha: (0.78 * strength).clamp(0.0, 0.9)),
+          color.withValues(alpha: 0.10 * strength),
+          color.withValues(alpha: 0.06 * strength),
+        ],
+        stops: [0, fade, 1],
       ).createShader(rect);
     } else {
       paint.color = color.withValues(alpha: 0.32);
@@ -263,6 +314,7 @@ class _MenuRimPainter extends CustomPainter {
   bool shouldRepaint(_MenuRimPainter old) =>
       old.radius != radius ||
       old.glass != glass ||
+      old.topGlint != topGlint ||
       old.highContrast != highContrast ||
       old.color != color ||
       old.strength != strength ||
@@ -536,7 +588,10 @@ class _MenuOptionListState<T> extends State<_MenuOptionList<T>> {
             1,
           );
     }
-    return _groupHeight(index) + math.max(38, textHeight + 16).ceilToDouble();
+    // 移动端菜单行至少 44px 可触高度（规范 menu rows ≥ 44px）。
+    final minRow = isMobilePlatform ? 44.0 : 38.0;
+    return _groupHeight(index) +
+        math.max(minRow, textHeight + 16).ceilToDouble();
   });
 
   void reveal(int index) {

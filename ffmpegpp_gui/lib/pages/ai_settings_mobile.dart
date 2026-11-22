@@ -3359,6 +3359,8 @@ class _MobileAiProviderDetailPageState
                 color: scheme.error,
                 onTap: _delete,
               ),
+            // 分组：删除（破坏性，单独一颗）| 搜索模型（作用于列表）| 保存。
+            const MobileActionGroupBreak(),
             if (_tab == 1)
               MobileGlassPillAction(
                 key: const ValueKey('provider_model_search'),
@@ -3370,6 +3372,7 @@ class _MobileAiProviderDetailPageState
                   if (!_showModelSearch) _modelSearchCtrl.clear();
                 }),
               ),
+            const MobileActionGroupBreak(),
             MobileGlassPillAction(
               icon: Icons.check_rounded,
               tooltip: s.save,

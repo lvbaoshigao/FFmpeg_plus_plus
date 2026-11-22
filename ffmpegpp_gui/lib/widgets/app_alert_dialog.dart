@@ -22,7 +22,7 @@ class AppDialogAction extends StatelessWidget {
 
   static Color _secondaryBackgroundOf(BuildContext context) =>
       Theme.of(context).brightness == Brightness.dark
-      ? const Color(0xFF504D46)
+      ? AppNeutralSurface.darkControl
       : AppNeutralSurface.lightCardHigh;
 
   /// Shared role styling for buttons in custom modal headers and footers.

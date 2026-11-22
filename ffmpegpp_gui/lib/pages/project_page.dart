@@ -546,6 +546,8 @@ class ProjectPageState extends State<ProjectPage> {
           label: s.isZh ? '退出多选' : 'Exit selection',
           onTap: _exitSelectionMode,
         ),
+        // 分组：退出 | 选择范围（全选 / 反选）| 破坏性操作单独一颗。
+        const MobileActionGroupBreak(),
         action(
           id: 'project_select_all',
           icon: Icons.select_all,
@@ -563,6 +565,7 @@ class ProjectPageState extends State<ProjectPage> {
           label: s.isZh ? '反选' : 'Invert',
           onTap: () => _invertSelection(state),
         ),
+        const MobileActionGroupBreak(),
         action(
           id: 'project_delete_selected',
           icon: Icons.delete_outline,
@@ -574,6 +577,14 @@ class ProjectPageState extends State<ProjectPage> {
     }
 
     return [
+      // 分组：查找（搜索）| 往项目里添加东西（添加文件 / 导入配置 / 容器）。
+      action(
+        id: 'project_search',
+        icon: Icons.search,
+        label: s.search,
+        onTap: openSearch,
+      ),
+      const MobileActionGroupBreak(),
       // Keep the primary action initially visible when the pill scrolls.
       action(
         id: 'project_add_files',
@@ -582,12 +593,6 @@ class ProjectPageState extends State<ProjectPage> {
         color: scheme.onPrimaryContainer,
         background: scheme.primaryContainer,
         onTap: () => _pick(state),
-      ),
-      action(
-        id: 'project_search',
-        icon: Icons.search,
-        label: s.search,
-        onTap: openSearch,
       ),
       action(
         id: 'project_import_config',

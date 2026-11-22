@@ -131,10 +131,22 @@ bool mobileGlassEffectsReducedOf(BuildContext context) =>
     MediaQuery.highContrastOf(context);
 
 /// Keep the mobile Gaussian sampling footprint small even at maximum tuning.
-double mobileGlassSigma(double value) {
+double mobileGlassSigma(double value, {double max = 8.0}) {
   if (!value.isFinite || value <= 0) return 0;
-  return value.clamp(0.0, 8.0);
+  return value.clamp(0.0, max);
 }
+
+/// 清透液态玻璃上文字 / 图标的淡反色光晕（只在清透档使用）。
+///
+/// 深色主题文字偏亮 → 淡黑色光晕；浅色主题文字偏暗 → 淡白色光晕。
+/// 不偏移、只做柔和扩散，看起来是「字更清楚」而不是「字有投影」。
+List<Shadow> clearGlassForegroundShadows(Brightness brightness) =>
+    brightness == Brightness.dark
+        ? const [Shadow(color: Color(0x73000000), blurRadius: 6)]
+        : const [Shadow(color: Color(0x99FFFFFF), blurRadius: 6)];
+
+/// 悬浮药丸 / 底栏的磨砂上限：需要 σ≈12 才有柔和雾面（卡片等仍用默认 8）。
+const double kMobileFloatingGlassMaxSigma = 14.0;
 
 /// 按用户配置参数化的液态玻璃 settings（带实例缓存）。
 ///
@@ -159,17 +171,22 @@ OCLiquidGlassSettings liquidGlassSettingsFor(
   // 边缘光在 shader 路径由上层容器的描边承担：shader 自带的 lightband 会画成
   // 一条横贯的亮带，在高卡片上像一条「分界线」，实测观感很差，故不启用。
   return _glassSettingsCache[key] = OCLiquidGlassSettings(
-    refractStrength: mobile ? -0.045 : kLiquidGlassSettings.refractStrength,
+    // 清透液态玻璃：折射集中在曲面边带、中心平坦；只留极轻模糊让背景细节可见。
+    refractStrength: mobile ? -0.13 : kLiquidGlassSettings.refractStrength,
+    // 折射只发生在 8–24px 的曲面边带（默认 45px 会把弯折拖进中心），
+    // 高指数让中心保持平坦。
+    distortFalloffPx: mobile ? 18 : kLiquidGlassSettings.distortFalloffPx,
+    distortExponent: mobile ? 5 : kLiquidGlassSettings.distortExponent,
     blurRadiusPx: mobile
-        ? mobileGlassSigma(t.blur * (soft ? 0.30 : 0.22)).clamp(0.0, 6.0)
+        ? (t.blur * 0.18).clamp(0.0, 3.0)
         : soft
         ? (t.blur * 0.30).clamp(0.0, 9.0)
         : t.shaderExtraBlur,
     specStrength: mobile
-        ? (0.12 * t.highlight).clamp(0.0, 0.18)
+        ? (0.32 * t.highlight).clamp(0.0, 0.45)
         : (kLiquidGlassSettings.specStrength * t.highlight).clamp(0.0, 2.0),
     specPower: kLiquidGlassSettings.specPower,
-    specWidth: mobile ? 3 : kLiquidGlassSettings.specWidth,
+    specWidth: mobile ? 2 : kLiquidGlassSettings.specWidth,
     specAngle: 4 + t.lightPos * 180,
     lightbandStrength: 0.0,
     lightbandColor: Colors.white,
@@ -626,17 +643,28 @@ class MobileGlassSurface extends StatelessWidget {
     final dark = brightness == Brightness.dark;
     final highContrast = MediaQuery.highContrastOf(context);
     final reduced = mobileGlassEffectsReducedOf(context);
+    // 保持纯中性灰（不带色相，避免「灰色夹杂主题色」）：提亮的烟灰在纯白
+    // 背景上需要 0.80 浓度才能让文字达到 4.5:1，反而更不通透。
     final neutral = dark
         ? AppNeutralSurface.darkBackground
         : const Color(0xFFFAFAFA);
-    // A density floor keeps onSurface text readable over opposing backdrops.
+    final gpu = liquid && gpuGlassEnabledOf(context);
+    // 三档：清透（真实折射）/ 磨砂（blur 或无折射降级）/ 实色（高对比、减少
+    // 动态）。旧实现 0.66~0.94 的浓度把背景整块盖住，药丸看起来是实心灰块。
+    // 磨砂下限按「最坏背景」算：深色在纯白上 ≥0.68、浅色在纯黑上 ≥0.53
+    // 才能保证 onSurface 文字 4.5:1（mobile_glass_redesign_test 校验）。
+    final base = gpu ? (dark ? 0.20 : 0.26) : (dark ? 0.72 : 0.60);
     final density = highContrast
         ? 1.0
-        : ((dark ? 0.77 : 0.73) +
+        : reduced
+        ? 0.88
+        : (base +
                   (opacity.clamp(0.0, 1.0) - 0.7) * 0.12 +
-                  (tuning.tintScale - 1) * 0.07 +
-                  (reduced ? 0.08 : 0))
-              .clamp(dark ? 0.73 : 0.66, 0.94);
+                  (tuning.tintScale - 1) * 0.07)
+              .clamp(
+                gpu ? 0.12 : (dark ? 0.70 : 0.58),
+                gpu ? 0.40 : (dark ? 0.82 : 0.80),
+              );
     final tint =
         (accent == null || highContrast
                 ? neutral
@@ -644,12 +672,15 @@ class MobileGlassSurface extends StatelessWidget {
             .withValues(alpha: density);
     final shadow = liquid && !reduced
         ? BoxShadow(
-            color: Colors.black.withValues(alpha: dark ? 0.19 : 0.10),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            // Floating control：0 8px 24px rgba(19,37,41,0.12)；深色场景加深。
+            color: dark
+                ? Colors.black.withValues(alpha: 0.24)
+                : const Color(0xFF132529).withValues(alpha: 0.12),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
           )
         : null;
-    if (liquid && gpuGlassEnabledOf(context)) {
+    if (gpu) {
       return CustomPaint(
         foregroundPainter: _MobileGlassRimPainter(
           borderRadius: borderRadius,
@@ -665,14 +696,25 @@ class MobileGlassSurface extends StatelessWidget {
             color: tint,
             shadow: shadow,
             borderRadius: borderRadius.topLeft.x,
-            child: child,
+            // 清透档浓度很低：亮背景上浅色字、暗背景上深色字都可能看不清，
+            // 给文字和图标加一圈很淡的反色光晕兜底（磨砂 / 实色档不需要）。
+            child: DefaultTextStyle.merge(
+              style: TextStyle(shadows: clearGlassForegroundShadows(brightness)),
+              child: IconTheme.merge(
+                data: IconThemeData(
+                  shadows: clearGlassForegroundShadows(brightness),
+                ),
+                child: child,
+              ),
+            ),
           ),
         ),
       );
     }
     return LiquidGlassBackdrop(
       borderRadius: borderRadius,
-      sigma: tuning.blur * 0.5,
+      sigma: tuning.blur * 0.75,
+      mobileMaxSigma: kMobileFloatingGlassMaxSigma,
       tuning: tuning,
       opacity: opacity,
       shadow: shadow,
@@ -726,8 +768,9 @@ class _MobileGlassRimPainter extends CustomPainter {
             begin: light,
             end: Alignment(-light.x, -light.y),
             colors: [
+              // 一像素定向高光：受光侧接近 rgba(255,255,255,0.72)。
               Color.alphaBlend(
-                Colors.white.withValues(alpha: 0.12 * shine),
+                Colors.white.withValues(alpha: 0.72 * shine),
                 stroke.color,
               ),
               stroke.color.withValues(alpha: stroke.color.a * 0.65),
@@ -812,6 +855,9 @@ class LiquidGlassBackdrop extends StatelessWidget {
   final BoxShadow? shadow;
   final Widget child;
 
+  /// 移动端模糊 σ 上限（默认 8；悬浮药丸 / 底栏传 [kMobileFloatingGlassMaxSigma]）。
+  final double mobileMaxSigma;
+
   const LiquidGlassBackdrop({
     super.key,
     required this.borderRadius,
@@ -819,6 +865,7 @@ class LiquidGlassBackdrop extends StatelessWidget {
     this.tuning,
     this.opacity = 1.0,
     this.shadow,
+    this.mobileMaxSigma = 8.0,
     required this.child,
   });
 
@@ -917,7 +964,7 @@ class LiquidGlassBackdrop extends StatelessWidget {
     final reduced = mobileGlassEffectsReducedOf(context);
     final resolvedSigma = reduced
         ? 0.0
-        : mobileGlassSigma(sigma ?? tuning.blur);
+        : mobileGlassSigma(sigma ?? tuning.blur, max: mobileMaxSigma);
     Widget surface = CustomPaint(
       foregroundPainter: _MobileGlassRimPainter(
         borderRadius: borderRadius,
@@ -947,10 +994,10 @@ class LiquidGlassBackdrop extends StatelessWidget {
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(
-              alpha: shadow.color.a.clamp(0.0, 0.20),
+              alpha: shadow.color.a.clamp(0.0, 0.24),
             ),
-            blurRadius: shadow.blurRadius.clamp(0.0, 8.0),
-            offset: const Offset(0, 2),
+            blurRadius: shadow.blurRadius.clamp(0.0, 24.0),
+            offset: const Offset(0, 8),
           ),
         ],
       ),

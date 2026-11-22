@@ -335,6 +335,20 @@ object HyperOsIsland {
                 .setContentIntent(contentIntent(context))
                 .addExtras(picsBundle(context))
 
+            // Android 16 Live Update（实时更新 / 推广通知）：ColorOS 16+、HyperOS 3 等
+            // 会把合规的推广 ongoing 通知显示到流体云 / 状态栏胶囊。无需 OPPO 私有
+            // IntelligentIntent 配置，作为私有通道未配置时的标准兜底。
+            // 要求：ongoing + contentTitle + 非 colorized + 无自定义 RemoteViews +
+            // 渠道重要性不能是 MIN + 清单声明 POST_PROMOTED_NOTIFICATIONS。
+            if (Build.VERSION.SDK_INT >= 36) {
+                builder.extras.putBoolean("android.requestPromotedOngoing", true)
+                try {
+                    Notification.Builder::class.java
+                        .getMethod("setShortCriticalText", String::class.java)
+                        .invoke(builder, "$pct%")
+                } catch (_: Exception) {}
+            }
+
             if (isIslandAvailable(context)) {
                 builder.extras.putString(
                     "miui.focus.param",

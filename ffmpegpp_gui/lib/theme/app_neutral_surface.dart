@@ -15,6 +15,12 @@ abstract final class AppNeutralSurface {
   static const darkCardHigh = Color(0xFF333333);
   static const lightCardHigh = Color(0xFFDCDCDC);
 
+  /// Secondary control fill on dark modal surfaces (cancel / neutral pills).
+  ///
+  /// Strictly neutral on purpose: the previous warm grey (0xFF504D46) sat on a
+  /// warm charcoal dialog and made the whole glass dialog look yellowish.
+  static const darkControl = Color(0xFF4D4D4D);
+
   static Color background(Brightness brightness) =>
       brightness == Brightness.dark ? darkBackground : lightBackground;
 

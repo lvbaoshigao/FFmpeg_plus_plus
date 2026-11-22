@@ -325,17 +325,22 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
                         tween: Tween<double>(
                           end: dragPosition ?? bar.currentIndex.toDouble(),
                         ),
+                        // 松手后约 420ms 弹性归位（轻微越过再落定）。
                         duration: reducedMotion || dragPosition != null
                             ? Duration.zero
-                            : Duration(milliseconds: mobile ? 165 : 240),
-                        curve: Curves.easeOutCubic,
+                            : Duration(milliseconds: mobile ? 420 : 240),
+                        curve: mobile
+                            ? const Cubic(0.34, 1.26, 0.64, 1)
+                            : Curves.easeOutCubic,
                         child: rows,
                         builder: (context, position, staticRows) {
                           final rows = staticRows! as _StaticTabRows;
+                          final raw = reducedMotion
+                              ? dragPosition ?? bar.currentIndex.toDouble()
+                              : position;
+                          // 移动端弹性曲线会越过终点：限制在首尾 tab 之间。
                           final rect = selectionRect(
-                            reducedMotion
-                                ? dragPosition ?? bar.currentIndex.toDouble()
-                                : position,
+                            mobile ? raw.clamp(0.0, lastSlot.toDouble()) : raw,
                           );
                           return Stack(
                             clipBehavior: Clip.none,
@@ -343,12 +348,39 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
                               Positioned.fromRect(
                                 rect: rect,
                                 child: mobile
-                                    ? MobileGlassSelection(
-                                        key: const ValueKey(
-                                          'app-tab-selection',
+                                    // 拖动时选中片轻微横向拉伸，松开约 420ms 回弹。
+                                    ? TweenAnimationBuilder<double>(
+                                        tween: Tween<double>(
+                                          end: dragPosition != null &&
+                                                  !reducedMotion
+                                              ? 1.06
+                                              : 1.0,
                                         ),
-                                        radius: rect.height / 2,
-                                        style: widget.indicatorStyle,
+                                        duration: Duration(
+                                          milliseconds: dragPosition != null
+                                              ? 110
+                                              : 420,
+                                        ),
+                                        curve: dragPosition != null
+                                            ? Curves.easeOutCubic
+                                            : Curves.easeOutBack,
+                                        child: MobileGlassSelection(
+                                          key: const ValueKey(
+                                            'app-tab-selection',
+                                          ),
+                                          radius: rect.height / 2,
+                                          style: widget.indicatorStyle,
+                                        ),
+                                        builder: (context, stretch, child) =>
+                                            Transform(
+                                              alignment: Alignment.center,
+                                              transform: Matrix4.diagonal3Values(
+                                                stretch,
+                                                1,
+                                                1,
+                                              ),
+                                              child: child,
+                                            ),
                                       )
                                     : SelectionHighlight(
                                         key: const ValueKey(

@@ -1,3 +1,4 @@
+import 'package:ffmpegpp_gui/theme/app_neutral_surface.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/widgets/app_alert_dialog.dart';
 import 'package:flutter/material.dart';
@@ -80,6 +81,26 @@ void main() {
         }
       },
     );
+
+    test('dark glass modal chrome stays neutral without a warm cast', () {
+      for (final effect in ['liquid', 'blur']) {
+        final theme = AppTheme.dark(glassEffect: effect);
+        final surface = theme.dialogTheme.backgroundColor!;
+        expect(surface.r, surface.g);
+        expect(surface.g, surface.b);
+        expect(surface.a, lessThan(1));
+        final rim =
+            (theme.dialogTheme.shape! as RoundedRectangleBorder).side.color;
+        expect(rim.r, rim.g);
+        expect(rim.g, rim.b);
+        expect(theme.datePickerTheme.backgroundColor, surface);
+        expect(theme.timePickerTheme.backgroundColor, surface);
+        expect(theme.bottomSheetTheme.backgroundColor, surface);
+      }
+      const control = AppNeutralSurface.darkControl;
+      expect(control.r, control.g);
+      expect(control.g, control.b);
+    });
 
     testWidgets('keeps Material visuals on iPhone, Android, and desktop', (
       tester,
@@ -362,7 +383,7 @@ void main() {
         );
         expect(
           cancel.style!.backgroundColor!.resolve({}),
-          const Color(0xFF504D46),
+          AppNeutralSurface.darkControl,
         );
         expect(
           destructive.style!.backgroundColor!.resolve({}),

@@ -60,7 +60,8 @@ void main() {
       ),
     );
     final filter = tester.widget<BackdropFilter>(find.byType(BackdropFilter));
-    expect(filter.filter, same(cachedGlassBlur(8)));
+    // 悬浮药丸磨砂上限为 kMobileFloatingGlassMaxSigma（卡片等仍为 8）。
+    expect(filter.filter, same(cachedGlassBlur(kMobileFloatingGlassMaxSigma)));
     expect(
       find.ancestor(
         of: find.byType(BackdropFilter),

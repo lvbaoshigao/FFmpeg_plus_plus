@@ -24,6 +24,7 @@ import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../services/ai_chat_attachments.dart';
 import '../services/ai_chat_history.dart';
+import '../services/ai_stream_client.dart';
 import '../services/diagnostic_trace.dart';
 import '../services/fppx2_service.dart';
 import '../services/graph_executor.dart';
@@ -50,10 +51,10 @@ import '../widgets/app_dropdown.dart';
 import '../widgets/app_slider.dart';
 // 模型 / 供应商品牌 logo（本地 SVG 单色着色）：模型选择器每行左侧的图标
 import '../widgets/brand_logo.dart';
+import '../widgets/desktop_resize_scope.dart';
 import '../widgets/fppx_password.dart';
 import '../widgets/gate_symbol_painter.dart';
 import '../widgets/glass_panel.dart';
-import '../widgets/desktop_resize_scope.dart';
 import '../widgets/liquid_glass_fallback.dart';
 import '../widgets/mobile_glass_pill.dart';
 // 节点图标/配色表：与独立面板窗口共用（见该文件顶部说明）
@@ -14999,9 +15000,8 @@ Available actions: __TOOLS__''';
     bool exposePipelineTools = true,
   }) {
     final anthropic = provider.toLowerCase() == 'anthropic';
-    return ai.FlutterAI(
-      provider: _sdkProvider(provider),
-      config: ai.AIConfig(
+    final sdkProvider = _sdkProvider(provider);
+    final config = ai.AIConfig(
         apiKey: apiKey,
         model: model,
         maxTokens: maxTokens,
@@ -15026,12 +15026,19 @@ Available actions: __TOOLS__''';
           if (anthropic) 'anthropic-version': '2023-06-01',
           ...?customHeaders,
         },
-      ),
-      contextManager: ai.ContextManager(
-        maxTokens: contextWindow,
-        reservedTokens: maxTokens,
-        systemPrompt: systemPrompt,
-      ),
+      );
+    return ai.FlutterAI(
+      provider: sdkProvider,
+      config: config,
+      // 关键修复（「节点编辑器智能体对话经常截断」）：ai_stream_client.dart 里的
+      // 稳健传输 + 流解码此前从未接入，流式请求仍走 SDK 1.9 原生链路——中文
+      // 多字节被网络分片切开时 FormatException 断流、finish_reason 分片丢正文、
+      // 中途 error 事件被吞、异常断流被伪造成 stop。这里注入稳健 provider。
+      customProvider: createRobustAiProvider(sdkProvider, config),
+      // SDK ContextManager 会按低估的 token 自行滑窗，长工具链里删掉本轮
+      // user 或 assistant(tool_calls)，留下孤立 tool 消息 → 400，对话「断掉」。
+      // 请求侧预算已由 requestHistoryIndices 按完整回合裁剪，这里不再二次裁剪。
+      contextManager: UntrimmedAiContext(systemPrompt: systemPrompt),
     );
   }
 
@@ -15449,6 +15456,9 @@ Available actions: __TOOLS__''';
         ai.Usage? usage;
         var receivedToolCall = false;
         ai.FinishReason? streamFinishReason;
+        // 稳健解码器在 done chunk 里报告是否见到了结束标记；false = 连接在没有
+        // finish_reason / [DONE] 的情况下关闭（网关掐断），应视为截断去续写。
+        bool? streamTerminated;
         final completeToolCalls = <ai.ToolCallContent>[];
         request.attempts++;
         request.streamRounds++;
@@ -15530,6 +15540,10 @@ Available actions: __TOOLS__''';
                   if (chunk.finishReason == ai.FinishReason.toolCalls) {
                     receivedToolCall = true;
                   }
+                }
+                if (chunk.type == ai.StreamEventType.done) {
+                  final terminated = chunk.metadata?[AiStreamMeta.terminated];
+                  if (terminated is bool) streamTerminated = terminated;
                 }
                 usage = chunk.usage ?? usage;
                 if (chunk.isDelta || (showThinking && chunk.isThinkingDelta)) {
@@ -15639,11 +15653,9 @@ Available actions: __TOOLS__''';
         final contextAssistantText = addedPartialAssistant
             ? roundText
             : bubbleContent;
+        // 正文为空时不带空 text 块（Anthropic 会拒绝空白 text 块）。
         sdkClient.context.addMessage(
-          ai.Message.assistant(
-            contextAssistantText,
-            toolCalls: toolCalls.isEmpty ? null : toolCalls,
-          ),
+          aiAssistantMessage(contextAssistantText, toolCalls: toolCalls),
         );
         addedPartialAssistant = false;
 
@@ -15676,11 +15688,17 @@ Available actions: __TOOLS__''';
           //（中转 / 自建网关根本不回 finish_reason）时用 looksTruncatedText
           // 判定「是否看起来被截断」，不再一律放弃续写。
           final finishReason = response?.finishReason ?? streamFinishReason;
+          // 流在没有任何结束标记时被关闭：即使正文「看起来」完整也续写一轮。
+          final abruptEnd =
+              response == null &&
+              streamTerminated == false &&
+              (finishReason == null || finishReason == ai.FinishReason.unknown);
           if (autoContinue.shouldContinue(
             finishReason: finishReason,
             content: bubbleContent,
             stopRequested: request.stopRequested,
             toolCallsPresent: toolCalls.isNotEmpty,
+            contentLooksTruncated: abruptEnd ? true : null,
           )) {
             if (!mounted || request.stopRequested) break;
             final continuationMaxTokens = aiContinuationOutputBudget(

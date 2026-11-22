@@ -10,6 +10,7 @@ import 'mobile_glass_pill.dart';
 import 'mobile_top_bar.dart';
 
 export '../theme/mobile_ui.dart' show MobileUi;
+export 'mobile_top_bar.dart' show MobileActionGroupBreak;
 
 /// ═══════════════════════════════════════════════════════════════════════════
 /// 移动端统一组件层（以「主界面」lib/pages/project_page.dart 为基准）

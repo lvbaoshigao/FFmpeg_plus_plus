@@ -1612,6 +1612,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         color: scheme.onSurface,
         onTap: _importFppx,
       ),
+      // 分组（仅移动端药丸顶栏）：导入（外部来源）| 新建（快捷配置 / 配置）。
+      // 桌面端 GlassTopBar 共用这份列表，不插分隔符。
+      if (isMobilePlatform) const MobileActionGroupBreak(),
       // 「新建快捷配置」补上与「新建配置」一致的圆形修饰：原来是透明底的裸图标，
       // 与旁边那颗实心圆并排看不出属于同一组操作。底色取 primaryContainer
       // （实心 primary 仍留给主 CTA），层级不颠倒。

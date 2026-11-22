@@ -52,6 +52,7 @@ AppState _state() {
 void main() {
   test('mobile glass sigma remains capped at 8', () {
     expect(mobileGlassSigma(30), 8);
+    expect(mobileGlassSigma(30, max: kMobileFloatingGlassMaxSigma), 14);
     expect(mobileGlassSigma(double.infinity), 0);
   });
 
@@ -219,5 +220,18 @@ void main() {
     expect(find.byType(BackdropFilter), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pump(const Duration(seconds: 3));
+  });
+
+  test('clear glass foreground halo is subtle and contrasts the text', () {
+    final dark = clearGlassForegroundShadows(Brightness.dark).single;
+    final light = clearGlassForegroundShadows(Brightness.light).single;
+    // 深色主题（浅字）→ 黑色光晕；浅色主题（深字）→ 白色光晕。
+    expect(dark.color.computeLuminance(), lessThan(0.05));
+    expect(light.color.computeLuminance(), greaterThan(0.9));
+    for (final shadow in [dark, light]) {
+      expect(shadow.offset, Offset.zero);
+      expect(shadow.color.a, lessThanOrEqualTo(0.6));
+      expect(shadow.blurRadius, inInclusiveRange(4, 8));
+    }
   });
 }

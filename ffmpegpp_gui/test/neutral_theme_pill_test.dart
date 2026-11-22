@@ -4,6 +4,7 @@ import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_glass_pill.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ffmpegpp_gui/platform/app_platform.dart';
 import 'package:provider/provider.dart';
 
 void main() {
@@ -72,6 +73,7 @@ void main() {
       expect(pressedPainter, isNotNull);
       expect((pressedPainter as dynamic).amount, 1);
       expect(tester.getRect(pill), bounds);
+      // 桌面端：按压只有光效，不缩放（压缩回弹仅移动端）。
       expect(
         find.descendant(of: pill, matching: find.byType(Transform)),
         findsNothing,
@@ -92,4 +94,46 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+
+  testWidgets('mobile liquid pill compresses to 0.96 on press', (
+    tester,
+  ) async {
+    debugIsMobilePlatformOverride = true;
+    addTearDown(() => debugIsMobilePlatformOverride = null);
+    final state = AppState()..config.pillStyle = 'liquid';
+    addTearDown(state.dispose);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: state,
+        child: MaterialApp(
+          theme: AppTheme.dark(),
+          home: Scaffold(
+            body: Center(
+              child: MobileGlassPill(
+                pressable: true,
+                onTap: () {},
+                height: 48,
+                child: const Text('Project'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final pill = find.byType(MobileGlassPill);
+    final bounds = tester.getRect(pill);
+    final gesture = await tester.startGesture(tester.getCenter(pill));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+    final press = tester.widget<Transform>(
+      find.byKey(const ValueKey('pill_press_scale')),
+    );
+    // 只看 X/Y：Transform.scale 的 Z 轴恒为 1。
+    expect(press.transform.entry(0, 0), closeTo(0.96, 0.001));
+    expect(tester.getRect(pill), bounds);
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
 }

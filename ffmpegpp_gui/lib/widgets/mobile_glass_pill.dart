@@ -324,6 +324,8 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
 
   Widget _pressSurface(Widget child) {
     final reduced = MediaQuery.disableAnimationsOf(context);
+    // 液态玻璃的按压压缩 / 回弹只作用于移动端；桌面端保持原来的纯光效反馈。
+    final mobile = isMobilePlatform;
     final scheme = Theme.of(context).colorScheme;
     final color = MediaQuery.highContrastOf(context)
         ? scheme.onSurface.withValues(alpha: 0.16)
@@ -334,19 +336,33 @@ class _MobileGlassPillState extends State<MobileGlassPill> {
       builder: (context, pressed, child) => TweenAnimationBuilder<double>(
         key: const ValueKey('pill_press_feedback'),
         tween: Tween(end: pressed ? 1 : 0),
+        // 液态玻璃按压：约 110ms 轻压到 0.96，松开约 420ms 弹性回到原位。
         duration: reduced
             ? Duration.zero
-            : Duration(milliseconds: pressed ? 70 : 125),
-        curve: Curves.easeOutCubic,
+            : Duration(
+                milliseconds: mobile
+                    ? (pressed ? 110 : 420)
+                    : (pressed ? 70 : 125),
+              ),
+        curve: mobile && !pressed ? Curves.easeOutBack : Curves.easeOutCubic,
         child: child,
-        builder: (context, amount, child) => CustomPaint(
-          foregroundPainter: _PillPressPainter(
-            amount: amount,
-            radius: widget.radius,
-            color: color,
-          ),
-          child: child,
-        ),
+        builder: (context, amount, child) {
+          final painted = CustomPaint(
+            foregroundPainter: _PillPressPainter(
+              amount: amount.clamp(0.0, 1.0),
+              radius: widget.radius,
+              color: color,
+            ),
+            child: child,
+          );
+          if (!mobile || reduced) return painted;
+          // easeOutBack 会略微越过 0：缩放随之轻微回弹到 >1 再落定。
+          return Transform.scale(
+            key: const ValueKey('pill_press_scale'),
+            scale: 1.0 - 0.04 * amount,
+            child: painted,
+          );
+        },
       ),
     );
   }

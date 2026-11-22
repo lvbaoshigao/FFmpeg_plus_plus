@@ -135,19 +135,21 @@ class AppTheme {
         ? tt.apply(fontFamily: fontFamily, fontFamilyFallback: fallback)
         : tt.apply(fontFamilyFallback: fallback);
 
-    // Shared modal roles match the reference without washing content out:
-    // charcoal translucent glass, a quiet warm rim, and paired action pills.
+    // Shared modal roles: charcoal translucent glass, a quiet rim, and paired
+    // action pills. The dark glass must stay strictly neutral (R == G == B):
+    // the earlier warm charcoal (0x35322C) and tan rim (0x81755B) read as a
+    // yellow cast once the blurred backdrop showed through the surface.
     final modalSurface = glassEffect == 'none'
         ? scheme.surfaceContainerHigh
         : isDark
-        ? const Color(0xEB35322C)
+        ? AppNeutralSurface.darkCardHigh.withAlpha(235)
         : scheme.surfaceContainerHigh.withAlpha(246);
     const modalRadius = Radius.circular(28);
     final dialogShape = RoundedRectangleBorder(
       borderRadius: const BorderRadius.all(modalRadius),
       side: BorderSide(
         color: isDark
-            ? const Color(0xFF81755B).withAlpha(105)
+            ? Colors.white.withAlpha(36)
             : scheme.outlineVariant.withAlpha(145),
         width: 0.8,
       ),

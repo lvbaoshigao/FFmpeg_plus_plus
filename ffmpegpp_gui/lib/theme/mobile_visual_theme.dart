@@ -29,10 +29,9 @@ class MobileVisualTheme extends ThemeExtension<MobileVisualTheme> {
     final page = AppNeutralSurface.background(scheme.brightness);
     final card = AppNeutralSurface.card(scheme.brightness);
     final cardHigh = AppNeutralSurface.cardHigh(scheme.brightness);
-    final modalBase = scheme.brightness == Brightness.dark
-        ? const Color(0xFF35322C)
-        : cardHigh;
-    final modalSurface = modalBase.withValues(
+    // Dialogs use the neutral "card high" role in both brightnesses; a warm
+    // charcoal here tinted every Miuix dialog yellow in dark mode.
+    final modalSurface = cardHigh.withValues(
       alpha: base.dialogTheme.backgroundColor?.a ?? 1,
     );
     return base.copyWith(

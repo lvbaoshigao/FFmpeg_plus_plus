@@ -38,6 +38,48 @@ const double _titlePillMinWidth = MobileUi.pillHeight * 2;
 /// 这两条规则都不生效，见该字段说明。）
 const int _maxInlineActions = 2;
 
+/// 顶栏操作分组分隔符 —— 放进 `actions` 列表里，把前后的操作拆成两颗
+/// 独立药丸（HIG「将执行类似操作或影响界面相同部分的项目编组」）。
+///
+/// 例：`[撤销, 重做, MobileActionGroupBreak(), 画笔, 更多]` → 「↶ ↷」「✎ …」
+/// 两颗药丸。只含一个图标的组自动成为 44×44 正圆。
+/// 分隔符本身不渲染、不计入操作条数；连续 / 首尾的分隔符与空组会被忽略，
+/// 所以条件项（`if (...) action`）全部隐藏时不会留下空药丸。
+class MobileActionGroupBreak extends StatelessWidget {
+  const MobileActionGroupBreak({super.key});
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
+/// 按 [MobileActionGroupBreak] 把操作切成若干组（丢弃空组）。
+List<List<Widget>> mobileActionGroups(List<Widget> actions) {
+  final groups = <List<Widget>>[<Widget>[]];
+  for (final action in actions) {
+    if (action is MobileActionGroupBreak) {
+      if (groups.last.isNotEmpty) groups.add(<Widget>[]);
+    } else {
+      groups.last.add(action);
+    }
+  }
+  if (groups.last.isEmpty) groups.removeLast();
+  return groups;
+}
+
+/// 透过纯语义 / key 包装找到真正的操作控件（项目页给每个按钮包了 Semantics）。
+Widget _unwrapAction(Widget action) {
+  var current = action;
+  while (true) {
+    if (current is Semantics && current.child != null) {
+      current = current.child!;
+    } else if (current is KeyedSubtree) {
+      current = current.child;
+    } else {
+      return current;
+    }
+  }
+}
+
 /// 估算单个操作控件的自然宽度，供溢出判定使用。
 ///
 /// 为什么是「估算」而不是真测量：顶栏必须在自己的 build 阶段就决定
@@ -47,7 +89,8 @@ const int _maxInlineActions = 2;
 /// * [PopupMenuButton]：各调用点都按 34×34 声明（padding: zero + 19px 图标）；
 /// 其它未知控件按 [MobileUi.pillHeight]（44，一行里最宽的常规药丸）保守估算 ——
 /// 估大只会让「…」更早出现，绝不会横向溢出（RenderFlex overflow）。
-double _estimateActionWidth(Widget action) {
+double _estimateActionWidth(Widget widget) {
+  final action = _unwrapAction(widget);
   if (action is MobileGlassPillAction) {
     // 默认水平内边距移动端 1 / 桌面端 2，这里统一按 2 计，误差 ≤ 2px/项。
     return action.size + (action.padding?.horizontal ?? 2);
@@ -157,7 +200,9 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
     // 此处正处在 rebuild 中，改字段即可，不需要（也不应该）再 setState。
     if (_expanded &&
         (widget.forceCollapsed ||
-            oldWidget.actions.length != widget.actions.length)) {
+            mobileActionGroups(oldWidget.actions).length !=
+                _groups.length ||
+            _countOf(oldWidget.actions) != _actionCount)) {
       _collapse(fromUpdate: true);
     }
   }
@@ -221,16 +266,36 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
     ],
   );
 
-  /// 单图标操作保持 44 × 44 正圆；多操作沿用横向药丸。
-  /// 空间不足时横向滚动操作，不把图标或放大的文字缩小。
-  Widget _actionsPill(List<Widget> actions) {
-    final circular =
-        actions.length == 1 &&
-        (actions.single is MobileGlassPillAction ||
-            actions.single is PopupMenuButton);
+  /// 分组后的操作（见 [MobileActionGroupBreak]）。
+  List<List<Widget>> get _groups => mobileActionGroups(widget.actions);
+
+  static int _countOf(List<Widget> actions) =>
+      actions.where((a) => a is! MobileActionGroupBreak).length;
+
+  /// 真实操作条数（不含分隔符）—— 折叠规则按它计数。
+  int get _actionCount => _countOf(widget.actions);
+
+  static bool _isCircular(List<Widget> group) {
+    if (group.length != 1) return false;
+    final action = _unwrapAction(group.single);
+    return action is MobileGlassPillAction || action is PopupMenuButton;
+  }
+
+  /// 一组操作的估算宽度：正圆组固定 44，其余 = 内边距 + 各操作宽度。
+  static double _groupWidth(List<Widget> group) => _isCircular(group)
+      ? MobileUi.pillHeight
+      : MobileUi.actionsPillPadH * 2 +
+            group.fold<double>(0, (sum, a) => sum + _estimateActionWidth(a));
+
+  /// 单个操作组 → 一颗药丸。单图标保持 44 × 44 正圆；多操作为横向胶囊。
+  /// [scrollable] 只在「只有一组」时为 true：多组时由外层统一横向滚动，
+  /// 避免嵌套两层同向滚动。
+  Widget _groupPill(List<Widget> actions, {bool scrollable = true}) {
+    final circular = _isCircular(actions);
     final height = circular
         ? MobileUi.pillHeight
         : MobileUi.pillHeightOf(context);
+    final row = Row(mainAxisSize: MainAxisSize.min, children: actions);
     return SizedBox(
       width: circular ? MobileUi.pillHeight : null,
       height: height,
@@ -240,11 +305,36 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
         padding: circular
             ? EdgeInsets.zero
             : const EdgeInsets.symmetric(horizontal: MobileUi.actionsPillPadH),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          primary: false,
-          child: Row(mainAxisSize: MainAxisSize.min, children: actions),
-        ),
+        child: scrollable
+            ? SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                primary: false,
+                child: row,
+              )
+            : row,
+      ),
+    );
+  }
+
+  /// 右半全部操作：一组 = 一颗药丸（与改动前完全一致）；多组 = 多颗药丸并排，
+  /// 间距 [_pillBarGap]。空间不足时整排横向滚动，不缩小图标。
+  Widget _actionsPill(List<Widget> actions) {
+    final groups = mobileActionGroups(actions);
+    if (groups.length <= 1) {
+      return _groupPill(groups.isEmpty ? const [] : groups.single);
+    }
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      primary: false,
+      clipBehavior: Clip.none,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < groups.length; i++) ...[
+            if (i > 0) const SizedBox(width: _pillBarGap),
+            _groupPill(groups[i], scrollable: false),
+          ],
+        ],
       ),
     );
   }
@@ -260,14 +350,13 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
   /// 数量固定且不多，极窄屏时让操作药丸横向滚动，保留原始点击尺寸。
   bool _needsOverflow(double availableWidth) {
     if (!widget.collapseActions) return false;
-    if (widget.actions.isEmpty || !availableWidth.isFinite) return false;
-    if (widget.actions.length > widget.inlineActionLimit) return true;
+    final groups = _groups;
+    if (groups.isEmpty || !availableWidth.isFinite) return false;
+    if (_actionCount > widget.inlineActionLimit) return true;
+    // 每组一颗药丸：组宽之和 + 组间距。
     final actionsWidth =
-        MobileUi.actionsPillPadH * 2 +
-        widget.actions.fold<double>(
-          0,
-          (sum, a) => sum + _estimateActionWidth(a),
-        );
+        groups.fold<double>(0, (sum, g) => sum + _groupWidth(g)) +
+        _pillBarGap * (groups.length - 1);
     final titleMinWidth = math.max(
       _titlePillMinWidth,
       MediaQuery.textScalerOf(context).scale(16) * 4 +
@@ -304,7 +393,7 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
     return Row(
       children: [
         Expanded(child: _leadingHalf()),
-        if (widget.actions.isNotEmpty) ...[
+        if (_actionCount > 0) ...[
           const SizedBox(width: _pillBarGap),
           ConstrainedBox(
             constraints: BoxConstraints(maxWidth: maxActions),
