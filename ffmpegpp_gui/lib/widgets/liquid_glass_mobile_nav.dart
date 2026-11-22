@@ -329,7 +329,7 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
                         duration: reducedMotion || dragPosition != null
                             ? Duration.zero
                             : Duration(milliseconds: mobile ? 420 : 240),
-                        curve: mobile
+                        curve: mobile && !reducedMotion
                             ? const Cubic(0.34, 1.26, 0.64, 1)
                             : Curves.easeOutCubic,
                         child: rows,
@@ -348,22 +348,13 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
                               Positioned.fromRect(
                                 rect: rect,
                                 child: mobile
-                                    // 拖动时选中片轻微横向拉伸，松开约 420ms 回弹。
-                                    ? TweenAnimationBuilder<double>(
-                                        tween: Tween<double>(
-                                          end: dragPosition != null &&
-                                                  !reducedMotion
-                                              ? 1.06
-                                              : 1.0,
-                                        ),
-                                        duration: Duration(
-                                          milliseconds: dragPosition != null
-                                              ? 110
-                                              : 420,
-                                        ),
-                                        curve: dragPosition != null
-                                            ? Curves.easeOutCubic
-                                            : Curves.easeOutBack,
+                                    ? _StretchingSelection(
+                                        // 拖动时选中片轻微横向拉伸，松开约 420ms 回弹；
+                                        // 减少动态效果时直接是静态选中片（无动画层）。
+                                        stretching:
+                                            dragPosition != null &&
+                                            !reducedMotion,
+                                        animate: !reducedMotion,
                                         child: MobileGlassSelection(
                                           key: const ValueKey(
                                             'app-tab-selection',
@@ -371,16 +362,6 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
                                           radius: rect.height / 2,
                                           style: widget.indicatorStyle,
                                         ),
-                                        builder: (context, stretch, child) =>
-                                            Transform(
-                                              alignment: Alignment.center,
-                                              transform: Matrix4.diagonal3Values(
-                                                stretch,
-                                                1,
-                                                1,
-                                              ),
-                                              child: child,
-                                            ),
                                       )
                                     : SelectionHighlight(
                                         key: const ValueKey(
@@ -823,6 +804,40 @@ class _FlatNavBar extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// 移动端底栏选中片的拖动拉伸：拖动时横向拉宽到 1.06，松开约 420ms 回弹。
+///
+/// [animate] 为 false（减少动态效果）时不挂任何动画层，与改动前的静态选中片
+/// 完全一致，避免为一个恒定值保留 TweenAnimationBuilder。
+class _StretchingSelection extends StatelessWidget {
+  const _StretchingSelection({
+    required this.stretching,
+    required this.animate,
+    required this.child,
+  });
+
+  final bool stretching;
+  final bool animate;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!animate) return child;
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(end: stretching ? 1.06 : 1.0),
+      duration: Duration(milliseconds: stretching ? 110 : 420),
+      curve: stretching ? Curves.easeOutCubic : Curves.easeOutBack,
+      child: child,
+      builder: (context, stretch, child) => stretch == 1.0
+          ? child!
+          : Transform(
+              alignment: Alignment.center,
+              transform: Matrix4.diagonal3Values(stretch, 1, 1),
+              child: child,
+            ),
     );
   }
 }
