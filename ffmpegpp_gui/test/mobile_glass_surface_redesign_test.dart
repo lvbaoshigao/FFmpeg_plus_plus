@@ -105,52 +105,65 @@ void main() {
     }
   });
 
-  testWidgets('liquid cards and blurred panels share a matte smoke surface', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      _host(
-        state,
-        const Column(
-          children: [
-            AppCard(
-              style: SurfaceStyle.liquid,
-              radius: 18,
-              padding: EdgeInsets.zero,
-              child: Text('App card'),
-            ),
-            GlassPanel(
-              style: SurfaceStyle.blur,
-              radius: 18,
-              padding: EdgeInsets.zero,
-              child: Text('Glass panel'),
-            ),
-          ],
+  testWidgets(
+    'mobile liquid cards render translucent glass while blur panels keep matte smoke',
+    (tester) async {
+      await tester.pumpWidget(
+        _host(
+          state,
+          const Column(
+            children: [
+              AppCard(
+                style: SurfaceStyle.liquid,
+                radius: 18,
+                padding: EdgeInsets.zero,
+                child: Text('App card'),
+              ),
+              GlassPanel(
+                style: SurfaceStyle.blur,
+                radius: 18,
+                padding: EdgeInsets.zero,
+                child: Text('Glass panel'),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
+      );
 
-    final appCard = _surfaceFor(tester, 'App card');
-    final glassPanel = _surfaceFor(tester, 'Glass panel');
-    expect(appCard.color, isNotNull);
-    expect(appCard.gradient, isNull);
-    expect(appCard.boxShadow ?? const <BoxShadow>[], isEmpty);
-    expect(appCard.border, isA<Border>());
-    expect((appCard.border! as Border).top.width, lessThanOrEqualTo(0.9));
-    expect(glassPanel.color, appCard.color);
-    expect(glassPanel.gradient, isNull);
-    expect(glassPanel.boxShadow ?? const <BoxShadow>[], isEmpty);
+      final appCard = _surfaceFor(tester, 'App card');
+      final glassPanel = _surfaceFor(tester, 'Glass panel');
+      expect(appCard.gradient, isNotNull);
+      expect(
+        appCard.gradient!.colors.any((color) => color.a < 1),
+        isTrue,
+      );
+      expect(find.byType(MobileSmokeGlassSurface), findsOneWidget);
+      expect(glassPanel.color, isNotNull);
+      expect(glassPanel.gradient, isNull);
+      expect(glassPanel.boxShadow ?? const <BoxShadow>[], isEmpty);
+      expect(glassPanel.border, isA<Border>());
+      expect((glassPanel.border! as Border).top.width, lessThanOrEqualTo(0.9));
 
-    final filters = tester.widgetList<BackdropFilter>(
-      find.byType(BackdropFilter),
-    );
-    expect(filters, hasLength(2));
-    for (final filter in filters) {
-      expect(filter.filter, same(cachedGlassBlur(8)));
-    }
-  });
+      final filters = tester
+          .widgetList<BackdropFilter>(find.byType(BackdropFilter))
+          .toList();
+      expect(filters, hasLength(2));
+      expect(
+        filters.any(
+          (filter) => identical(filter.filter, cachedGlassBlur(8)),
+        ),
+        isTrue,
+      );
+      expect(
+        filters.any(
+          (filter) => identical(filter.filter, cachedGlassBlur(10)),
+        ),
+        isTrue,
+      );
+    },
+  );
 
-  testWidgets('dark-theme mobile cards keep the shared neutral material', (
+  testWidgets('dark-theme mobile cards render glass and smoke surfaces', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -168,11 +181,17 @@ void main() {
 
     final appCard = _surfaceFor(tester, 'Dark app card');
     final panel = _surfaceFor(tester, 'Dark panel');
-    expect(appCard.color!.alpha, greaterThanOrEqualTo(219));
-    expect(appCard.color!.alpha, lessThan(255));
-    expect(panel.color, appCard.color);
-    expect(appCard.gradient, isNull);
-    expect(appCard.boxShadow ?? const <BoxShadow>[], isEmpty);
+    expect(appCard.gradient, isNotNull);
+    expect(
+      appCard.gradient!.colors.any((color) => color.a < 255),
+      isTrue,
+    );
+    expect(find.byType(MobileSmokeGlassSurface), findsOneWidget);
+    expect(panel.color, isNotNull);
+    expect(panel.color!.alpha, greaterThanOrEqualTo(219));
+    expect(panel.color!.alpha, lessThan(255));
+    expect(panel.gradient, isNull);
+    expect(panel.boxShadow ?? const <BoxShadow>[], isEmpty);
   });
 
   testWidgets('mobile glass skips backdrop work at zero blur', (tester) async {

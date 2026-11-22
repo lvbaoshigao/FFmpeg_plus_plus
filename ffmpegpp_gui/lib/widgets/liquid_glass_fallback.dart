@@ -619,7 +619,7 @@ class LiquidGlassPainter extends CustomPainter {
 
 /// Neutral glass shared by floating mobile pills and navigation tracks.
 /// The structural rim stays visible with decorative lighting turned off.
-class MobileGlassSurface extends StatelessWidget {
+class MobileGlassSurface extends StatefulWidget {
   const MobileGlassSurface({
     super.key,
     required this.borderRadius,
@@ -638,43 +638,72 @@ class MobileGlassSurface extends StatelessWidget {
   final Widget child;
 
   @override
+  State<MobileGlassSurface> createState() => _MobileGlassSurfaceState();
+}
+
+class _MobileGlassSurfaceState extends State<MobileGlassSurface> {
+  Widget? _cached;
+  Object? _signature;
+
+  Object _sigFor(BuildContext context) => Object.hash(
+        widget.borderRadius,
+        widget.tuning.blur,
+        widget.tuning.highlight,
+        widget.tuning.lightPos,
+        widget.tuning.edge,
+        widget.tuning.tintScale,
+        widget.opacity,
+        widget.liquid,
+        widget.accent?.toARGB32(),
+        widget.child,
+        Theme.of(context).brightness,
+        mobileGlassEffectsReducedOf(context),
+        MediaQuery.highContrastOf(context),
+      );
+
+  @override
   Widget build(BuildContext context) {
+    final signature = _sigFor(context);
+    if (_cached != null && _signature == signature) return _cached!;
+    _signature = signature;
     final brightness = Theme.of(context).brightness;
     final dark = brightness == Brightness.dark;
     final highContrast = MediaQuery.highContrastOf(context);
     final reduced = mobileGlassEffectsReducedOf(context);
     final neutral = dark
         ? AppNeutralSurface.darkBackground
+        : const Color(0xFFFAFAFA);
+    final accentNeutral = dark
+        ? AppNeutralSurface.darkBackground
         : const Color(0xFFF8FAFA);
-    final baseTint = accent == null || highContrast
+    final baseTint = widget.accent == null || highContrast
         ? neutral
-        : Color.lerp(neutral, accent, 0.14)!;
-    final op = opacity.clamp(0.0, 1.0);
-    final t = tuning.tintScale.clamp(0.0, 1.8);
+        : Color.lerp(accentNeutral, widget.accent, 0.14)!;
+    final op = widget.opacity.clamp(0.0, 1.0);
+    final t = widget.tuning.tintScale.clamp(0.0, 1.8);
 
-    if (!liquid) {
-      // Frosted/blur surface: readable matte blur without liquid highlights.
-      final density = (dark ? 0.72 : 0.64) * op * (0.85 + t * 0.12);
-      final alpha = density.clamp(dark ? 0.58 : 0.52, dark ? 0.86 : 0.82);
-      return LiquidGlassBackdrop(
-        borderRadius: borderRadius,
-        sigma: mobileGlassSigma(tuning.blur, max: 10.0),
-        mobileMaxSigma: 10.0,
-        tuning: tuning,
+    if (!widget.liquid) {
+      final density = (dark ? 0.80 : 0.74) * op * (0.85 + t * 0.12);
+      final alpha = density.clamp(dark ? 0.72 : 0.68, dark ? 0.92 : 0.90);
+      _cached = LiquidGlassBackdrop(
+        borderRadius: widget.borderRadius,
+        sigma: mobileGlassSigma(widget.tuning.blur,
+            max: kMobileFloatingGlassMaxSigma),
+        mobileMaxSigma: kMobileFloatingGlassMaxSigma,
+        tuning: widget.tuning,
         opacity: op,
         shadow: null,
         child: DecoratedBox(
           decoration: BoxDecoration(
             color: baseTint.withValues(alpha: alpha),
-            borderRadius: borderRadius,
+            borderRadius: widget.borderRadius,
           ),
-          child: child,
+          child: widget.child,
         ),
       );
+      return _cached!;
     }
 
-    // Liquid surface: blur backdrop + translucent gradient tint + highlight
-    // painter. Avoid per-surface GPU shader groups on mobile for smoothness.
     final topA = ((dark ? 86 : 118) * op * (0.75 + t * 0.18))
         .round()
         .clamp(0, 255);
@@ -684,54 +713,51 @@ class MobileGlassSurface extends StatelessWidget {
     final botA = ((dark ? 34 : 52) * op * (0.75 + t * 0.18))
         .round()
         .clamp(0, 255);
-    final top = baseTint.withAlpha(topA);
-    final mid = baseTint.withAlpha(midA);
-    final bot = baseTint.withAlpha(botA);
-    final shadow = reduced || highContrast
-        ? null
-        : BoxShadow(
-            color: dark
-                ? Colors.black.withValues(alpha: 0.18)
-                : const Color(0xFF132529).withValues(alpha: 0.10),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          );
-    final sigma = reduced ? 0.0 : mobileGlassSigma(tuning.blur, max: 10.0);
     final body = DecoratedBox(
       decoration: BoxDecoration(
-        borderRadius: borderRadius,
+        borderRadius: widget.borderRadius,
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [top, mid, bot],
+          colors: [
+            baseTint.withAlpha(topA),
+            baseTint.withAlpha(midA),
+            baseTint.withAlpha(botA),
+          ],
           stops: const [0.0, 0.52, 1.0],
         ),
         border: Border.all(
           color: Colors.white.withValues(
-            alpha: (dark ? 0.18 : 0.22) * tuning.edge.clamp(0.0, 2.0) * op,
+            alpha: (dark ? 0.18 : 0.22) *
+                widget.tuning.edge.clamp(0.0, 2.0) *
+                op,
           ),
           width: 0.7,
         ),
-        boxShadow: shadow == null ? null : [shadow],
       ),
-      child: child,
+      child: CustomPaint(
+        foregroundPainter: LiquidGlassPainter(
+          borderRadius: widget.borderRadius,
+          opacity: op,
+          highlight:
+              reduced ? widget.tuning.highlight * 0.45 : widget.tuning.highlight,
+          lightPos: widget.tuning.lightPos,
+          edge: reduced ? widget.tuning.edge * 0.6 : widget.tuning.edge,
+        ),
+        child: widget.child,
+      ),
     );
-    final painted = CustomPaint(
-      foregroundPainter: LiquidGlassPainter(
-        borderRadius: borderRadius,
-        opacity: op,
-        highlight: reduced ? tuning.highlight * 0.45 : tuning.highlight,
-        lightPos: tuning.lightPos,
-        edge: reduced ? tuning.edge * 0.6 : tuning.edge,
-      ),
+    _cached = LiquidGlassBackdrop(
+      borderRadius: widget.borderRadius,
+      sigma: mobileGlassSigma(widget.tuning.blur,
+          max: kMobileFloatingGlassMaxSigma),
+      mobileMaxSigma: kMobileFloatingGlassMaxSigma,
+      tuning: widget.tuning,
+      opacity: op,
+      shadow: null,
       child: body,
     );
-    return ClipRRect(
-      borderRadius: borderRadius,
-      child: sigma <= 0
-          ? painted
-          : BackdropFilter(filter: cachedGlassBlur(sigma), child: painted),
-    );
+    return _cached!;
   }
 }
 

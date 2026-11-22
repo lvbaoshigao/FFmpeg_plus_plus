@@ -349,12 +349,29 @@ class _AppCardState extends State<AppCard> {
     Widget core;
     if (isMobilePlatform && !solidStyle) {
       final padding = widget.onTap == null ? widget.padding : null;
-      if (style == SurfaceStyle.liquid && !key.frosted) {
-        // Mobile "liquid" cards: real glass highlights/tints without per-card GPU
-        // shader groups. Kept lighter than desktop refraction paths for scroll perf.
+      final reducedEffects = mobileGlassEffectsReducedOf(context);
+      final highContrast = MediaQuery.highContrastOf(context);
+      final liquidCard = style == SurfaceStyle.liquid && !key.frosted;
+      if (liquidCard && (highContrast || reducedEffects)) {
+        // Accessibility/reduced-motion: keep cards readable and avoid blur work.
+        core = MobileSmokeGlassSurface(
+          borderRadius: br,
+          padding: padding,
+          sigma: mobileGlassSigma(tuning.blur, max: 10.0),
+          opacity: op,
+          tintScale: tScale,
+          edge: tuning.edge,
+          themeAccent: key.useThemeColor && key.follow ? accent : null,
+          child: inner,
+        );
+      } else if (liquidCard) {
+        // Mobile liquid cards: translucent glass tint + highlights with capped
+        // live blur (no per-card GPU shader group) for smoother scrolling.
         final blur = mobileGlassSigma(tuning.blur, max: 10.0);
-        final alphaTop = ((isDark ? 74.0 : 96.0) * op * tScale).round().clamp(0, 255);
-        final alphaBot = ((isDark ? 38.0 : 56.0) * op * tScale).round().clamp(0, 255);
+        final alphaTop =
+            ((isDark ? 74.0 : 96.0) * op * tScale).round().clamp(0, 255);
+        final alphaBot =
+            ((isDark ? 38.0 : 56.0) * op * tScale).round().clamp(0, 255);
         final top = glassBase.withAlpha(alphaTop);
         final bot = glassBase.withAlpha(alphaBot);
         final body = Container(
