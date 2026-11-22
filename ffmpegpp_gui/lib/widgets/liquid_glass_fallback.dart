@@ -853,7 +853,8 @@ class MobileGlassSelection extends StatelessWidget {
             'liquid' => neutral.withValues(alpha: 0.82),
             'blur' => neutral.withValues(alpha: 0.95),
             'outline' => null,
-            _ => Color.lerp(neutral, scheme.primary, dark ? 0.10 : 0.08),
+            // 「主题」遮罩也保持中性：动态取色（莫奈）不混进玻璃选中片。
+            _ => neutral.withValues(alpha: 0.90),
           };
     final outlined = style == 'outline';
     final border = Border.all(

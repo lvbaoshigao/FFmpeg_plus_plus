@@ -307,19 +307,74 @@ class _AnimatedMenuBody<T> extends StatelessWidget {
         ),
       );
     }
+    final tuning = glassTuningOf(context);
+    final gpu = gpuGlassEnabledOf(context);
+    final routeAnimation = ModalRoute.of(context)?.animation;
+    Widget panelFor(bool live) => optionMenuPanel(
+      context: context,
+      scheme: scheme,
+      appearance: appearance,
+      tuning: tuning,
+      radius: radius.topLeft.x,
+      gpuGlass: gpu,
+      liveGlass: live,
+      child: body,
+    );
     return ConstrainedBox(
       constraints: constraints,
-      child: optionMenuPanel(
-        context: context,
-        scheme: scheme,
-        appearance: appearance,
-        tuning: glassTuningOf(context),
-        radius: radius.topLeft.x,
-        gpuGlass: gpuGlassEnabledOf(context),
-        child: body,
-      ),
+      // 缩放 / 淡入动画期间不跑实时背景模糊（淡入的 BackdropFilter 既掉帧又会闪黑），
+      // 动画落定后再开启。
+      child: routeAnimation == null
+          ? panelFor(true)
+          : _SettledGlass(animation: routeAnimation, builder: panelFor),
     );
   }
+}
+
+/// 路由动画完全展开（completed）时才返回 live = true。
+class _SettledGlass extends StatefulWidget {
+  const _SettledGlass({required this.animation, required this.builder});
+
+  final Animation<double> animation;
+  final Widget Function(bool live) builder;
+
+  @override
+  State<_SettledGlass> createState() => _SettledGlassState();
+}
+
+class _SettledGlassState extends State<_SettledGlass> {
+  late bool _live;
+
+  @override
+  void initState() {
+    super.initState();
+    _live = widget.animation.status == AnimationStatus.completed;
+    widget.animation.addStatusListener(_onStatus);
+  }
+
+  @override
+  void didUpdateWidget(covariant _SettledGlass oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.animation != widget.animation) {
+      oldWidget.animation.removeStatusListener(_onStatus);
+      widget.animation.addStatusListener(_onStatus);
+      _live = widget.animation.status == AnimationStatus.completed;
+    }
+  }
+
+  void _onStatus(AnimationStatus status) {
+    final live = status == AnimationStatus.completed;
+    if (live != _live && mounted) setState(() => _live = live);
+  }
+
+  @override
+  void dispose() {
+    widget.animation.removeStatusListener(_onStatus);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(_live);
 }
 
 class _MenuRow<T> extends StatelessWidget {

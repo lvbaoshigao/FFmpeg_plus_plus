@@ -297,6 +297,135 @@ class _LogPageState extends State<LogPage> {
     String cardStyle,
     bool zh, {
     required double topInset,
+  }) => isMobilePlatform
+      ? _buildMobileList(entries, scheme, zh, topInset: topInset)
+      : _buildDesktopList(entries, scheme, cardStyle, zh, topInset: topInset);
+
+  /// 移动端日志列表：每条一张独立的小卡片，两行排版 ——
+  /// 第一行「分类 · 时间」，第二行消息占满整宽（原先三列挤在一行，
+  /// 手机上消息只剩一半宽度、长路径被拆成很多行）。
+  /// 不再把整个列表包进一块铺满全屏、顶到顶栏后面的玻璃面板；
+  /// 选中态用中性描边，不混入主题色。
+  Widget _buildMobileList(
+    List<LogEntry> entries,
+    ColorScheme scheme,
+    bool zh, {
+    required double topInset,
+  }) {
+    final dark = scheme.brightness == Brightness.dark;
+    final bottom = MediaQuery.paddingOf(context).bottom + 16;
+    return ListView.builder(
+      padding: EdgeInsets.fromLTRB(
+        MobileUi.subPagePaddingH,
+        topInset + 4,
+        MobileUi.subPagePaddingH,
+        bottom,
+      ),
+      itemCount: entries.length,
+      itemBuilder: (_, index) {
+        final entry = entries[index];
+        final selected = _selected.contains(entry);
+        final categoryColor = _categoryColor(entry.category, scheme);
+        final surface = dark
+            ? const Color(0xFF1A1A1A).withValues(alpha: selected ? 0.86 : 0.72)
+            : const Color(0xFFFAFAFA).withValues(alpha: selected ? 0.92 : 0.80);
+        return Padding(
+          key: ObjectKey(entry),
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Material(
+            color: surface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(
+                color: scheme.onSurface.withValues(
+                  alpha: selected ? 0.45 : 0.08,
+                ),
+                width: selected ? 1.2 : 0.7,
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () => setState(() {
+                if (!_selected.add(entry)) _selected.remove(entry);
+              }),
+              onLongPress: () => _copyEntries([entry], zh),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 9),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      spacing: 8,
+                      children: [
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: categoryColor.withAlpha(36),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            child: Text(
+                              _categoryLabel(entry.category, zh),
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                                color: categoryColor,
+                              ),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            _timestamp(entry.timestamp),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontFamily: AppTheme.monoFont,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                        if (selected)
+                          Icon(
+                            Icons.check_circle,
+                            size: 16,
+                            color: scheme.onSurface,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      entry.message,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.4,
+                        fontFamily: AppTheme.monoFont,
+                        color: entry.category == 'error'
+                            ? scheme.error
+                            : scheme.onSurface,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDesktopList(
+    List<LogEntry> entries,
+    ColorScheme scheme,
+    String cardStyle,
+    bool zh, {
+    required double topInset,
   }) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 12),
     child: GlassPanel(

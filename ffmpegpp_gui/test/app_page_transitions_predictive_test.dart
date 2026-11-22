@@ -47,6 +47,31 @@ Future<(GlobalKey<NavigatorState>, PageRoute<void>)> _mount(WidgetTester tester,
 
 double _x(WidgetTester tester, Key key) => tester.getTopLeft(find.byKey(key, skipOffstage: false)).dx;
 
+double _w(WidgetTester tester, Key key) => tester.getSize(find.byKey(key, skipOffstage: false)).width *
+    _scaleOf(tester, key);
+
+/// 预测式返回卡片的缩放（Transform.scale 不改布局尺寸，从绘制矩形算）。
+double _scaleOf(WidgetTester tester, Key key) {
+  final finder = find.byKey(key, skipOffstage: false);
+  final box = tester.renderObject<RenderBox>(finder);
+  final rect = MatrixUtils.transformRect(box.getTransformTo(null), Offset.zero & box.size);
+  return rect.width / box.size.width;
+}
+
+/// 拖动中卡片左缘的期望位置：缩到 1 - 0.1·e，向手势方向平移 0.08·w·e，
+/// 其中 e = easeOutCubic(progress)；缩放以页面中心为原点。
+double _cardLeft(double width, double progress, double direction) {
+  final e = Curves.easeOutCubic.transform(progress);
+  final scale = 1 - .10 * e;
+  return direction * .08 * width * e + width * (1 - scale) / 2;
+}
+
+double _paintedLeft(WidgetTester tester, Key key) {
+  final finder = find.byKey(key, skipOffstage: false);
+  final box = tester.renderObject<RenderBox>(finder);
+  return MatrixUtils.transformRect(box.getTransformTo(null), Offset.zero & box.size).left;
+}
+
 void main() {
   for (final smooth in [false, true]) {
     final label = smooth ? 'smoothRoute' : 'theme route';
@@ -74,7 +99,7 @@ void main() {
       expect(navigator.currentState!.userGestureInProgress, isFalse);
       expect(route.animation!.value, 1);
     });
-    testWidgets('$label predictive updates follow full-width progress from either edge', (tester) async {
+    testWidgets('$label predictive updates shrink the page into a rounded card from either edge', (tester) async {
       final (navigator, route) = await _mount(tester, smooth: smooth);
       final width = tester.view.physicalSize.width / tester.view.devicePixelRatio;
       for (final edge in SwipeEdge.values) {
@@ -86,12 +111,18 @@ void main() {
           await tester.pump();
           expect(route.animation!.value, closeTo(1 - progress, 1e-6));
           final direction = edge == SwipeEdge.left ? 1.0 : -1.0;
-          expect(_x(tester, _front), closeTo(width * progress * direction, .01));
+          expect(_paintedLeft(tester, _front), closeTo(_cardLeft(width, progress, direction), .05));
+          expect(_w(tester, _front), lessThan(width));
+          expect(
+            find.ancestor(of: find.byKey(_front), matching: find.byType(ClipRRect)),
+            findsWidgets,
+          );
           expect(_x(tester, _back), closeTo(-width * .04 * (1 - progress), .01));
         }
         await _gesture(tester, 'cancelBackGesture');
         await tester.pumpAndSettle();
         expect(_x(tester, _front), 0);
+        expect(_scaleOf(tester, _front), closeTo(1, 1e-6));
         expect(navigator.currentState!.userGestureInProgress, isFalse);
       }
     });
@@ -103,22 +134,21 @@ void main() {
       await _gesture(tester, 'updateBackGestureProgress', progress: .15);
       await tester.pump();
       final before = route.animation!.value;
-      final beforeX = _x(tester, _front);
+      final beforeX = _paintedLeft(tester, _front);
       await _gesture(tester, 'commitBackGesture');
       expect(route.animation!.value, closeTo(before, 1e-6), reason: 'commit must not restart at upperBound');
       await tester.pump();
-      expect(_x(tester, _front), closeTo(beforeX, .01));
+      expect(_paintedLeft(tester, _front), closeTo(beforeX, .05));
       var previous = beforeX;
       while (route.animation!.value > .05) {
         await tester.pump(const Duration(milliseconds: 8));
         if (!find.byKey(_front).evaluate().isNotEmpty) break;
-        final x = _x(tester, _front);
-        expect(x, greaterThanOrEqualTo(previous));
-        expect(x, closeTo(width * (1 - route.animation!.value), .01));
+        final x = _paintedLeft(tester, _front);
+        expect(x, greaterThanOrEqualTo(previous - .01));
         expect(_x(tester, _back), closeTo(-width * .04 * route.animation!.value, .01));
         previous = x;
       }
-      expect(previous, greaterThan(width * .9));
+      expect(previous, greaterThan(width * .7));
       await tester.pumpAndSettle();
       expect(find.byKey(_front), findsNothing);
       expect(_x(tester, _back), 0);
@@ -134,16 +164,17 @@ void main() {
       await _gesture(tester, 'cancelBackGesture');
       expect(route.animation!.value, closeTo(.4, 1e-6));
       await tester.pump();
-      expect(_x(tester, _front), closeTo(width * .6, .01));
-      var previous = width * .6;
+      expect(_paintedLeft(tester, _front), closeTo(_cardLeft(width, .6, 1), .05));
+      var previous = _cardLeft(width, .6, 1);
       while (route.animation!.value < 1) {
         await tester.pump(const Duration(milliseconds: 16));
-        final x = _x(tester, _front);
+        final x = _paintedLeft(tester, _front);
         expect(x, lessThanOrEqualTo(previous + .01));
-        expect(x, closeTo(width * (1 - route.animation!.value), .01));
+        expect(x, closeTo(_cardLeft(width, 1 - route.animation!.value, 1), .05));
         previous = x;
       }
       expect(route.isCurrent, isTrue);
+      await tester.pumpAndSettle();
       expect(_x(tester, _front), 0);
       expect(navigator.currentState!.userGestureInProgress, isFalse);
     });

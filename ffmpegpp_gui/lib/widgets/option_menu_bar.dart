@@ -92,6 +92,9 @@ Widget optionMenuPanel({
   double radius = 14,
   GlassTuning tuning = const GlassTuning(),
   bool gpuGlass = false,
+  // 展开 / 收起动画进行中传 false：动画帧里不跑实时背景模糊 / shader，
+  // 只画着色底（缩放 + 每帧重采样背景是下拉菜单掉帧的主因）；落定后恢复。
+  bool liveGlass = true,
 }) {
   final dark = scheme.brightness == Brightness.dark;
   final mobile = isMobilePlatform;
@@ -113,12 +116,13 @@ Widget optionMenuPanel({
   final baseSigma = liquid
       ? tunedGlassSigma(mobile ? 10 : 6, tuning)
       : tunedGlassSigma(frosted ? 8 : (highlight ? 4 : 0), tuning);
-  final sigma = highContrast || effectsReduced
+  final sigma = highContrast || effectsReduced || !liveGlass
       ? 0.0
       : mobile
       ? mobileGlassSigma(baseSigma)
       : baseSigma;
-  final useGpuGlass = gpuGlass && !highContrast && !effectsReduced;
+  final useGpuGlass =
+      liveGlass && gpuGlass && !highContrast && !effectsReduced;
   // 菜单比悬浮药丸更不透明（规范 Tinted glass ≈ 0.86），短标签在任意背景上
   // 都清楚；旧 liquid 0.42 / 0.50 会让背后的文字透进菜单。
   final baseFill = mobile
@@ -144,13 +148,17 @@ Widget optionMenuPanel({
       : appearance == 'gray'
       ? neutral
       : scheme.surface;
-  final fill = mobile && glass
+  final restingFill = mobile && glass
       ? baseFill.withValues(
           alpha: effectsReduced ? 1 : math.max(baseFill.a, 0.86),
         )
       : glass && highContrast
       ? neutral
       : baseFill;
+  // 动画帧没有背景模糊：桌面低浓度玻璃临时加浓，避免背后文字清晰透出。
+  final fill = !liveGlass && glass && !mobile
+      ? restingFill.withValues(alpha: math.max(restingFill.a, 0.62))
+      : restingFill;
   final r = BorderRadius.circular(menuRadius);
   final light = tuning.highlight.clamp(0.0, 1.6);
   final position = tuning.lightPos.clamp(0.0, 1.0);
@@ -211,7 +219,7 @@ Widget optionMenuPanel({
         child: BackdropFilter(filter: cachedGlassBlur(sigma), child: panel),
       );
     }
-  } else if (liquid) {
+  } else if (liquid && liveGlass) {
     panel = LiquidGlassBackdrop(
       borderRadius: r,
       sigma: sigma,
@@ -858,6 +866,18 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
       reverseCurve: Curves.easeInCubic,
     );
     _ovScale = Tween<double>(begin: 0.97, end: 1.0).animate(_ovCurve);
+    _ovCtrl.addStatusListener(_onOverlayStatus);
+  }
+
+  /// 动画落定（完全展开）才开启实时玻璃，见 optionMenuPanel(liveGlass:)。
+  final ValueNotifier<bool> _ovSettled = ValueNotifier<bool>(false);
+
+  /// 落定时玻璃层结构会变（加 / 去 BackdropFilter）：用 GlobalKey 把内容整体
+  /// 搬过去，列表滚动位置与搜索框焦点不丢。
+  final GlobalKey _ovContentKey = GlobalKey();
+
+  void _onOverlayStatus(AnimationStatus status) {
+    _ovSettled.value = status == AnimationStatus.completed;
   }
 
   @override
@@ -873,6 +893,7 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
   void dispose() {
     _ovCurve.dispose();
     _ovCtrl.dispose();
+    _ovSettled.dispose();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -1208,8 +1229,10 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
     if (widget.menuWidth != null) {
       return math.min(widget.menuWidth!, maxW);
     }
-    final minW = math.min(widget.searchable ? 240.0 : 140.0, maxW);
-    return _triggerWidth.clamp(minW, math.min(320.0, maxW));
+    // 浮层宽度与选择框一致（用户反馈「下拉菜单与选择框大小差异明显」）；
+    // 只有可搜索列表需要更宽的下限放搜索框。
+    final minW = math.min(widget.searchable ? 200.0 : 96.0, maxW);
+    return _triggerWidth.clamp(minW, math.min(360.0, maxW));
   }
 
   /// 浮层水平平移量：锚点恒为「触发钮左缘」，浮层向右铺 menuWidth。
@@ -1271,16 +1294,26 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
         onPick: _pick,
       ),
     );
-    final panel = optionMenuPanel(
-      context: overlayContext,
-      scheme: scheme,
-      appearance: MediaQuery.highContrastOf(overlayContext)
-          ? 'theme'
-          : _dropdownAppearance,
-      tuning: glassTuningOf(overlayContext),
-      radius: visual.menuRadius,
-      gpuGlass: gpuGlassEnabledOf(overlayContext),
-      child: ConstrainedBox(
+    final appearance = MediaQuery.highContrastOf(overlayContext)
+        ? 'theme'
+        : _dropdownAppearance;
+    final tuning = glassTuningOf(overlayContext);
+    final gpu = gpuGlassEnabledOf(overlayContext);
+    final panel = ValueListenableBuilder<bool>(
+      valueListenable: _ovSettled,
+      builder: (context, settled, content) => optionMenuPanel(
+        context: overlayContext,
+        scheme: scheme,
+        appearance: appearance,
+        tuning: tuning,
+        radius: visual.menuRadius,
+        gpuGlass: gpu,
+        liveGlass: settled,
+        child: content!,
+      ),
+      child: RepaintBoundary(
+        key: _ovContentKey,
+        child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: maxHeight),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1297,6 +1330,7 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
             Flexible(child: list),
           ],
         ),
+      ),
       ),
     );
     return Positioned.fill(
@@ -1598,12 +1632,22 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
       reverseCurve: Curves.easeInCubic,
     );
     _mountScale = Tween<double>(begin: 0.97, end: 1.0).animate(_mountCurve);
+    _ctrl.addStatusListener(_onMountStatus);
+  }
+
+  /// 动画落定才开启实时玻璃（同 OptionMenuBar）。
+  final ValueNotifier<bool> _settled = ValueNotifier<bool>(false);
+  final GlobalKey _contentKey = GlobalKey();
+
+  void _onMountStatus(AnimationStatus status) {
+    _settled.value = status == AnimationStatus.completed;
   }
 
   @override
   void dispose() {
     _mountCurve.dispose();
     _ctrl.dispose();
+    _settled.dispose();
     super.dispose();
   }
 
@@ -1747,27 +1791,38 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
     final openUp = below < 320 && above > below;
     final maxHeight = math.min(320.0, openUp ? above : below);
     final panelDy = openUp ? aboveEnd - triggerTop : belowStart - triggerBottom;
-    final panel = optionMenuPanel(
-      context: overlayContext,
-      scheme: scheme,
-      tuning: glassTuningOf(overlayContext),
-      radius: visual.menuRadius,
-      appearance: MediaQuery.highContrastOf(overlayContext)
-          ? 'theme'
-          : overlayContext.select<AppState?, String>(
-              (s) => s?.config.dropdownAppearance ?? 'theme',
+    final tuning = glassTuningOf(overlayContext);
+    final appearance = MediaQuery.highContrastOf(overlayContext)
+        ? 'theme'
+        : overlayContext.select<AppState?, String>(
+            (s) => s?.config.dropdownAppearance ?? 'theme',
+          );
+    final gpu = gpuGlassEnabledOf(overlayContext);
+    final panel = ValueListenableBuilder<bool>(
+      valueListenable: _settled,
+      builder: (context, settled, content) => optionMenuPanel(
+        context: overlayContext,
+        scheme: scheme,
+        tuning: tuning,
+        radius: visual.menuRadius,
+        appearance: appearance,
+        gpuGlass: gpu,
+        liveGlass: settled,
+        child: content!,
+      ),
+      child: RepaintBoundary(
+        key: _contentKey,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxHeight),
+          child: Builder(
+            builder: (context) => _MenuOptionList<T>(
+              items: widget.items,
+              highlightedIndex: _highlightIndex,
+              onPick: (item) {
+                _close();
+                widget.onSelected(item.value);
+              },
             ),
-      gpuGlass: gpuGlassEnabledOf(overlayContext),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: maxHeight),
-        child: Builder(
-          builder: (context) => _MenuOptionList<T>(
-            items: widget.items,
-            highlightedIndex: _highlightIndex,
-            onPick: (item) {
-              _close();
-              widget.onSelected(item.value);
-            },
           ),
         ),
       ),

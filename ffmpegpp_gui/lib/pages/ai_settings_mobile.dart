@@ -2480,7 +2480,7 @@ class _PermissionsSection extends StatelessWidget {
   final AppStrings s;
   final AppState state;
 
-  /// PC 仪��盘的两列布局由外层控制间距，传 true 去掉分组卡自带的 12px
+  /// PC 仪表盘的两列布局由外层控制间距，传 true 去掉分组卡自带的 12px
   /// 横向缩进（移动端保持 false，几何规格不变）。
   final bool flush;
 

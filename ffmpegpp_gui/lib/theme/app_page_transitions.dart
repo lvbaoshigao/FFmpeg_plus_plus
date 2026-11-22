@@ -68,7 +68,99 @@ class AppPageTransitionsBuilder extends PageTransitionsBuilder {
     if (!predictiveBack) return content(_enterFraction);
     return _PredictiveBackDetector(
       route: route,
-      builder: (fraction) => content(fraction ?? _enterFraction),
+      // 手势进行中：二级页缩成大圆角卡片跟手（Android 16 预测式返回观感），
+      // 松手确认后卡片继续滑出屏幕；无手势时仍是普通共享轴平移。
+      builder: (gesture) => gesture == null
+          ? content(_enterFraction)
+          : _AppPageExitTransition(
+              animation: secondaryAnimation,
+              fraction: _exitFraction,
+              child: _PredictiveBackCard(
+                animation: animation,
+                gesture: gesture,
+                child: child,
+              ),
+            ),
+    );
+  }
+}
+
+/// 一次预测式返回手势的状态（方向 + 松手确认时的进度）。
+@immutable
+class _BackGesture {
+  const _BackGesture({required this.direction, this.commitFrom});
+
+  /// 1 = 从左缘滑入（卡片向右移），-1 = 从右缘。
+  final double direction;
+
+  /// 松手确认那一刻的拖动进度（0..1）；null = 仍在拖动。
+  final double? commitFrom;
+}
+
+/// 预测式返回中的二级页：缩成大圆角卡片，跟手平移；确认后滑出屏幕。
+///
+/// 只用 Transform + ClipRRect（无 opacity 层），页内 BackdropFilter / 液态玻璃
+/// 仍能正常采样背景。
+class _PredictiveBackCard extends StatelessWidget {
+  const _PredictiveBackCard({
+    required this.animation,
+    required this.gesture,
+    required this.child,
+  });
+
+  final Animation<double> animation;
+  final _BackGesture gesture;
+  final Widget child;
+
+  /// 拖到底时卡片缩到 90%。
+  static const double _maxShrink = 0.10;
+
+  /// 拖到底时卡片向手势方向平移的屏宽比例。
+  static const double _maxShift = 0.08;
+
+  /// 卡片圆角（很快长满，用户要求「返回时卡片加很大的圆角」）。
+  static const double _cardRadius = 36;
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) return child;
+    return AnimatedBuilder(
+      animation: animation,
+      child: child,
+      builder: (context, child) {
+        final width = MediaQuery.sizeOf(context).width;
+        final progress = (1.0 - animation.value).clamp(0.0, 1.0);
+        final from = gesture.commitFrom;
+        final double shrink;
+        final double dx;
+        if (from == null) {
+          shrink = Curves.easeOutCubic.transform(progress);
+          dx = gesture.direction * _maxShift * width * shrink;
+        } else {
+          shrink = Curves.easeOutCubic.transform(from.clamp(0.0, 1.0));
+          final t = from >= 0.999
+              ? 1.0
+              : ((progress - from) / (1.0 - from)).clamp(0.0, 1.0);
+          final start = gesture.direction * _maxShift * width * shrink;
+          final end = gesture.direction * width;
+          dx = start + (end - start) * Curves.easeIn.transform(t);
+        }
+        final scale = 1.0 - _maxShrink * shrink;
+        final radius = _cardRadius * (shrink / 0.12).clamp(0.0, 1.0);
+        Widget card = child!;
+        if (radius > 0.5) {
+          card = ClipRRect(
+            borderRadius: BorderRadius.circular(radius),
+            clipBehavior: Clip.antiAlias,
+            child: card,
+          );
+        }
+        if (scale < 0.9999) card = Transform.scale(scale: scale, child: card);
+        if (dx.abs() >= 0.01) {
+          card = Transform.translate(offset: Offset(dx, 0), child: card);
+        }
+        return card;
+      },
     );
   }
 }
@@ -200,7 +292,7 @@ class _PredictiveBackDetector extends StatefulWidget {
   const _PredictiveBackDetector({required this.route, required this.builder});
 
   final PageRoute<dynamic> route;
-  final Widget Function(double? fraction) builder;
+  final Widget Function(_BackGesture? gesture) builder;
 
   @override
   State<_PredictiveBackDetector> createState() => _PredictiveBackDetectorState();
@@ -211,6 +303,7 @@ class _PredictiveBackDetectorState extends State<_PredictiveBackDetector>
   bool _active = false;
   bool _receiving = false;
   double _direction = 1;
+  double? _commitFrom;
   NavigatorState? _navigator;
   Animation<double>? _commitAnimation;
 
@@ -224,6 +317,7 @@ class _PredictiveBackDetectorState extends State<_PredictiveBackDetector>
       setState(() {
         _active = false;
         _receiving = false;
+        _commitFrom = null;
       });
     }
 
@@ -291,6 +385,7 @@ class _PredictiveBackDetectorState extends State<_PredictiveBackDetector>
     }
     setState(() {
       _active = _receiving = true;
+      _commitFrom = null;
       _direction = backEvent.swipeEdge == SwipeEdge.left ? 1 : -1;
     });
     widget.route.handleStartBackGesture(progress: 1 - backEvent.progress);
@@ -315,7 +410,14 @@ class _PredictiveBackDetectorState extends State<_PredictiveBackDetector>
   @override
   void handleCommitBackGesture() {
     if (!_receiving) return;
-    _receiving = false;
+    // 记下松手时的进度：卡片从这里继续滑出屏幕，而不是跳回整页平移。
+    setState(() {
+      _receiving = false;
+      _commitFrom = (1.0 - (widget.route.animation?.value ?? 1.0)).clamp(
+        0.0,
+        1.0,
+      );
+    });
     // Flutter 3.44's handleCommitBackGesture restarts reverse from upperBound.
     // Pop already reverses from the drag value, so keep that continuous animation.
     _commitAnimation = widget.route.animation;
@@ -327,6 +429,7 @@ class _PredictiveBackDetectorState extends State<_PredictiveBackDetector>
   }
 
   @override
-  Widget build(BuildContext context) =>
-      widget.builder(_active ? _direction : null);
+  Widget build(BuildContext context) => widget.builder(
+    _active ? _BackGesture(direction: _direction, commitFrom: _commitFrom) : null,
+  );
 }

@@ -4598,7 +4598,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                               8 +
                               math.max(
                                 0.0,
-                                _kMobileBarHeight * (_mobileZoomBarScale() - 1.0),
+                                _kMobileZoomBarHeight * (_mobileZoomBarScale() - 1.0),
                               ),
                           child: _buildMobileFileInfo(scheme, s),
                         ),
@@ -11193,129 +11193,107 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   Widget _buildMobileTopBar(ColorScheme scheme, AppStrings s) {
     final cfg = context.read<AppState>().config;
-    // Keep touch targets intact; narrow screens scroll the complete action row.
-    // Keep the pill compact on phones; large scaling covered the canvas.
+    // 按功能拆成三颗药丸（Apple HIG 工具栏分组）：
+    //   返回 | 撤销 · 重做 | 工具箱 ·（属性）·（AI）· 保存 · 更多
+    // 「整理 / 定位源」收进「更多」，常见手机宽度下一行就放下全部操作，
+    // 不再是一条 330dp 宽、要横向滑动才能找到按钮的长药丸；
+    // 只有极窄屏 / 属性恢复按钮也出现时才整排横向滚动兜底。
+    // 图标统一中性色，不混入莫奈主题色（保存也不再是主题色实心圆）。
     final height = _mobileToolbarHeight();
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SizedBox(
-          // 按实际按钮数收缩，避免药丸右端留出一块空白；
-          // 属性恢复按钮出现时内容超出则横向滚动。
-          width: math.min(constraints.maxWidth, 330),
-          child: MobileGlassPill(
-            height: height,
-            radius: height / 2,
-            padding: const EdgeInsets.symmetric(
-              horizontal: _kMobileBarBtnPad,
-              vertical: 2,
-            ),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _mobileBarBtn(
-                    Icons.arrow_back,
-                    () async {
-                      final nav = Navigator.of(context);
-                      if (await _onWillPop()) nav.pop();
-                    },
-                    scheme,
-                    tooltip: s.isZh ? '返回' : 'Back',
-                  ),
-                  const SizedBox(width: 4),
-                  // 撤销/重做：原画布顶部工具栏在移动端移除后，迁移到顶部浮动菜单栏。
-                  // 不用 _mobileBarBtn 是因为要 disabled 态；但按钮盒（26）与图标（18）必须同档
-                  _mobileBarBtn(
-                    Icons.undo,
-                    _undoStack.isEmpty ? null : _undo,
-                    scheme,
-                    color: _undoStack.isEmpty
-                        ? scheme.outlineVariant
-                        : scheme.onSurfaceVariant,
-                    tooltip: s.isZh ? '撤销' : 'Undo',
-                  ),
-                  _mobileBarBtn(
-                    Icons.redo,
-                    _redoStack.isEmpty ? null : _redo,
-                    scheme,
-                    color: _redoStack.isEmpty
-                        ? scheme.outlineVariant
-                        : scheme.onSurfaceVariant,
-                    tooltip: s.isZh ? '重做' : 'Redo',
-                  ),
-                  const SizedBox(width: 2),
-                  // 自右下角工具条迁移：自动整理 + 定位源
-                  _mobileBarBtn(
-                    Icons.auto_fix_high,
-                    _autoLayout,
-                    scheme,
-                    tooltip: s.isZh ? '整理' : 'Arrange',
-                  ),
-                  const SizedBox(width: 2),
-                  _mobileBarBtn(
-                    Icons.my_location,
-                    () => _goToSource(s),
-                    scheme,
-                    tooltip: s.isZh ? '定位源' : 'Source',
-                  ),
-                  const SizedBox(width: 2),
-                  // 工具箱开关：改造前这颗用 20px 图标（比同排其它都大一号），已回到统一档
-                  _mobileBarBtn(
-                    _mobileToolboxOpen ? Icons.close : Icons.add,
-                    () => setState(
-                      () => _mobileToolboxOpen = !_mobileToolboxOpen,
-                    ),
-                    scheme,
-                    color: scheme.primary,
-                    tooltip: s.isZh ? '工具箱' : 'Toolbox',
-                  ),
-                  // 属性卡片被收起后，用这枚图标恢复（仅当当前选中的对象正是被收起的那个）
-                  if ((_selectedNode?.id ?? _selectedLogicBlockId) != null &&
-                      _mobilePropsHiddenFor ==
-                          (_selectedNode?.id ?? _selectedLogicBlockId)) ...[
-                    const SizedBox(width: 2),
-                    _mobileBarBtn(
-                      Icons.tune,
-                      () => setState(() => _mobilePropsHiddenFor = null),
-                      scheme,
-                      color: scheme.primary,
-                      tooltip: s.isZh ? '显示属性面板' : 'Show properties',
-                    ),
-                  ],
-                  if (cfg.aiEnabled) ...[
-                    const SizedBox(width: 2),
-                    _mobileBarBtn(
-                      Icons.smart_toy,
-                      () => _openAiSheet(s),
-                      scheme,
-                      tooltip: s.isZh ? 'AI 助手' : 'AI Assistant',
-                      color: scheme.primary,
-                    ),
-                  ],
-                  const SizedBox(width: 2),
-                  // 保存：与 PC 顶栏同一套配色（实心主题色 + 反色图标），
-                  // 移动端不再只是一颗裸图标
-                  _mobileBarBtn(
-                    Icons.save_outlined,
-                    _save,
-                    scheme,
-                    color: scheme.onPrimary,
-                    bg: scheme.primary,
-                    tooltip: s.save,
-                  ),
-                  const SizedBox(width: 2),
-                  SizedBox(
-                    // 盒径与同排按钮一致（改造前是 28，比相邻的 26 大 2px）
-                    width: _kMobileBarBtnBox,
-                    height: _kMobileBarBtnBox,
-                    child: ScaleMenuButton<String>(
+    final ink = scheme.onSurfaceVariant;
+    final selectedId = _selectedNode?.id ?? _selectedLogicBlockId;
+    final propsHidden =
+        selectedId != null && _mobilePropsHiddenFor == selectedId;
+    Widget pill(List<Widget> children) {
+      final circular = children.length == 1;
+      final surface = MobileGlassPill(
+        height: height,
+        radius: height / 2,
+        padding: EdgeInsets.symmetric(
+          horizontal: circular ? 0 : _kMobileBarBtnPad,
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: children),
+      );
+      return circular ? SizedBox(width: height, child: surface) : surface;
+    }
+
+    final back = _mobileBarBtn(
+      Icons.arrow_back,
+      () async {
+        final nav = Navigator.of(context);
+        if (await _onWillPop()) nav.pop();
+      },
+      scheme,
+      tooltip: s.isZh ? '返回' : 'Back',
+    );
+    final history = <Widget>[
+      _mobileBarBtn(
+        Icons.undo,
+        _undoStack.isEmpty ? null : _undo,
+        scheme,
+        color: _undoStack.isEmpty ? scheme.outlineVariant : ink,
+        tooltip: s.isZh ? '撤销' : 'Undo',
+      ),
+      _mobileBarBtn(
+        Icons.redo,
+        _redoStack.isEmpty ? null : _redo,
+        scheme,
+        color: _redoStack.isEmpty ? scheme.outlineVariant : ink,
+        tooltip: s.isZh ? '重做' : 'Redo',
+      ),
+    ];
+    final tools = <Widget>[
+      _mobileBarBtn(
+        _mobileToolboxOpen ? Icons.close : Icons.add,
+        () => setState(() => _mobileToolboxOpen = !_mobileToolboxOpen),
+        scheme,
+        color: scheme.onSurface,
+        tooltip: s.isZh ? '工具箱' : 'Toolbox',
+      ),
+      // 属性卡片被收起后，用这枚图标恢复（仅当当前选中的对象正是被收起的那个）
+      if (propsHidden)
+        _mobileBarBtn(
+          Icons.tune,
+          () => setState(() => _mobilePropsHiddenFor = null),
+          scheme,
+          color: scheme.onSurface,
+          tooltip: s.isZh ? '显示属性面板' : 'Show properties',
+        ),
+      if (cfg.aiEnabled)
+        _mobileBarBtn(
+          Icons.smart_toy,
+          () => _openAiSheet(s),
+          scheme,
+          color: scheme.onSurface,
+          tooltip: s.isZh ? 'AI 助手' : 'AI Assistant',
+        ),
+      _mobileBarBtn(
+        Icons.save_outlined,
+        _save,
+        scheme,
+        color: scheme.onSurface,
+        tooltip: s.save,
+      ),
+      SizedBox(
+        width: _kMobileBarBtnBox,
+        height: _kMobileBarBtnBox,
+        child: ScaleMenuButton<String>(
                       icon: Icons.more_vert,
                       tooltip: s.isZh ? '更多操作' : 'More actions',
                       size: _kMobileBarBtnBox,
                       iconSize: 18,
                       menuWidth: 230,
                       items: [
+                        OptionItem(
+                          'arrange',
+                          s.isZh ? '整理' : 'Arrange',
+                          icon: Icons.auto_fix_high,
+                        ),
+                        OptionItem(
+                          'source',
+                          s.isZh ? '定位源' : 'Source',
+                          icon: Icons.my_location,
+                        ),
                         OptionItem(
                           'export',
                           s.isZh ? '导出配置' : 'Export Config',
@@ -11358,6 +11336,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                       ],
                       onSelected: (v) {
                         switch (v) {
+                          case 'arrange':
+                            _autoLayout();
+                            break;
+                          case 'source':
+                            _goToSource(s);
+                            break;
                           case 'export':
                             if (_nodes.isNotEmpty) _exportConfig(s);
                             break;
@@ -11383,13 +11367,25 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         }
                       },
                     ),
-                  ),
-                ],
-              ),
-            ),
+      ),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) => ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              pill([back]),
+              const SizedBox(width: _kMobileBarPillGap),
+              pill(history),
+              const SizedBox(width: _kMobileBarPillGap),
+              pill(tools),
+            ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -11397,9 +11393,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   //
   // Both bars retain 48px touch targets; narrow toolbars scroll horizontally.
   // The surface includes 2dp vertical padding around each 44dp action.
-  static const double _kMobileBarHeight = 48;
+  static const double _kMobileBarHeight = 44;
   static const double _kMobileBarBtnIcon = 18;
   static const double _kMobileBarBtnPad = 1;
+
+  /// 顶部工具栏药丸之间的间距（三颗药丸 + 两个间距在 360dp 宽屏内放得下）。
+  static const double _kMobileBarPillGap = 6;
+
+  /// 左下缩放条：次要控件，比顶部工具栏小一档（40 高、40 可点）。
+  static const double _kMobileZoomBarHeight = 40;
+  static const double _kMobileZoomBtnBox = 40;
+  static const double _kMobileZoomBtnIcon = 17;
 
   /// Minimum touch target for mobile action buttons, including overflow menus.
   static const double _kMobileBarBtnBox = 44;
@@ -11420,22 +11424,20 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     );
   }
 
-  // ?? ????????????? ??
+  // ── 移动端专用：底部左侧缩放条 ──
 
   Widget _buildMobileBottomLeftBar(ColorScheme scheme, AppStrings s) {
-    // Zoom pill size is user-configurable (editorZoomScale). Apply scale to the
-    // actual layout box (not Transform.scale) so hit targets, positioning and
-    // neighboring widgets stay correct.
+    // 缩放条大小可在设置中调节（editorZoomScale），直接放大布局盒（不用
+    // Transform.scale），点击区域与相邻元素的避让都按真实尺寸计算。
+    // 默认比顶部工具栏小一档：40 高、按钮紧贴，不再是一条 48 高的大药丸。
     final scale = _mobileZoomBarScale();
-    final height = _kMobileBarHeight * scale;
-    final iconSize = _kMobileBarBtnIcon * math.min(scale, 1.25);
-    final btnBox = _kMobileBarBtnBox * math.min(scale, 1.2);
-    final gap = 2.0 * scale;
-    final padH = _kMobileBarBtnPad + 1.0 * (scale - 1.0);
+    final height = _kMobileZoomBarHeight * scale;
+    final iconSize = _kMobileZoomBtnIcon * math.min(scale, 1.25);
+    final btnBox = _kMobileZoomBtnBox * math.min(scale, 1.2);
     return MobileGlassPill(
       height: height,
       radius: height / 2,
-      padding: EdgeInsets.symmetric(horizontal: padH, vertical: 2 * scale),
+      padding: EdgeInsets.symmetric(horizontal: 2 * scale),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -11445,25 +11447,23 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             scheme,
             iconSize: iconSize,
             box: btnBox,
-            tooltip: s.isZh ? '??' : 'Zoom out',
+            tooltip: s.isZh ? '缩小' : 'Zoom out',
           ),
-          SizedBox(width: gap),
           _mobileZoomBarBtn(
             Icons.zoom_in,
             () => _zoomTo(_currentScale + 0.15),
             scheme,
             iconSize: iconSize,
             box: btnBox,
-            tooltip: s.isZh ? '??' : 'Zoom in',
+            tooltip: s.isZh ? '放大' : 'Zoom in',
           ),
-          SizedBox(width: gap),
           _mobileZoomBarBtn(
             Icons.fit_screen_outlined,
             _zoomToFit,
             scheme,
             iconSize: iconSize,
             box: btnBox,
-            tooltip: s.isZh ? '????' : 'Fit to canvas',
+            tooltip: s.isZh ? '适应画布' : 'Fit to canvas',
           ),
         ],
       ),
@@ -11485,6 +11485,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       size: box,
       iconSize: iconSize,
       padding: EdgeInsets.zero,
+      minTarget: box,
       onTap: onTap,
     );
   }
@@ -13433,6 +13434,11 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   final _ctrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   bool _followLatest = true;
+
+  /// 用户手指正在拖动 / 甩动对话列表：此时绝不自动跳到底部。
+  /// （jumpTo 会让 ScrollPosition 回到 idle，直接打断用户的拖动 ——
+  /// 这就是「模型输出时对话界面滑不动」的原因。）
+  bool _userScrolling = false;
   bool _scrollScheduled = false;
   final List<
     ({
@@ -14955,7 +14961,12 @@ Available actions: __TOOLS__''';
     _scrollScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollScheduled = false;
-      if (!mounted || !_scrollCtrl.hasClients || !_followLatest) return;
+      if (!mounted ||
+          !_scrollCtrl.hasClients ||
+          !_followLatest ||
+          _userScrolling) {
+        return;
+      }
       _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
     });
   }
@@ -16812,18 +16823,25 @@ Available actions: __TOOLS__''';
                   // Only follow new content when the user is already at the
                   // bottom. A content-size change while the user is reading
                   // older messages must never yank the viewport back down.
-                  if (_followLatest) _scrollToBottom();
+                  if (_followLatest && !_userScrolling) _scrollToBottom();
                   return false;
                 },
                 child: NotificationListener<ScrollNotification>(
                   onNotification: (notification) {
-                    if (notification is ScrollUpdateNotification &&
+                    if (notification.depth != 0) return false;
+                    if (notification is ScrollStartNotification &&
                         notification.dragDetails != null) {
-                      _followLatest = notification.metrics.extentAfter < 40;
-                    } else if (notification is UserScrollNotification &&
-                        notification.direction != ScrollDirection.idle) {
+                      // 手指一按下就停止跟随，整个拖动 / 甩动期间都不自动滚动。
+                      _userScrolling = true;
                       _followLatest = false;
+                    } else if (notification is UserScrollNotification) {
+                      if (notification.direction != ScrollDirection.idle) {
+                        _userScrolling = true;
+                        _followLatest = false;
+                      }
                     } else if (notification is ScrollEndNotification) {
+                      // 停稳后：停在底部附近才恢复跟随最新输出。
+                      _userScrolling = false;
                       _followLatest = notification.metrics.extentAfter < 40;
                     }
                     return false;
@@ -18236,9 +18254,12 @@ Available actions: __TOOLS__''';
     // 移动端正文与气泡整体放大一档：12px 正文 + 28px 头像在手机上偏小，
     // 中文长段落读起来吃力（桌面端维持原尺寸，观感逐像素不变）。
     final mobile = widget.mobileSheet;
-    final messageStyle =
-        Theme.of(context).textTheme.bodyMedium ?? const TextStyle(fontSize: 14);
-    final fs = messageStyle.fontSize ?? 14.0;
+    // 正文基准固定为移动端 13 / 桌面端 12（原先取 bodyMedium = 14，
+    // 用户反馈「AI 输出的字太大」）；系统字号缩放仍由 MediaQuery 生效。
+    final fs = isMobilePlatform ? 13.0 : 12.0;
+    final messageStyle = (Theme.of(context).textTheme.bodyMedium ??
+            const TextStyle())
+        .copyWith(fontSize: fs);
     const avatarR = 14.0;
     // 头像列宽（直径 + 与气泡的 8px 间隙），同组后续消息用它占位。
     final avatarSlot = mobile ? 0.0 : avatarR * 2 + 8;
@@ -18460,7 +18481,7 @@ Available actions: __TOOLS__''';
       // Markdown，字号全写死 12 时手机上正文偏小，而标题比它大 2~4px 又显得
       // 层级过陡。这里改成相对基准，两端层级比例一致。
       // 该值只依赖 isMobilePlatform（进程内恒定），因此不必进缓存键。
-      final fs = body.fontSize ?? 14.0;
+      final fs = isMobilePlatform ? 13.0 : 12.0;
       _mdStyle = MarkdownStyleSheet(
         p: body.copyWith(fontSize: fs, color: scheme.onSurface, height: 1.5),
         h1: body.copyWith(

@@ -27,6 +27,20 @@ export 'mobile_top_bar.dart' show MobileActionGroupBreak;
 ///
 /// [searchChild] 为 null 时不启用搜索层（如配置库、队列页）。
 /// ═══════════════════════════════════════════════════════════════════════════
+/// 单图标操作（可能包了一层 Semantics / KeyedSubtree）→ 静止时是 44 正圆药丸。
+bool _isRoundAction(Widget action) {
+  var current = action;
+  while (true) {
+    if (current is Semantics && current.child != null) {
+      current = current.child!;
+    } else if (current is KeyedSubtree) {
+      current = current.child;
+    } else {
+      return current is MobileGlassPillAction || current is PopupMenuButton;
+    }
+  }
+}
+
 class MobilePillTopBar extends StatefulWidget {
   /// 左标题药丸内容（文字 / 多选计数行等）
   final Widget title;
@@ -158,14 +172,21 @@ class _MobilePillTopBarState extends State<MobilePillTopBar> {
 
     // A fading BackdropFilter samples its own saveLayer and can flash black.
     // Fade a lightweight painted plate instead; restore live glass at rest.
-    Widget flatPill(Widget child, double padding) => SizedBox(
+    // 渐隐替身的底色必须贴近静止时的清透玻璃（低浓度中性色），
+    // 否则切换瞬间会从玻璃「跳」成一块不透明的深灰（用户看到的「黑一下」）。
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final plateColor = dark
+        ? const Color(0xFF1A1A1A).withValues(alpha: 0.42)
+        : const Color(0xFFFAFAFA).withValues(alpha: 0.55);
+    Widget flatPill(Widget child, double padding, {double? width}) => SizedBox(
       height: height,
+      width: width,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHigh,
+          color: plateColor,
           borderRadius: BorderRadius.circular(height / 2),
           border: Border.all(
-            color: Colors.white.withValues(alpha: 0.12),
+            color: Colors.white.withValues(alpha: dark ? 0.18 : 0.22),
             width: 0.7,
           ),
         ),
@@ -195,16 +216,32 @@ class _MobilePillTopBarState extends State<MobilePillTopBar> {
                   availableWidth - MobileUi.pillHeight * 2 - MobileUi.pillGap,
                 ),
               ),
-              child: flatPill(
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  primary: false,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: widget.actions,
-                  ),
+              // 与静止态同样按功能分组成多颗药丸，渐隐时形状不跳变。
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                primary: false,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final (i, group)
+                        in mobileActionGroups(widget.actions).indexed) ...[
+                      if (i > 0) const SizedBox(width: MobileUi.pillGap),
+                      group.length == 1 && _isRoundAction(group.single)
+                          ? flatPill(
+                              group.single,
+                              0,
+                              width: MobileUi.pillHeight,
+                            )
+                          : flatPill(
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: group,
+                              ),
+                              MobileUi.actionsPillPadH,
+                            ),
+                    ],
+                  ],
                 ),
-                MobileUi.actionsPillPadH,
               ),
             ),
           ],

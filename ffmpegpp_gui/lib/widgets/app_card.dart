@@ -401,11 +401,41 @@ class _AppCardState extends State<AppCard> {
           ),
           child: body,
         );
-        core = ClipRRect(
-          borderRadius: br,
-          child: blur <= 0
-              ? painted
-              : BackdropFilter(filter: cachedGlassBlur(blur), child: painted),
+        // 性能：设了壁纸时复用进程级「预模糊壁纸」开窗（一次 drawImageRect），
+        // 滚动中不再每卡每帧跑一次实时 BackdropFilter；预模糊图未就绪 /
+        // 无壁纸时才回退实时模糊。
+        final win = WallpaperWindowScope.maybeOf(context);
+        core = ValueListenableBuilder<WallpaperWindow?>(
+          valueListenable: win ?? _noWindow,
+          child: painted,
+          builder: (ctx, w, painted) {
+            final pre = w?.blurred;
+            if (w != null && pre != null && blur > 0) {
+              return ClipRRect(
+                borderRadius: br,
+                child: CustomPaint(
+                  painter: _WallpaperWindowPainter(
+                    image: w.image,
+                    blurred: pre,
+                    screen: w.screen,
+                    overlay: w.overlayColor,
+                    sigma: blur,
+                    borderRadius: br,
+                  ),
+                  child: painted,
+                ),
+              );
+            }
+            return ClipRRect(
+              borderRadius: br,
+              child: blur <= 0
+                  ? painted!
+                  : BackdropFilter(
+                      filter: cachedGlassBlur(blur),
+                      child: painted!,
+                    ),
+            );
+          },
         );
       } else {
         // Mobile blur / frosted cards: matte smoke glass for readability & perf.

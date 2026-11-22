@@ -75,7 +75,16 @@ void main() {
     tester,
   ) async {
     await openEditor(tester);
-    for (final label in ['Back', 'Zoom out', 'Zoom in', 'Fit to canvas']) {
+    // 顶部工具栏保持 44；左下缩放条是次要的紧凑药丸，40 可点。
+    const minTargets = {
+      'Back': 44.0,
+      'Undo': 44.0,
+      'Toolbox': 44.0,
+      'Zoom out': 40.0,
+      'Zoom in': 40.0,
+      'Fit to canvas': 40.0,
+    };
+    for (final MapEntry(key: label, value: minTarget) in minTargets.entries) {
       final action = find.byWidgetPredicate(
         (widget) => widget is MobileGlassPillAction && widget.tooltip == label,
       );
@@ -83,8 +92,8 @@ void main() {
       for (final element in action.evaluate()) {
         final target = find.byWidget(element.widget);
         final size = tester.getSize(target);
-        expect(size.width, greaterThanOrEqualTo(44), reason: label);
-        expect(size.height, greaterThanOrEqualTo(44), reason: label);
+        expect(size.width, greaterThanOrEqualTo(minTarget), reason: label);
+        expect(size.height, greaterThanOrEqualTo(minTarget), reason: label);
         expect(
           find.ancestor(of: target, matching: find.byType(MobileGlassPill)),
           findsOneWidget,
@@ -102,6 +111,11 @@ void main() {
       viewer.transformationController!.value.getMaxScaleOnAxis(),
       greaterThan(before),
     );
+    // 三颗药丸在 390dp 宽屏内一行放下，无需横向滚动。
+    final back = tester.getRect(find.byTooltip('Back'));
+    final more = tester.getRect(find.byTooltip('More actions'));
+    expect(back.left, greaterThanOrEqualTo(0));
+    expect(more.right, lessThanOrEqualTo(390));
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });

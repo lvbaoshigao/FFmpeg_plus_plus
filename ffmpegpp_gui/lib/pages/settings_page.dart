@@ -2419,14 +2419,21 @@ class _SettingsPageState extends State<SettingsPage> {
 /// 无玻璃光效，仅简洁的圆角 + 细边框 + 弱阴影，清晰易读。
 /// 桌面端：保持原有玻璃效果（liquid/blur/none）与透明度。
 /// MIUI 风格行首图标块：圆角方底 + 主题色图标，用于移动端一级菜单设置行。
+// 移动端：中性图标块（不混入莫奈动态色），与液态玻璃卡片同一中性体系。
 Widget _miIcon(ColorScheme scheme, IconData icon) => Container(
   width: 34,
   height: 34,
   decoration: BoxDecoration(
-    color: scheme.primary.withAlpha(0x28),
+    color: isMobilePlatform
+        ? scheme.onSurface.withAlpha(0x14)
+        : scheme.primary.withAlpha(0x28),
     borderRadius: BorderRadius.circular(10),
   ),
-  child: Icon(icon, size: 19, color: scheme.primary),
+  child: Icon(
+    icon,
+    size: 19,
+    color: isMobilePlatform ? scheme.onSurface : scheme.primary,
+  ),
 );
 
 /// 设置页分组卡片外壳 —— 所有分组卡（设置行 / AI·MCP 卡 / 各设置卡）

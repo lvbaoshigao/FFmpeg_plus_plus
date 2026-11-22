@@ -83,9 +83,10 @@ class AppLiquidTabBar extends StatelessWidget {
       (state) => state?.config.selectionIndicatorStyle ?? 'theme',
     );
     final effectiveStyle = _tabStyleOf(context, style);
-    // Mobile uses one backdrop and one content row for every indicator style.
-    if (!isMobilePlatform &&
-        indicatorStyle == 'liquid' &&
+    // 「液态」遮罩：桌面 / 移动端都用 hosted LiquidGlassTabBar 的折射水滴
+    // （按住放大、可拖动、松手形变归位）。大字号 / 减少动态 / 高对比度时
+    // 退回下方静态选中片，保证可读与无障碍。
+    if (indicatorStyle == 'liquid' &&
         MediaQuery.textScalerOf(context).scale(10.5) <= 12 &&
         !MediaQuery.disableAnimationsOf(context) &&
         !MediaQuery.highContrastOf(context)) {
@@ -95,7 +96,12 @@ class AppLiquidTabBar extends StatelessWidget {
           currentIndex: currentIndex,
           onTap: onTap,
           onTapIntercept: onTapIntercept,
-          selectedColor: selectedColor ?? theme.colorScheme.primary,
+          // 移动端选中图标用中性前景色，不混入莫奈动态色。
+          selectedColor:
+              selectedColor ??
+              (isMobilePlatform
+                  ? theme.colorScheme.onSurface
+                  : theme.colorScheme.primary),
           unselectedColor:
               unselectedColor ?? theme.colorScheme.onSurfaceVariant,
           style: effectiveStyle,
@@ -222,7 +228,8 @@ class _StyledAppTabBarState extends State<_StyledAppTabBar> {
     );
     final radius = style.barHeight / 2;
     final mobile = isMobilePlatform;
-    final neutralTrack = mobile && widget.indicatorStyle == 'liquid';
+    // 移动端底栏轨道一律去饱和：不让莫奈动态色混进玻璃。
+    final neutralTrack = mobile;
     final trackTint = look?.tint ?? scheme.surfaceContainerHigh;
     final rtl = Directionality.of(context) == TextDirection.rtl;
     final track = DecoratedBox(

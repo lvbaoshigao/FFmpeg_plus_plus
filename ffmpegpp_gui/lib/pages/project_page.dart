@@ -725,20 +725,42 @@ class ProjectPageState extends State<ProjectPage> {
     }
 
     if (state.videos.isEmpty && state.containers.isEmpty) {
+      // 移动端：提示文字垫一块中性半透明底（无实时模糊，零额外开销），
+      // 亮壁纸 / 暗壁纸上都能看清（用户反馈「空状态提示在浅色壁纸上看不清」）。
+      final dark = scheme.brightness == Brightness.dark;
+      Widget plate(Widget child) => !isMobilePlatform
+          ? child
+          : DecoratedBox(
+              decoration: BoxDecoration(
+                color: (dark ? const Color(0xFF1A1A1A) : const Color(0xFFFAFAFA))
+                    .withValues(alpha: dark ? 0.72 : 0.80),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: dark ? 0.14 : 0.40),
+                  width: 0.7,
+                ),
+              ),
+              child: child,
+            );
       return Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
           child: SingleChildScrollView(
-            child: Padding(
+            padding: isMobilePlatform
+                ? const EdgeInsets.symmetric(horizontal: 24)
+                : EdgeInsets.zero,
+            child: plate(
+              Padding(
               padding: const EdgeInsets.all(28),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // 用户要求：空状态只保留媒体图标，不要主题色矩形底/描边。
+                  // 移动端图标用中性前景色，不混入莫奈动态色。
                   Icon(
                     Icons.movie_creation_outlined,
                     size: 56,
-                    color: scheme.primary,
+                    color: isMobilePlatform ? scheme.onSurface : scheme.primary,
                   ),
                   const SizedBox(height: 24),
                   Text(
@@ -756,9 +778,9 @@ class ProjectPageState extends State<ProjectPage> {
                               : 'Tap + at the top right to add media')
                         : s.clickAdd,
                     textAlign: TextAlign.center,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodyMedium?.copyWith(color: clr),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: isMobilePlatform ? scheme.onSurface : clr,
+                    ),
                   ),
                   if (!isMobilePlatform) ...[
                     const SizedBox(height: 8),
@@ -782,6 +804,7 @@ class ProjectPageState extends State<ProjectPage> {
                   ],
                 ],
               ),
+            ),
             ),
           ),
         ),

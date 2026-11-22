@@ -217,12 +217,38 @@ void main() {
     expect(taps, 1);
   });
 
+  testWidgets('mobile liquid indicator keeps the hosted droplet bar', (
+    tester,
+  ) async {
+    state.config
+      ..navStyle = 'liquid'
+      ..selectionIndicatorStyle = 'liquid';
+    await tester.pumpWidget(
+      _host(
+        state,
+        SizedBox(
+          width: 320,
+          child: AppLiquidTabBar(
+            currentIndex: 0,
+            onTap: (_) {},
+            items: const [
+              LiquidGlassTabItem(icon: Icon(Icons.folder), label: 'Projects'),
+              LiquidGlassTabItem(icon: Icon(Icons.list), label: 'Queue'),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(find.byType(LiquidGlassTabBar), findsOneWidget);
+    expect(find.byKey(const ValueKey('app-tab-selection')), findsNothing);
+  });
+
   testWidgets(
-    'mobile liquid tabs have one selection surface and stable tap targets',
+    'mobile theme tabs have one selection surface and stable tap targets',
     (tester) async {
       state.config
         ..navStyle = 'liquid'
-        ..selectionIndicatorStyle = 'liquid';
+        ..selectionIndicatorStyle = 'theme';
       const items = [
         LiquidGlassTabItem(icon: Icon(Icons.folder), label: 'Projects'),
         LiquidGlassTabItem(icon: Icon(Icons.list), label: 'Queue'),

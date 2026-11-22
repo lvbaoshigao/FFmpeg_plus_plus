@@ -184,12 +184,12 @@ void main() {
     );
   });
 
-  testWidgets('liquid mobile tab track stays neutral with a purple theme', (
+  testWidgets('theme mobile tab track stays neutral with a purple theme', (
     tester,
   ) async {
     state.config
       ..navStyle = 'theme'
-      ..selectionIndicatorStyle = 'liquid'
+      ..selectionIndicatorStyle = 'theme'
       ..themeColor = Colors.purple.toARGB32()
       ..glassFollowTheme = true;
     await tester.pumpWidget(

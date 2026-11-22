@@ -73,6 +73,10 @@ class MobileGlassPillAction extends StatelessWidget {
   /// 覆盖默认内边距（默认移动端 h1/v2，桌面端 h2/v2）
   final EdgeInsetsGeometry? padding;
 
+  /// 移动端最小可点尺寸（默认 [MobileUi.pillHeight] = 44）。
+  /// 只有次要的紧凑药丸（如节点编辑器缩放条）才传更小的值，且不低于 40。
+  final double minTarget;
+
   const MobileGlassPillAction({
     super.key,
     required this.icon,
@@ -83,6 +87,7 @@ class MobileGlassPillAction extends StatelessWidget {
     this.size = MobileUi.actionButtonSize,
     this.iconSize = MobileUi.actionIconSize,
     this.padding,
+    this.minTarget = MobileUi.pillHeight,
   });
 
   @override
@@ -90,23 +95,26 @@ class MobileGlassPillAction extends StatelessWidget {
     final mobile = isMobilePlatform;
     final pad =
         padding ?? EdgeInsets.symmetric(horizontal: mobile ? 1 : 2, vertical: 2);
-    final decoration = BoxDecoration(color: bg, shape: BoxShape.circle);
+    // 移动端玻璃药丸里不再画主题色（莫奈）实心圆：圆盘既会溢出药丸内边距，
+    // 又让动态色混进中性玻璃。图标统一用中性前景色，层级靠分组表达。
+    final Color? disk = mobile ? null : bg;
+    final Color? glyphColor = mobile && bg != null
+        ? Theme.of(context).colorScheme.onSurface
+        : color;
+    final decoration = BoxDecoration(color: disk, shape: BoxShape.circle);
     final glyph = SizedBox.square(
       dimension: size,
-      child: Icon(icon, size: iconSize, color: color),
+      child: Icon(icon, size: iconSize, color: glyphColor),
     );
     Widget face = Padding(
       padding: pad,
-      // Paint colored disks on the same Material as the press and focus ink.
-      child: mobile && bg != null
-          ? Ink(decoration: decoration, child: glyph)
-          : DecoratedBox(decoration: decoration, child: glyph),
+      child: DecoratedBox(decoration: decoration, child: glyph),
     );
     if (mobile) {
       face = ConstrainedBox(
-        constraints: const BoxConstraints(
-          minWidth: MobileUi.pillHeight,
-          minHeight: MobileUi.pillHeight,
+        constraints: BoxConstraints(
+          minWidth: minTarget,
+          minHeight: minTarget,
         ),
         child: Align(widthFactor: 1, heightFactor: 1, child: face),
       );
