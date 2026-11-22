@@ -348,19 +348,61 @@ class _AppCardState extends State<AppCard> {
 
     Widget core;
     if (isMobilePlatform && !solidStyle) {
-      // Mobile cards share one matte smoke-glass treatment. Keep the existing
-      // opacity / clarity / blur controls, while ignoring decorative liquid
-      // highlights and theme gradients on this content-heavy surface.
-      core = MobileSmokeGlassSurface(
-        borderRadius: br,
-        padding: widget.onTap == null ? widget.padding : null,
-        sigma: tuning.blur,
-        opacity: op,
-        tintScale: tScale,
-        edge: tuning.edge,
-        themeAccent: key.useThemeColor && key.follow ? accent : null,
-        child: inner,
-      );
+      final padding = widget.onTap == null ? widget.padding : null;
+      if (style == SurfaceStyle.liquid && !key.frosted) {
+        // Mobile "liquid" cards: real glass highlights/tints without per-card GPU
+        // shader groups. Kept lighter than desktop refraction paths for scroll perf.
+        final blur = mobileGlassSigma(tuning.blur, max: 10.0);
+        final alphaTop = ((isDark ? 74.0 : 96.0) * op * tScale).round().clamp(0, 255);
+        final alphaBot = ((isDark ? 38.0 : 56.0) * op * tScale).round().clamp(0, 255);
+        final top = glassBase.withAlpha(alphaTop);
+        final bot = glassBase.withAlpha(alphaBot);
+        final body = Container(
+          padding: padding,
+          decoration: BoxDecoration(
+            borderRadius: br,
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [top, Color.lerp(top, bot, 0.55)!, bot],
+              stops: const [0.0, 0.55, 1.0],
+            ),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: edgeLiquid.alpha),
+              width: edgeLiquid.width,
+            ),
+          ),
+          child: inner,
+        );
+        final painted = CustomPaint(
+          foregroundPainter: LiquidGlassPainter(
+            borderRadius: br,
+            opacity: op,
+            highlight: tuning.highlight,
+            lightPos: tuning.lightPos,
+            edge: tuning.edge,
+          ),
+          child: body,
+        );
+        core = ClipRRect(
+          borderRadius: br,
+          child: blur <= 0
+              ? painted
+              : BackdropFilter(filter: cachedGlassBlur(blur), child: painted),
+        );
+      } else {
+        // Mobile blur / frosted cards: matte smoke glass for readability & perf.
+        core = MobileSmokeGlassSurface(
+          borderRadius: br,
+          padding: padding,
+          sigma: mobileGlassSigma(tuning.blur, max: 10.0),
+          opacity: op,
+          tintScale: tScale,
+          edge: tuning.edge,
+          themeAccent: key.useThemeColor && key.follow ? accent : null,
+          child: inner,
+        );
+      }
     } else if (solidStyle) {
       // 纯色卡片：强制完全不透明（255）。此前 alpha 跟随 cardOpacity（保底 ~88%），
       // 用户反馈「纯色模式下卡片仍然有透明度」——纯色语义就是实心，不再透底。

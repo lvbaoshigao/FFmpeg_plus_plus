@@ -4593,7 +4593,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         // 文字显示，不要撞到药丸里」）。
                         Positioned(
                           right: 12,
-                          bottom: mobileSafeBottom + 8,
+                          bottom:
+                              mobileSafeBottom +
+                              8 +
+                              math.max(
+                                0.0,
+                                _kMobileBarHeight * (_mobileZoomBarScale() - 1.0),
+                              ),
                           child: _buildMobileFileInfo(scheme, s),
                         ),
                         // 逻辑块框选提示条（用具箱点按「循环」后出现，引导用户手指框选）
@@ -11392,7 +11398,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   // Both bars retain 48px touch targets; narrow toolbars scroll horizontally.
   // The surface includes 2dp vertical padding around each 44dp action.
   static const double _kMobileBarHeight = 48;
-  static const double _kMobileBarRadius = _kMobileBarHeight / 2;
   static const double _kMobileBarBtnIcon = 18;
   static const double _kMobileBarBtnPad = 1;
 
@@ -11415,54 +11420,72 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     );
   }
 
-  // ── 移动端专用：底部左侧缩放条 ──
+  // ?? ????????????? ??
 
   Widget _buildMobileBottomLeftBar(ColorScheme scheme, AppStrings s) {
-    // 放大镜药丸大小可在设置中调节（editorZoomScale）。
-    // 药丸总高 / 圆角 / 按钮盒与顶部工具栏共用 _kMobileBar* 常量（见上）。
-    // Clamp visual scaling so controls stay clear of the right corner.
+    // Zoom pill size is user-configurable (editorZoomScale). Apply scale to the
+    // actual layout box (not Transform.scale) so hit targets, positioning and
+    // neighboring widgets stay correct.
     final scale = _mobileZoomBarScale();
-    return Transform.scale(
-      scale: scale,
-      alignment: Alignment.bottomLeft,
-      child: MobileGlassPill(
-        height: _kMobileBarHeight,
-        radius: _kMobileBarRadius,
-        padding: const EdgeInsets.symmetric(
-          horizontal: _kMobileBarBtnPad,
-          vertical: 2,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 图标 20 + 内边距 3 ⇒ 按钮盒 26，与顶部工具栏对齐
-            _mobileBarBtn(
-              Icons.zoom_out,
-              () => _zoomTo(_currentScale - 0.15),
-              scheme,
-              size: _kMobileBarBtnIcon,
-              tooltip: s.isZh ? '缩小' : 'Zoom out',
-            ),
-            const SizedBox(width: 2),
-            _mobileBarBtn(
-              Icons.zoom_in,
-              () => _zoomTo(_currentScale + 0.15),
-              scheme,
-              size: _kMobileBarBtnIcon,
-              tooltip: s.isZh ? '放大' : 'Zoom in',
-            ),
-            const SizedBox(width: 2),
-            // 一键适应画布（补齐与桌面端一致的缩放能力）
-            _mobileBarBtn(
-              Icons.fit_screen_outlined,
-              _zoomToFit,
-              scheme,
-              size: _kMobileBarBtnIcon,
-              tooltip: s.isZh ? '适应画布' : 'Fit to canvas',
-            ),
-          ],
-        ),
+    final height = _kMobileBarHeight * scale;
+    final iconSize = _kMobileBarBtnIcon * math.min(scale, 1.25);
+    final btnBox = _kMobileBarBtnBox * math.min(scale, 1.2);
+    final gap = 2.0 * scale;
+    final padH = _kMobileBarBtnPad + 1.0 * (scale - 1.0);
+    return MobileGlassPill(
+      height: height,
+      radius: height / 2,
+      padding: EdgeInsets.symmetric(horizontal: padH, vertical: 2 * scale),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _mobileZoomBarBtn(
+            Icons.zoom_out,
+            () => _zoomTo(_currentScale - 0.15),
+            scheme,
+            iconSize: iconSize,
+            box: btnBox,
+            tooltip: s.isZh ? '??' : 'Zoom out',
+          ),
+          SizedBox(width: gap),
+          _mobileZoomBarBtn(
+            Icons.zoom_in,
+            () => _zoomTo(_currentScale + 0.15),
+            scheme,
+            iconSize: iconSize,
+            box: btnBox,
+            tooltip: s.isZh ? '??' : 'Zoom in',
+          ),
+          SizedBox(width: gap),
+          _mobileZoomBarBtn(
+            Icons.fit_screen_outlined,
+            _zoomToFit,
+            scheme,
+            iconSize: iconSize,
+            box: btnBox,
+            tooltip: s.isZh ? '????' : 'Fit to canvas',
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _mobileZoomBarBtn(
+    IconData icon,
+    VoidCallback? onTap,
+    ColorScheme scheme, {
+    required double iconSize,
+    required double box,
+    required String tooltip,
+  }) {
+    return MobileGlassPillAction(
+      icon: icon,
+      tooltip: tooltip,
+      color: scheme.onSurfaceVariant,
+      size: box,
+      iconSize: iconSize,
+      padding: EdgeInsets.zero,
+      onTap: onTap,
     );
   }
 

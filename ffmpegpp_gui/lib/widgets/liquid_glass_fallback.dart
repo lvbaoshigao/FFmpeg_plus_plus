@@ -643,85 +643,94 @@ class MobileGlassSurface extends StatelessWidget {
     final dark = brightness == Brightness.dark;
     final highContrast = MediaQuery.highContrastOf(context);
     final reduced = mobileGlassEffectsReducedOf(context);
-    // 保持纯中性灰（不带色相，避免「灰色夹杂主题色」）：提亮的烟灰在纯白
-    // 背景上需要 0.80 浓度才能让文字达到 4.5:1，反而更不通透。
     final neutral = dark
         ? AppNeutralSurface.darkBackground
-        : const Color(0xFFFAFAFA);
-    final gpu = liquid && gpuGlassEnabledOf(context);
-    // 三档：清透（真实折射）/ 磨砂（blur 或无折射降级）/ 实色（高对比、减少
-    // 动态）。旧实现 0.66~0.94 的浓度把背景整块盖住，药丸看起来是实心灰块。
-    // 磨砂下限按「最坏背景」算：深色在纯白上 ≥0.68、浅色在纯黑上 ≥0.53
-    // 才能保证 onSurface 文字 4.5:1（mobile_glass_redesign_test 校验）。
-    final base = gpu ? (dark ? 0.20 : 0.26) : (dark ? 0.72 : 0.60);
-    final density = highContrast
-        ? 1.0
-        : reduced
-        ? 0.88
-        : (base +
-                  (opacity.clamp(0.0, 1.0) - 0.7) * 0.12 +
-                  (tuning.tintScale - 1) * 0.07)
-              .clamp(
-                gpu ? 0.12 : (dark ? 0.70 : 0.58),
-                gpu ? 0.40 : (dark ? 0.82 : 0.80),
-              );
-    final tint =
-        (accent == null || highContrast
-                ? neutral
-                : Color.lerp(neutral, accent, 0.10)!)
-            .withValues(alpha: density);
-    final shadow = liquid && !reduced
-        ? BoxShadow(
-            // Floating control：0 8px 24px rgba(19,37,41,0.12)；深色场景加深。
-            color: dark
-                ? Colors.black.withValues(alpha: 0.24)
-                : const Color(0xFF132529).withValues(alpha: 0.12),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
-          )
-        : null;
-    if (gpu) {
-      return CustomPaint(
-        foregroundPainter: _MobileGlassRimPainter(
-          borderRadius: borderRadius,
-          brightness: brightness,
-          highContrast: highContrast,
-          lighting: true,
-          tuning: tuning,
-          opacity: opacity,
-        ),
-        child: OCLiquidGlassGroup(
-          settings: liquidGlassSettingsFor(tuning, soft: true),
-          child: OCLiquidGlass(
-            color: tint,
-            shadow: shadow,
-            borderRadius: borderRadius.topLeft.x,
-            // 清透档浓度很低：亮背景上浅色字、暗背景上深色字都可能看不清，
-            // 给文字和图标加一圈很淡的反色光晕兜底（磨砂 / 实色档不需要）。
-            child: DefaultTextStyle.merge(
-              style: TextStyle(shadows: clearGlassForegroundShadows(brightness)),
-              child: IconTheme.merge(
-                data: IconThemeData(
-                  shadows: clearGlassForegroundShadows(brightness),
-                ),
-                child: child,
-              ),
-            ),
+        : const Color(0xFFF8FAFA);
+    final baseTint = accent == null || highContrast
+        ? neutral
+        : Color.lerp(neutral, accent, 0.14)!;
+    final op = opacity.clamp(0.0, 1.0);
+    final t = tuning.tintScale.clamp(0.0, 1.8);
+
+    if (!liquid) {
+      // Frosted/blur surface: readable matte blur without liquid highlights.
+      final density = (dark ? 0.72 : 0.64) * op * (0.85 + t * 0.12);
+      final alpha = density.clamp(dark ? 0.58 : 0.52, dark ? 0.86 : 0.82);
+      return LiquidGlassBackdrop(
+        borderRadius: borderRadius,
+        sigma: mobileGlassSigma(tuning.blur, max: 10.0),
+        mobileMaxSigma: 10.0,
+        tuning: tuning,
+        opacity: op,
+        shadow: null,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: baseTint.withValues(alpha: alpha),
+            borderRadius: borderRadius,
           ),
+          child: child,
         ),
       );
     }
-    return LiquidGlassBackdrop(
-      borderRadius: borderRadius,
-      sigma: tuning.blur * 0.75,
-      mobileMaxSigma: kMobileFloatingGlassMaxSigma,
-      tuning: tuning,
-      opacity: opacity,
-      shadow: shadow,
-      child: DecoratedBox(
-        decoration: BoxDecoration(color: tint, borderRadius: borderRadius),
-        child: child,
+
+    // Liquid surface: blur backdrop + translucent gradient tint + highlight
+    // painter. Avoid per-surface GPU shader groups on mobile for smoothness.
+    final topA = ((dark ? 86 : 118) * op * (0.75 + t * 0.18))
+        .round()
+        .clamp(0, 255);
+    final midA = ((dark ? 52 : 74) * op * (0.75 + t * 0.18))
+        .round()
+        .clamp(0, 255);
+    final botA = ((dark ? 34 : 52) * op * (0.75 + t * 0.18))
+        .round()
+        .clamp(0, 255);
+    final top = baseTint.withAlpha(topA);
+    final mid = baseTint.withAlpha(midA);
+    final bot = baseTint.withAlpha(botA);
+    final shadow = reduced || highContrast
+        ? null
+        : BoxShadow(
+            color: dark
+                ? Colors.black.withValues(alpha: 0.18)
+                : const Color(0xFF132529).withValues(alpha: 0.10),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          );
+    final sigma = reduced ? 0.0 : mobileGlassSigma(tuning.blur, max: 10.0);
+    final body = DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: borderRadius,
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [top, mid, bot],
+          stops: const [0.0, 0.52, 1.0],
+        ),
+        border: Border.all(
+          color: Colors.white.withValues(
+            alpha: (dark ? 0.18 : 0.22) * tuning.edge.clamp(0.0, 2.0) * op,
+          ),
+          width: 0.7,
+        ),
+        boxShadow: shadow == null ? null : [shadow],
       ),
+      child: child,
+    );
+    final painted = CustomPaint(
+      foregroundPainter: LiquidGlassPainter(
+        borderRadius: borderRadius,
+        opacity: op,
+        highlight: reduced ? tuning.highlight * 0.45 : tuning.highlight,
+        lightPos: tuning.lightPos,
+        edge: reduced ? tuning.edge * 0.6 : tuning.edge,
+      ),
+      child: body,
+    );
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: sigma <= 0
+          ? painted
+          : BackdropFilter(filter: cachedGlassBlur(sigma), child: painted),
     );
   }
 }
