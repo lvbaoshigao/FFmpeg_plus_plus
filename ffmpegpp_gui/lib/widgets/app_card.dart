@@ -213,6 +213,10 @@ class AppCard extends StatefulWidget {
   /// 可选点击回调（卡片整体可点，如配置库条目）
   final VoidCallback? onTap;
 
+  /// Isolate expensive, stable content without caching the live glass shell.
+  /// Opt in only after profiling: an extra layer can itself consume memory.
+  final bool isolateContent;
+
   const AppCard({
     super.key,
     required this.child,
@@ -221,6 +225,7 @@ class AppCard extends StatefulWidget {
     this.padding,
     this.margin,
     this.onTap,
+    this.isolateContent = false,
   });
 
   @override
@@ -332,16 +337,19 @@ class _AppCardState extends State<AppCard> {
     // 内部 ListTile/SwitchListTile 的水波纹与选中底色必须画在「卡片之上」
     // 才会可见（否则画在页面 Material 上被卡片背景遮住，并触发
     // Flutter「ListTile background may be invisible」错误）。
+    final content = widget.isolateContent
+        ? RepaintBoundary(child: widget.child)
+        : widget.child;
     final inner = Material(
       type: MaterialType.transparency,
       child: widget.onTap == null
-          ? widget.child
+          ? content
           : InkWell(
               onTap: widget.onTap,
               borderRadius: br,
               child: Padding(
                 padding: widget.padding ?? EdgeInsets.zero,
-                child: widget.child,
+                child: content,
               ),
             ),
     );

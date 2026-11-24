@@ -1,7 +1,9 @@
 import 'package:ffmpegpp_gui/app.dart';
 import 'package:ffmpegpp_gui/models/models.dart';
 import 'package:ffmpegpp_gui/pages/log_page.dart';
+import 'package:ffmpegpp_gui/platform/app_platform.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
+import 'package:ffmpegpp_gui/widgets/mobile_ui.dart';
 import 'package:ffmpegpp_gui/widgets/wallpaper_background.dart';
 import 'package:ffmpegpp_gui/widgets/window_chrome.dart';
 import 'package:flutter/material.dart';
@@ -36,6 +38,26 @@ void main() {
       );
       await tester.pumpAndSettle();
     }
+
+    testWidgets('mobile logs stay below filters on narrow large-text screens', (tester) async {
+      debugIsMobilePlatformOverride = true;
+      addTearDown(() => debugIsMobilePlatformOverride = null);
+      tester.view.physicalSize = const Size(320, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      state.logEntries.add(LogEntry(timestamp: DateTime(2026), message: 'First log message', category: 'error'));
+      await tester.pumpWidget(ChangeNotifierProvider<AppState>.value(
+        value: state,
+        child: MaterialApp(builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(1.5)),
+          child: child!,
+        ), home: const LogPage(embedded: true)),
+      ));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(tester.getTopLeft(find.text('First log message')).dy,
+        greaterThanOrEqualTo(tester.getBottomLeft(find.byType(MobileSegmentedPills)).dy));
+    });
 
     testWidgets('should use only the desktop shell window chrome', (
       tester,

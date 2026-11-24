@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../theme/app_neutral_surface.dart';
-import '../theme/app_theme.dart';
 import 'liquid_glass_fallback.dart' show cachedGlassBlur;
 
 /// Semantic visual role for an action shown in a modal surface.
@@ -33,10 +32,7 @@ class AppDialogAction extends StatelessWidget {
         _secondaryBackgroundOf(context),
         colors.onSurface,
       ),
-      AppDialogActionRole.primary => (
-        AppTheme.dialogActionAccent,
-        AppTheme.dialogActionForeground,
-      ),
+      AppDialogActionRole.primary => (colors.primary, colors.onPrimary),
       AppDialogActionRole.destructive => (colors.error, colors.onError),
       AppDialogActionRole.neutral => (
         _secondaryBackgroundOf(context),
@@ -78,10 +74,7 @@ class AppDialogAction extends StatelessWidget {
         _secondaryBackgroundOf(context),
         colors.onSurface,
       ),
-      AppDialogActionRole.primary => (
-        AppTheme.dialogActionAccent,
-        AppTheme.dialogActionForeground,
-      ),
+      AppDialogActionRole.primary => (colors.primary, colors.onPrimary),
       AppDialogActionRole.destructive => (colors.error, colors.onError),
       AppDialogActionRole.neutral => (
         _secondaryBackgroundOf(context),

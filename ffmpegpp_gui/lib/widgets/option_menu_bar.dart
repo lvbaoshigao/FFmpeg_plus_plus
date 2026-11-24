@@ -79,6 +79,25 @@ final _searchSeparators = RegExp(r'[\s\-_./:（）()]');
 String _normalizeForSearch(String value) =>
     value.toLowerCase().replaceAll(_searchSeparators, '');
 
+/// 菜单面板的**有效**圆角：面板本身与列表里的选中/高亮行必须共用它，
+/// 否则「菜单 20~22、行高亮 8」两套圆角在玻璃档下会明显不一致。
+///
+/// 移动端玻璃档会把圆角抬到至少 22（液态 / 毛玻璃 / 高光三档，且非高对比）；
+/// 其余情况（桌面端、主题 / 灰色实色、高对比）保持调用方给的 base。
+double _effectiveMenuRadius(
+  BuildContext context,
+  String appearance,
+  double base,
+) {
+  final glass =
+      appearance == 'liquid' ||
+      appearance == 'frosted' ||
+      appearance == 'highlight';
+  return isMobilePlatform && glass && !MediaQuery.highContrastOf(context)
+      ? math.max(base, 22.0)
+      : base;
+}
+
 /// 浮层面板的公共外观。OptionMenuBar 与 ScaleMenuButton 共用，
 /// 保证「所有下拉/弹出菜单」视觉统一。
 ///
@@ -110,9 +129,8 @@ Widget optionMenuPanel({
   // 以下「着色玻璃菜单」调整仅作用于移动端；桌面端保持原有外观。
   final menuTint = mobile && !dark ? const Color(0xFFEFF5F2) : neutral;
   // 菜单与浮层圆角 22–28；纯色 / 高对比保持调用方给的圆角。
-  final menuRadius = mobile && glass && !highContrast
-      ? math.max(radius, 22.0)
-      : radius;
+  // 与列表行高亮圆角同一来源，见 [_effectiveMenuRadius]。
+  final menuRadius = _effectiveMenuRadius(context, appearance, radius);
   final baseSigma = liquid
       ? tunedGlassSigma(mobile ? 10 : 6, tuning)
       : tunedGlassSigma(frosted ? 8 : (highlight ? 4 : 0), tuning);
@@ -121,8 +139,7 @@ Widget optionMenuPanel({
       : mobile
       ? mobileGlassSigma(baseSigma)
       : baseSigma;
-  final useGpuGlass =
-      liveGlass && gpuGlass && !highContrast && !effectsReduced;
+  final useGpuGlass = liveGlass && gpuGlass && !highContrast && !effectsReduced;
   // 菜单比悬浮药丸更不透明（规范 Tinted glass ≈ 0.86），短标签在任意背景上
   // 都清楚；旧 liquid 0.42 / 0.50 会让背后的文字透进菜单。
   final baseFill = mobile
@@ -206,11 +223,7 @@ Widget optionMenuPanel({
   if (useGpuGlass && liquid) {
     panel = OCLiquidGlassGroup(
       settings: liquidGlassSettingsFor(tuning),
-      child: OCLiquidGlass(
-        borderRadius: menuRadius,
-        color: fill,
-        child: panel,
-      ),
+      child: OCLiquidGlass(borderRadius: menuRadius, color: fill, child: panel),
     );
   } else if (liquid && mobile) {
     if (sigma > 0) {
@@ -341,6 +354,7 @@ Widget _optionRow<T>({
   required bool selected,
   required bool highlighted,
   required VoidCallback onTap,
+  required double menuRadius,
   int? labelMaxLines = 2,
 }) {
   final scheme = Theme.of(context).colorScheme;
@@ -348,16 +362,19 @@ Widget _optionRow<T>({
   return Semantics(
     selected: selected,
     button: true,
+    // 左右 margin 由调用方（列表项）加在 InkWell 外面：高亮底色、hover 与
+    // 溅墨（InkWell）轮廓完全重合，不会出现「底色比水波窄 8px」的错位。
     child: InkWell(
-      borderRadius: BorderRadius.circular(12),
+      // 行高亮圆角与菜单面板圆角同一来源（_effectiveMenuRadius），
+      // 不再写死 8 / 12 两个互不相同的值。
+      borderRadius: BorderRadius.circular(menuRadius),
       onTap: onTap,
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
           // 现代菜单行范式（Notion / Ant / Headless）：整行微底色，不做药丸。
           // 选中靠尾部对勾 + 极淡主题色染，悬停/键盘高亮用中性微底色。
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(menuRadius),
           color: selected
               ? scheme.onSurface.withAlpha(14)
               : (highlighted
@@ -470,6 +487,7 @@ class _MenuOptionList<T> extends StatefulWidget {
     super.key,
     required this.items,
     required this.onPick,
+    required this.menuRadius,
     this.selectedIndex = -1,
     this.highlightedIndex,
     this.labelMaxLines = 2,
@@ -477,6 +495,7 @@ class _MenuOptionList<T> extends StatefulWidget {
   });
   final List<OptionItem<T>> items;
   final ValueChanged<OptionItem<T>> onPick;
+  final double menuRadius;
   final int selectedIndex;
   final int? highlightedIndex;
   final int? labelMaxLines;
@@ -712,13 +731,20 @@ class _MenuOptionListState<T> extends State<_MenuOptionList<T>> {
                     ),
                   ),
                 Expanded(
-                  child: _optionRow<T>(
-                    context: context,
-                    item: item,
-                    selected: i == widget.selectedIndex,
-                    highlighted: i == widget.highlightedIndex,
-                    labelMaxLines: widget.labelMaxLines,
-                    onTap: () => widget.onPick(item),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 1,
+                    ),
+                    child: _optionRow<T>(
+                      context: context,
+                      item: item,
+                      selected: i == widget.selectedIndex,
+                      highlighted: i == widget.highlightedIndex,
+                      menuRadius: widget.menuRadius,
+                      labelMaxLines: widget.labelMaxLines,
+                      onTap: () => widget.onPick(item),
+                    ),
                   ),
                 ),
               ],
@@ -1283,10 +1309,19 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
       maxHeight * 0.6,
       32 + 16 * AppTextScale.systemScaleOf(overlayContext),
     );
+    final appearance = MediaQuery.highContrastOf(overlayContext)
+        ? 'theme'
+        : _dropdownAppearance;
+    final menuRadius = _effectiveMenuRadius(
+      overlayContext,
+      appearance,
+      visual.menuRadius,
+    );
     final list = Builder(
       builder: (listContext) => _MenuOptionList<T>(
         key: _listKey,
         items: items,
+        menuRadius: menuRadius,
         selectedIndex: _selectedIndex(items),
         highlightedIndex: _highlightIndex,
         labelMaxLines: widget.itemLabelMaxLines,
@@ -1294,43 +1329,43 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
         onPick: _pick,
       ),
     );
-    final appearance = MediaQuery.highContrastOf(overlayContext)
-        ? 'theme'
-        : _dropdownAppearance;
     final tuning = glassTuningOf(overlayContext);
     final gpu = gpuGlassEnabledOf(overlayContext);
     final panel = ValueListenableBuilder<bool>(
       valueListenable: _ovSettled,
-      builder: (context, settled, content) => optionMenuPanel(
-        context: overlayContext,
-        scheme: scheme,
-        appearance: appearance,
-        tuning: tuning,
-        radius: visual.menuRadius,
-        gpuGlass: gpu,
-        liveGlass: settled,
-        child: content!,
-      ),
+      builder: (context, settled, content) {
+        final panel = optionMenuPanel(
+          context: overlayContext,
+          scheme: scheme,
+          appearance: appearance,
+          tuning: tuning,
+          radius: visual.menuRadius,
+          gpuGlass: gpu,
+          liveGlass: settled,
+          child: content!,
+        );
+        return settled ? panel : RepaintBoundary(child: panel);
+      },
       child: RepaintBoundary(
         key: _ovContentKey,
         child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: maxHeight),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (widget.searchable)
-              SizedBox(
-                height: searchHeight,
-                child: ClipRect(
-                  child: SingleChildScrollView(
-                    child: _buildSearchField(overlayContext, scheme),
+          constraints: BoxConstraints(maxHeight: maxHeight),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.searchable)
+                SizedBox(
+                  height: searchHeight,
+                  child: ClipRect(
+                    child: SingleChildScrollView(
+                      child: _buildSearchField(overlayContext, scheme),
+                    ),
                   ),
                 ),
-              ),
-            Flexible(child: list),
-          ],
+              Flexible(child: list),
+            ],
+          ),
         ),
-      ),
       ),
     );
     return Positioned.fill(
@@ -1800,16 +1835,19 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
     final gpu = gpuGlassEnabledOf(overlayContext);
     final panel = ValueListenableBuilder<bool>(
       valueListenable: _settled,
-      builder: (context, settled, content) => optionMenuPanel(
-        context: overlayContext,
-        scheme: scheme,
-        tuning: tuning,
-        radius: visual.menuRadius,
-        appearance: appearance,
-        gpuGlass: gpu,
-        liveGlass: settled,
-        child: content!,
-      ),
+      builder: (context, settled, content) {
+        final panel = optionMenuPanel(
+          context: overlayContext,
+          scheme: scheme,
+          tuning: tuning,
+          radius: visual.menuRadius,
+          appearance: appearance,
+          gpuGlass: gpu,
+          liveGlass: settled,
+          child: content!,
+        );
+        return settled ? panel : RepaintBoundary(child: panel);
+      },
       child: RepaintBoundary(
         key: _contentKey,
         child: ConstrainedBox(
@@ -1817,6 +1855,11 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
           child: Builder(
             builder: (context) => _MenuOptionList<T>(
               items: widget.items,
+              menuRadius: _effectiveMenuRadius(
+                overlayContext,
+                appearance,
+                visual.menuRadius,
+              ),
               highlightedIndex: _highlightIndex,
               onPick: (item) {
                 _close();

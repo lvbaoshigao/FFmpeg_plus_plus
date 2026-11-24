@@ -59,6 +59,12 @@ dependency_overrides:
   # 补丁清单与复验方法见 third_party/liquid_glass_renderer/VENDOR.md
   liquid_glass_renderer:
     path: third_party/liquid_glass_renderer
+  # 本地 vendor：上游把栏玻璃 / 静止胶囊 / 水滴镜片的颜色硬编码为 iOS 中性色，
+  # 与应用的液态玻璃主题（可跟随主题色）不一致。就地补丁：LiquidGlassTabBarStyle
+  # 新增可空 barTint / capsuleTint / lensTint，由应用注入主题色；为 null 时保持上游原色。
+  # 补丁清单与复验方法见 third_party/liquid_glass_tab_bar/VENDOR.md
+  liquid_glass_tab_bar:
+    path: third_party/liquid_glass_tab_bar
 
 dev_dependencies:
   flutter_test:

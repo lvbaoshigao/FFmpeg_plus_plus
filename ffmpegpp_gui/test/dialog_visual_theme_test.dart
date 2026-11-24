@@ -48,7 +48,7 @@ void main() {
             theme.datePickerTheme.confirmButtonStyle!.backgroundColor!.resolve(
               {},
             ),
-            AppTheme.dialogActionAccent,
+            theme.colorScheme.primary,
           );
           expect(theme.timePickerTheme.backgroundColor, dialog.backgroundColor);
           expect(theme.timePickerTheme.shape, dialog.shape);
@@ -62,20 +62,20 @@ void main() {
             theme.timePickerTheme.confirmButtonStyle!.backgroundColor!.resolve(
               {},
             ),
-            AppTheme.dialogActionAccent,
+            theme.colorScheme.primary,
           );
           final hourText =
               theme.timePickerTheme.hourMinuteTextColor! as WidgetStateColor;
           expect(
             hourText.resolve({WidgetState.selected}),
-            const Color(0xFF211A0C),
+            theme.colorScheme.onPrimary,
           );
           expect(hourText.resolve({}), theme.colorScheme.onSurface);
           final periodText =
               theme.timePickerTheme.dayPeriodTextColor! as WidgetStateColor;
           expect(
             periodText.resolve({WidgetState.selected}),
-            const Color(0xFF211A0C),
+            theme.colorScheme.onPrimary,
           );
           expect(periodText.resolve({}), theme.colorScheme.onSurfaceVariant);
         }
@@ -342,7 +342,7 @@ void main() {
     });
 
     testWidgets(
-      'keeps cancel neutral, primary warm, and destructive distinct',
+      'keeps cancel neutral, primary themed, and destructive distinct',
       (tester) async {
         final theme = AppTheme.dark();
         await tester.pumpWidget(
@@ -391,11 +391,11 @@ void main() {
         );
         expect(
           primary.style!.backgroundColor!.resolve({}),
-          AppTheme.dialogActionAccent,
+          theme.colorScheme.primary,
         );
         expect(
           primary.style!.backgroundColor!.resolve({WidgetState.disabled}),
-          isNot(AppTheme.dialogActionAccent),
+          isNot(theme.colorScheme.primary),
         );
         expect(primary.onPressed, isNull);
         expect(tester.takeException(), isNull);

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import '../theme/app_neutral_surface.dart';
 import '../theme/app_strings.dart';
 import '../theme/mobile_ui.dart';
 import 'liquid_glass_fallback.dart';
@@ -82,7 +83,7 @@ class AppLiquidTabBar extends StatelessWidget {
     final indicatorStyle = context.select<AppState?, String>(
       (state) => state?.config.selectionIndicatorStyle ?? 'theme',
     );
-    final effectiveStyle = _tabStyleOf(context, style);
+    final effectiveStyle = _themedStyleOf(context, style);
     // 「液态」遮罩：桌面 / 移动端都用 hosted LiquidGlassTabBar 的折射水滴
     // （按住放大、可拖动、松手形变归位）。大字号 / 减少动态 / 高对比度时
     // 退回下方静态选中片，保证可读与无障碍。
@@ -167,6 +168,50 @@ LiquidGlassTabBarStyle _tabStyleOf(
     bottomGap: style.bottomGap,
     iconSize: style.iconSize,
     labelStyle: style.labelStyle,
+  );
+}
+
+/// 托管水滴栏（liquid 遮罩）的主题化样式：把栏玻璃 / 静止胶囊 / 水滴镜片
+/// 的颜色接到应用的液态玻璃配色上——中性玻璃底色（AppNeutralSurface /
+/// #FAFAFA），开启「玻璃底色遵循主题色」时混入主题强调色——而不是上游
+/// 硬编码的 iOS 中性白/黑，这样底栏遮罩颜色与应用其余液态玻璃一致。
+/// 没有 AppState（纯 widget 测试等）时退回上游原色。
+LiquidGlassTabBarStyle _themedStyleOf(
+  BuildContext context,
+  LiquidGlassTabBarStyle style,
+) {
+  final base = _tabStyleOf(context, style);
+  final hasAppState = context.select<AppState?, bool>((s) => s != null);
+  if (!hasAppState) return base;
+  final scheme = Theme.of(context).colorScheme;
+  final dark = Theme.of(context).brightness == Brightness.dark;
+  final highContrast = MediaQuery.highContrastOf(context);
+  final pal = navGlassPalOf(context);
+  final neutral = dark
+      ? AppNeutralSurface.darkBackground
+      : const Color(0xFFFAFAFA);
+  final accentNeutral = dark
+      ? AppNeutralSurface.darkBackground
+      : const Color(0xFFF8FAFA);
+  final accent = !highContrast && pal.follow && pal.useThemeColor
+      ? themedGlassBase(scheme, pal.tone, true, second: pal.second)
+      : null;
+  final baseTint = accent == null
+      ? neutral
+      : Color.lerp(accentNeutral, accent, 0.14)!;
+  final op = pal.op.clamp(0.0, 1.0);
+  return LiquidGlassTabBarStyle(
+    capsuleHeight: base.capsuleHeight,
+    capsuleInset: base.capsuleInset,
+    capsuleOverhang: base.capsuleOverhang,
+    horizontalMargin: base.horizontalMargin,
+    bottomGap: base.bottomGap,
+    iconSize: base.iconSize,
+    labelStyle: base.labelStyle,
+    // 透明度比例沿用上游（白 68% / 黑 35%），只把色相换成应用玻璃底色。
+    barTint: baseTint.withValues(alpha: (dark ? 0.35 : 0.68) * op),
+    capsuleTint: baseTint.withValues(alpha: dark ? 0.25 : 0.05),
+    lensTint: baseTint,
   );
 }
 

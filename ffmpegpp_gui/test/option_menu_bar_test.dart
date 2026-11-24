@@ -1,3 +1,4 @@
+import 'package:ffmpegpp_gui/theme/mobile_visual_theme.dart';
 import 'package:ffmpegpp_gui/widgets/option_menu_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -525,5 +526,67 @@ void main() {
         .ancestor(of: find.text('删除模型'), matching: find.byType(Material))
         .first;
     expect(tester.getRect(panel).bottom, lessThanOrEqualTo(700.0));
+  });
+
+  group('OptionMenuBar row radius', () {
+    Future<void> openMenu(WidgetTester tester, {bool miuix = false}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: miuix
+              ? ThemeData(extensions: const [MobileVisualTheme(enabled: true)])
+              : null,
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 240,
+                child: OptionMenuBar<String>(
+                  value: 'alpha',
+                  items: _items(),
+                  onChanged: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      // 触发钮文字 Alpha 在 Overlay 之前的树中，first 即为触发按钮。
+      await tester.tap(find.text('Alpha').first);
+      await tester.pumpAndSettle();
+    }
+
+    // 「Beta」只出现在展开的浮层列表里，其最近的 InkWell 即行的水波/高亮宿主。
+    Finder rowInk() => find
+        .ancestor(of: find.text('Beta'), matching: find.byType(InkWell))
+        .first;
+
+    testWidgets('row ink and highlight share the default menu radius', (
+      tester,
+    ) async {
+      await openMenu(tester);
+      final ink = tester.widget<InkWell>(rowInk());
+      final box = tester.widget<Container>(
+        find.descendant(of: rowInk(), matching: find.byType(Container)).first,
+      );
+      expect(ink.borderRadius, BorderRadius.circular(12));
+      expect(
+        (box.decoration! as BoxDecoration).borderRadius,
+        BorderRadius.circular(12),
+      );
+    });
+
+    testWidgets('row ink and highlight follow the miuix menu radius', (
+      tester,
+    ) async {
+      await openMenu(tester, miuix: true);
+      final ink = tester.widget<InkWell>(rowInk());
+      final box = tester.widget<Container>(
+        find.descendant(of: rowInk(), matching: find.byType(Container)).first,
+      );
+      expect(ink.borderRadius, BorderRadius.circular(20));
+      expect(
+        (box.decoration! as BoxDecoration).borderRadius,
+        BorderRadius.circular(20),
+      );
+    });
   });
 }

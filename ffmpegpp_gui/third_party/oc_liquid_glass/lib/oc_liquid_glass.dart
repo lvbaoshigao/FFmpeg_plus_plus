@@ -253,6 +253,14 @@ class _OCLiquidGlassGroupState extends State<OCLiquidGlassGroup> {
   }
 
   @override
+  void dispose() {
+    // The state owns the shader; each filter takes a uniform snapshot.
+    _shader?.dispose();
+    _shader = null;
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     // Show child without effect while shader is loading
     if (_program == null) {

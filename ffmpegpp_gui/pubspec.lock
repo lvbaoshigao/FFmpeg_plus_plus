@@ -462,10 +462,9 @@ packages:
   liquid_glass_tab_bar:
     dependency: "direct main"
     description:
-      name: liquid_glass_tab_bar
-      sha256: "0d51913c070feb290c32530ef0f9b29a895cf90a877b64c8248d16a475271333"
-      url: "https://pub.flutter-io.cn"
-    source: hosted
+      path: "third_party/liquid_glass_tab_bar"
+      relative: true
+    source: path
     version: "0.1.0-dev.10"
   liquid_glass_widgets:
     dependency: "direct main"

@@ -36,8 +36,11 @@ class _LogPageState extends State<LogPage> {
     'error',
     'trace',
   ];
-  // Mobile pills are 40 dp tall plus 8 dp of margin on each side.
-  static const double _filterBarExtent = 56;
+  // 与 MobileSegmentedPills 的几何保持一致：分段控件高度（移动端取
+  // max(44, textScaler.scale(32))）+ 药丸外壳上下各 4 的内边距
+  // + _filterBar 传入的上下各 8 的外边距。写死数字会让大字号时首条钻到筛选条下面。
+  static double _filterBarExtent(BuildContext context) =>
+      math.max(44.0, MediaQuery.textScalerOf(context).scale(32)) + 8 + 16;
 
   final Set<LogEntry> _selected = {};
   String _filter = 'all';
@@ -78,27 +81,14 @@ class _LogPageState extends State<LogPage> {
 
         final toolbar = _toolbar(scheme, filtered, selection, zh);
         final filters = _filterBar(scheme, zh);
+        // 空态也要让出同一份「顶栏 + 筛选条」的高度，否则矮屏 / 大字号下
+        // 提示语会落在悬浮栏后面（原先只有非空列表预留了 topInset）。
+        final topInset = isMobilePlatform
+            ? ImmersiveTopBar.insetOf(context) + _filterBarExtent(context)
+            : 0.0;
         final Widget list = filtered.isEmpty
-            ? Center(
-                child: Text(
-                  _filter == 'trace'
-                      ? (zh ? '暂无探针日志' : 'No trace entries yet')
-                      : (zh ? '暂无日志' : 'No logs yet'),
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    fontSize: 13,
-                  ),
-                ),
-              )
-            : _buildList(
-                filtered,
-                scheme,
-                cardStyle,
-                zh,
-                topInset: isMobilePlatform
-                    ? ImmersiveTopBar.insetOf(context) + _filterBarExtent
-                    : 0,
-              );
+            ? _emptyState(scheme, zh, topInset: topInset)
+            : _buildList(filtered, scheme, cardStyle, zh, topInset: topInset);
         final content = Scaffold(
           backgroundColor: Colors.transparent,
           body: isMobilePlatform
@@ -120,6 +110,26 @@ class _LogPageState extends State<LogPage> {
         if (widget.embedded) return content;
         return withWallpaper(context, WindowChrome(child: content));
       },
+    );
+  }
+
+  Widget _emptyState(ColorScheme scheme, bool zh, {required double topInset}) {
+    final message = _filter == 'trace'
+        ? (zh ? '暂无探针日志' : 'No trace entries yet')
+        : (zh ? '暂无日志' : 'No logs yet');
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        padding: EdgeInsets.only(top: topInset),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: math.max(0, constraints.maxHeight - topInset),
+            minWidth: constraints.maxWidth,
+          ),
+          child: Center(
+            child: Text(message, style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13)),
+          ),
+        ),
+      ),
     );
   }
 
@@ -234,13 +244,28 @@ class _LogPageState extends State<LogPage> {
     if (isMobilePlatform) {
       return LayoutBuilder(
         builder: (context, constraints) {
-          final tabWidth = MediaQuery.textScalerOf(context).scale(13) * 5.5;
+          final painter = TextPainter(
+            textDirection: Directionality.of(context),
+            textScaler: MediaQuery.textScalerOf(context),
+            maxLines: 1,
+          );
+          double widest = 0;
+          for (final filter in _filters) {
+            painter.text = TextSpan(
+              text: _filterLabel(filter, zh),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            );
+            painter.layout();
+            widest = math.max(widest, painter.width);
+          }
+          painter.dispose();
+          final tabWidth = widest + 16;
           return SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: SizedBox(
               width: math.max(
                 constraints.maxWidth,
-                tabWidth * _filters.length + 2 * MobileUi.subPagePaddingH,
+                tabWidth * _filters.length + 8 + 2 * MobileUi.subPagePaddingH,
               ),
               child: MobileSegmentedPills(
                 tabs: [

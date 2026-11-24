@@ -12,10 +12,6 @@ import 'app_semantic_colors.dart';
 class AppTheme {
   static final String monoFont = Platform.isWindows ? 'Consolas' : 'monospace';
 
-  /// Shared confirmation-button roles for alerts and system pickers.
-  static const Color dialogActionAccent = Color(0xFFFFCC00);
-  static const Color dialogActionForeground = Color(0xFF211A0C);
-
   /// seedColor 为用户自定义主题色；dynamicSeed 非空时（Android Monet
   /// 动态取色）覆盖它作为种子色，使用与系统 Material You 一致的
   /// tonalSpot 方案生成整套配色。
@@ -430,24 +426,22 @@ class AppTheme {
         headerBackgroundColor: modalSurface,
         headerForegroundColor: scheme.onSurface,
         dayForegroundColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.selected)
-              ? dialogActionForeground
-              : null,
+          (states) =>
+              states.contains(WidgetState.selected) ? scheme.onPrimary : null,
         ),
         dayBackgroundColor: WidgetStateProperty.resolveWith(
           (states) =>
-              states.contains(WidgetState.selected) ? dialogActionAccent : null,
+              states.contains(WidgetState.selected) ? scheme.primary : null,
         ),
         todayForegroundColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.selected)
-              ? dialogActionForeground
-              : null,
+          (states) =>
+              states.contains(WidgetState.selected) ? scheme.onPrimary : null,
         ),
         todayBackgroundColor: WidgetStateProperty.resolveWith(
           (states) =>
-              states.contains(WidgetState.selected) ? dialogActionAccent : null,
+              states.contains(WidgetState.selected) ? scheme.primary : null,
         ),
-        todayBorder: const BorderSide(color: dialogActionAccent),
+        todayBorder: BorderSide(color: scheme.primary),
         cancelButtonStyle: TextButton.styleFrom(
           backgroundColor: scheme.surfaceContainerHighest,
           foregroundColor: scheme.onSurfaceVariant,
@@ -457,8 +451,8 @@ class AppTheme {
           ),
         ),
         confirmButtonStyle: TextButton.styleFrom(
-          backgroundColor: dialogActionAccent,
-          foregroundColor: dialogActionForeground,
+          backgroundColor: scheme.primary,
+          foregroundColor: scheme.onPrimary,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
@@ -468,31 +462,31 @@ class AppTheme {
       timePickerTheme: TimePickerThemeData(
         backgroundColor: modalSurface,
         shape: dialogShape,
-        dialHandColor: dialogActionAccent,
-        entryModeIconColor: dialogActionAccent,
+        dialHandColor: scheme.primary,
+        entryModeIconColor: scheme.primary,
         dayPeriodColor: WidgetStateColor.resolveWith(
           (states) => states.contains(WidgetState.selected)
-              ? dialogActionAccent
+              ? scheme.primary
               : Colors.transparent,
         ),
         dialTextColor: WidgetStateColor.resolveWith(
           (states) => states.contains(WidgetState.selected)
-              ? dialogActionForeground
+              ? scheme.onPrimary
               : scheme.onSurface,
         ),
         dayPeriodTextColor: WidgetStateColor.resolveWith(
           (states) => states.contains(WidgetState.selected)
-              ? dialogActionForeground
+              ? scheme.onPrimary
               : scheme.onSurfaceVariant,
         ),
         hourMinuteColor: WidgetStateColor.resolveWith(
           (states) => states.contains(WidgetState.selected)
-              ? dialogActionAccent
+              ? scheme.primary
               : scheme.surfaceContainerHighest,
         ),
         hourMinuteTextColor: WidgetStateColor.resolveWith(
           (states) => states.contains(WidgetState.selected)
-              ? dialogActionForeground
+              ? scheme.onPrimary
               : scheme.onSurface,
         ),
         cancelButtonStyle: TextButton.styleFrom(
@@ -504,8 +498,8 @@ class AppTheme {
           ),
         ),
         confirmButtonStyle: TextButton.styleFrom(
-          backgroundColor: dialogActionAccent,
-          foregroundColor: dialogActionForeground,
+          backgroundColor: scheme.primary,
+          foregroundColor: scheme.onPrimary,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),

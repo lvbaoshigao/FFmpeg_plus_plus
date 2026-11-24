@@ -3461,6 +3461,7 @@ List<Widget> _buildEffectItems(BuildContext ctx, AppState state) {
 final class _StyleValues {
   final String cardStyle;
   final String navStyle;
+  final String? selectionIndicatorStyle;
   final String pillStyle;
   final String menuStyle;
   final String dropdownAppearance;
@@ -3479,6 +3480,7 @@ final class _StyleValues {
   const _StyleValues({
     required this.cardStyle,
     required this.navStyle,
+    this.selectionIndicatorStyle,
     required this.pillStyle,
     required this.menuStyle,
     required this.dropdownAppearance,
@@ -3498,6 +3500,7 @@ final class _StyleValues {
   AppConfig applyTo(AppConfig config) => config
     ..cardStyle = cardStyle
     ..navStyle = navStyle
+    ..selectionIndicatorStyle = selectionIndicatorStyle ?? config.selectionIndicatorStyle
     ..pillStyle = pillStyle
     ..menuStyle = menuStyle
     ..dropdownAppearance = dropdownAppearance
@@ -3519,6 +3522,8 @@ final class _StyleValues {
   bool matches(AppConfig config) =>
       config.cardStyle == cardStyle &&
       config.navStyle == navStyle &&
+      (selectionIndicatorStyle == null ||
+          config.selectionIndicatorStyle == selectionIndicatorStyle) &&
       config.pillStyle == pillStyle &&
       config.menuStyle == menuStyle &&
       config.dropdownAppearance == dropdownAppearance &&
@@ -3570,6 +3575,7 @@ const _stylePresets = [
     _StyleValues(
       cardStyle: SurfaceStyle.liquid,
       navStyle: SurfaceStyle.liquid,
+      selectionIndicatorStyle: 'liquid',
       pillStyle: SurfaceStyle.liquid,
       menuStyle: SurfaceStyle.liquid,
       dropdownAppearance: 'liquid',
