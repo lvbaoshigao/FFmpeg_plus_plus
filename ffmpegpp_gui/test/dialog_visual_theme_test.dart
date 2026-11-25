@@ -1,3 +1,4 @@
+import 'package:ffmpegpp_gui/theme/app_accent_surface.dart';
 import 'package:ffmpegpp_gui/theme/app_neutral_surface.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/widgets/app_alert_dialog.dart';
@@ -44,11 +45,12 @@ void main() {
             ),
             theme.colorScheme.surfaceContainerHighest,
           );
+          // 确认按钮走「主题色克制着色」，不再是满色 primary。
           expect(
             theme.datePickerTheme.confirmButtonStyle!.backgroundColor!.resolve(
               {},
             ),
-            theme.colorScheme.primary,
+            AppAccentSurface.fromScheme(theme.colorScheme).fill,
           );
           expect(theme.timePickerTheme.backgroundColor, dialog.backgroundColor);
           expect(theme.timePickerTheme.shape, dialog.shape);
@@ -62,7 +64,7 @@ void main() {
             theme.timePickerTheme.confirmButtonStyle!.backgroundColor!.resolve(
               {},
             ),
-            theme.colorScheme.primary,
+            AppAccentSurface.fromScheme(theme.colorScheme).fill,
           );
           final hourText =
               theme.timePickerTheme.hourMinuteTextColor! as WidgetStateColor;
@@ -389,10 +391,9 @@ void main() {
           destructive.style!.backgroundColor!.resolve({}),
           theme.colorScheme.error,
         );
-        expect(
-          primary.style!.backgroundColor!.resolve({}),
-          theme.colorScheme.primary,
-        );
+        final accent = AppAccentSurface.fromScheme(theme.colorScheme);
+        expect(primary.style!.backgroundColor!.resolve({}), accent.fill);
+        expect(primary.style!.backgroundColor!.resolve({}), isNot(accent.fill.withValues(alpha: 0.55)));
         expect(
           primary.style!.backgroundColor!.resolve({WidgetState.disabled}),
           isNot(theme.colorScheme.primary),

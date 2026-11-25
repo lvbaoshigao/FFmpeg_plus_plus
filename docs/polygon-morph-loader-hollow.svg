@@ -1,0 +1,405 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  多边形变形加载动画 · 空心版 / Polygon Morph Loader (Hollow)
+  ==========================================================================
+  三角形 → 四边形 → 五边形 → 六边形 → 七边形 → 八边形
+  到顶后不停顿、不自转，直接 八边形 → 七边形 → 六边形 → 五边形 → 四边形 → 三角形 （无缝循环）
+
+  ── 形状模型 ─────────────────────────────────────────────────────────────
+  每种形态都由同一个参数族给出：
+      顶点数 = base + 1
+      相邻顶点圆心角 = 一个 2δ，其余 base 个都是 h = (2π - 2δ) / base
+      δ = 0          → 正 base 边形（其中一个顶点刚好"裂开"到长度 0）
+      δ = π/(base+1) → 正 (base+1) 边形
+  "长出一条新边"就是 δ 从 0 涨到 π/(base+1)：新边由 0 张开，其余各边同步等长地缩短。
+  减边则是反过来播。
+
+  半径由「内周长恒定」反解：  R = innerPeri / (2·(sin δ + base·sin(h/2)))
+  每条边长 = 2R·sin(gap/2)，因此变形途中除新边外所有边严格等长，
+  整体周长也严格不变（新边边长从 0 线性长到标准边长）。
+
+  ── 圆角 ─────────────────────────────────────────────────────────────────
+  形状 = 内缩多边形 ⊕ 半径 r 的圆盘（Minkowski 和），用
+  「多边形整体内缩 r」+「2r 宽、round join 的描边」绘制。
+  描边的 round join 是真正的圆弧，任意边数下圆角半径完全一致，也不会把整体撑大。
+  可见周长 = 内周长 + 2πr。
+
+  ── 空心 ─────────────────────────────────────────────────────────────────
+  外轮廓照常绘制，再用一个 <mask> 把中间「同样形状、按 holeScale 缩小」的一块挖掉。
+  内孔与外轮廓是相似形（同一形状按比例缩放），所以边框看起来是一圈等宽的带子。
+
+  为什么内孔用等比相似形，而不是「把每条边向内平移固定距离」：
+  变形途中那个形状是「各边等长、但不共内切圆」的（新边正从 0 长出来），
+  这种形状在数学上不存在等宽的内缩轮廓——逐边内缩会在那条极短的边上发散，
+  导致内孔刺穿或整块塌陷。等比相似形是连续、稳定的，任何时刻都不会崩；
+  代价是边框厚度会随形状轻微起伏（约 58~70px），肉眼基本看不出。
+
+  ── 节奏 ─────────────────────────────────────────────────────────────────
+  · 每次变形整体旋转 360/n（n = 变形前的边数），单段 morphMs = 900ms。
+  · 变形之间不停顿（holdMs = 0），到八边形后也不自转，
+    边数一到顶就直接开始递减，整轮连续流动。
+  · 转速由 morphMs 决定：morphMs 越大，途中旋转越慢。
+    当前最快段 3→4 约 133°/s、最慢段 8→7 约 50°/s。
+  · 缓动：三次贝塞尔（先快、中间略慢、收尾再快），再用 easeAmt 与线性混合，
+    easeAmt 越小越匀、越没有「吸住后急停」的阻尼感，越大越有弹性。
+    当前 easeAmt = 0.45。
+  · 整轮旋转量自动补齐成 120°（三角形对称角）的整数倍：
+    这个补偿角加在最后一段变形里（90° → 98°），肉眼看不出来，循环首尾完全重合。
+
+  ── 使用 ─────────────────────────────────────────────────────────────────
+  调参：脚本顶部 CFG。
+  逐帧检查：地址后加 ?t=毫秒 冻结到该时刻，如 polygon-morph-loader.svg?t=1200
+  动画由内联脚本驱动：用浏览器直接打开，或用 <iframe> / <object> 嵌入。
+  用 <img src="....svg"> 引用时脚本不执行，只会显示静止的三角形。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800"
+     preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="pmTitle pmDesc">
+  <title id="pmTitle">多边形变形加载动画</title>
+  <desc id="pmDesc">柔和的单色空心加载动画：圆角多边形从三角形逐级变形到八边形，再由八边形逐级变回三角形；整体是空心的边框形态。</desc>
+
+  <defs>
+    <!-- 白 = 保留、黑 = 挖掉。坐标在 pmStage 平移后、原点位于形状中心的空间。 -->
+    <mask id="pmHoleMask" maskUnits="userSpaceOnUse" x="-400" y="-400" width="800" height="800">
+      <rect x="-400" y="-400" width="800" height="800" fill="#fff"/>
+      <path id="pmHole" fill="#000" stroke="#000" stroke-width="104"
+            stroke-linejoin="round" stroke-linecap="round" d="M0 0Z"/>
+    </mask>
+  </defs>
+
+  <!-- 背景。嵌进深色界面时删掉这一行，或把 fill 换成页面底色。 -->
+  <rect id="pmBG" x="0" y="0" width="800" height="800" fill="#F5F0E8"/>
+
+  <!-- 形状本体：fill 与 stroke 同色，stroke-width = 2 × 圆角半径 -->
+  <g id="pmStage" transform="translate(400 400)">
+    <!-- 空心 = 实心外形 + mask 挖掉中间「同形状但更小」的一块。
+         内外两条边都用「内缩 + round 描边」绘制，所以都是圆弧，边框等宽。 -->
+    <g mask="url(#pmHoleMask)">
+      <path id="pmShape" fill="#7A675C" stroke="#7A675C" stroke-width="104"
+            stroke-linejoin="round" stroke-linecap="round"
+            d="M318.17 0L-159.09 275.52L-159.09 -275.52Z"/>
+    </g>
+  </g>
+
+  <script><![CDATA[
+  (function (root) {
+    'use strict';
+
+    /* =====================================================================
+       1. 参数
+       ===================================================================== */
+    var CFG = {
+      counts:     [3, 4, 5, 6, 7, 8, 7, 6, 5, 4, 3],
+      visualPeri: 1980,   // 可见轮廓周长（恒定）
+      corner:     52,     // 顶角圆角半径
+      holeScale:  0.72,   // 空心版：内孔是外轮廓的这个比例（决定边框粗细）
+      morphMs:    900,    // 单次变形时长（转速由它决定：越长转得越慢）
+      holdMs:     0,      // 变形之间不停顿，连续流动
+
+      // 到八边形后不再自转，直接递减边数。改成 true 可以恢复「八边形自转三圈」。
+      spin:       false,
+      spinMode:   'visual',   // 仅在 spin=true 时生效
+      spinTurns:  3,
+      spinMs:     3000,
+
+      ease:       [0.12, 0.36, 0.88, 0.64],  // 先快 → 慢 → 再快
+      easeAmt:    0.45   // 与线性混合的强度：1 = 完整缓动（阻尼感强），0 = 匀速
+    };
+
+    var TAU = Math.PI * 2, PI = Math.PI, CX = 400, CY = 400;
+    var INNER_PERI = CFG.visualPeri - TAU * CFG.corner;
+
+    /* =====================================================================
+       2. 缓动
+       ===================================================================== */
+    function makeEase(x1, y1, x2, y2) {
+      function bez(a, b, t) {
+        var c = 3 * a, d = 3 * (b - a) - c, e = 1 - c - d;
+        return ((e * t + d) * t + c) * t;
+      }
+      function dbez(a, b, t) {
+        var c = 3 * a, d = 3 * (b - a) - c, e = 1 - c - d;
+        return (3 * e * t + 2 * d) * t + c;
+      }
+      return function (x) {
+        if (!(x > 0)) return 0;
+        if (x >= 1) return 1;
+        var t = x, i, diff, slope;
+        for (i = 0; i < 8; i++) {
+          diff = bez(x1, x2, t) - x;
+          if (Math.abs(diff) < 1e-7) return bez(y1, y2, t);
+          slope = dbez(x1, x2, t);
+          if (!(Math.abs(slope) > 1e-6)) break;
+          t -= diff / slope;
+          if (t < 0 || t > 1) break;
+        }
+        var lo = 0, hi = 1, mid;
+        for (i = 0; i < 48; i++) {
+          mid = (lo + hi) / 2;
+          if (bez(x1, x2, mid) < x) lo = mid; else hi = mid;
+        }
+        return bez(y1, y2, (lo + hi) / 2);
+      };
+    }
+    var EASE_RAW = makeEase(CFG.ease[0], CFG.ease[1], CFG.ease[2], CFG.ease[3]);
+
+    /* 纯三次贝塞尔两端斜率约 3，每段都「猛起 → 收住 → 再猛起」，
+       连起来就有一股被吸住又松开的阻尼感。这里把它和线性插值按 easeAmt 混合，
+       既保留 先快后慢再快 的形状，又把两端的冲击压平。 */
+    var EASE = (function () {
+      var k = Math.max(0, Math.min(1, CFG.easeAmt));
+      return function (u) { return u + (EASE_RAW(u) - u) * k; };
+    })();
+    function smooth(u) { return u * u * (3 - 2 * u); }
+
+    /* =====================================================================
+       3. 几何
+       =====================================================================
+       参数族的对称轴固定在局部 0°：
+         δ = 0 时局部 0° 是一个顶点（它就是将被裂开的那个顶点）
+         δ > 0 时局部 0° 是那条新边的中点
+       ===================================================================== */
+    function gapOf(base, delta) { return (TAU - 2 * delta) / base; }
+
+    function familyAngles(base, delta) {
+      var h = gapOf(base, delta), out = [-delta], i;
+      for (i = 0; i < base; i++) out.push(delta + i * h);
+      return out;                                  // 共 base + 1 个顶点
+    }
+
+    function familyRadius(base, delta) {
+      var h = gapOf(base, delta);
+      return INNER_PERI / (2 * (Math.sin(delta) + base * Math.sin(h / 2)));
+    }
+
+    function familyPoints(base, delta) {
+      var a = familyAngles(base, delta), R = familyRadius(base, delta), out = [], i;
+      for (i = 0; i < a.length; i++) {
+        out.push([Math.cos(a[i]) * R, Math.sin(a[i]) * R]);
+      }
+      return out;
+    }
+
+    // 正 n 边形：局部顶点落在 0°、2π/n、...（与参数族 δ=0 时完全重合）
+    function regularPoints(n) {
+      var out = [], k;
+      for (k = 0; k < n; k++) {
+        var a = k * TAU / n;
+        out.push([Math.cos(a) * familyRadius(n, 0), Math.sin(a) * familyRadius(n, 0)]);
+      }
+      return out;
+    }
+
+    // 让形状绕自身重心旋转，避免绕外接圆心转时的轻微"晃"
+    function centroid(pts) {
+      var area = 0, cx = 0, cy = 0, i, j, f, n = pts.length;
+      for (i = 0; i < n; i++) {
+        j = (i + 1) % n;
+        f = pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+        area += f;
+        cx += (pts[i][0] + pts[j][0]) * f;
+        cy += (pts[i][1] + pts[j][1]) * f;
+      }
+      area *= 0.5;
+      if (!(Math.abs(area) > 1e-9)) return [0, 0];
+      return [cx / (6 * area), cy / (6 * area)];
+    }
+
+    function centered(pts) {
+      var c = centroid(pts), i;
+      for (i = 0; i < pts.length; i++) { pts[i][0] -= c[0]; pts[i][1] -= c[1]; }
+      return pts;
+    }
+
+    function pathOf(pts) {
+      var d = "M", i, p;
+      for (i = 0; i < pts.length; i++) {
+        p = pts[i];
+        d += (i ? "L" : "") + p[0].toFixed(2) + " " + p[1].toFixed(2);
+      }
+      return d + "Z";
+    }
+
+    /* 内孔 = 外轮廓以相同比例缩小的相似形（字面意义上的「挖掉一个同样形状、面积偏小的」）。
+
+       为什么用固定比例而不是等距内缩：
+       变形途中那个形状是「各边等长、但不共内切圆」的（新边正从 0 长出来），
+       这种形状在数学上不存在等宽的内缩轮廓——逐边内缩会在极短边上发散，
+       导致内孔刺穿或整块塌陷。等比相似形则是连续、稳定的，任何时刻都不会崩。
+       代价是边框厚度会随形状略微变化（约 58~70px），肉眼几乎看不出。 */
+    function holePathOf(pts) {
+      var c = centroid(pts), k = CFG.holeScale, out = [], i;
+      for (i = 0; i < pts.length; i++) {
+        out.push([c[0] + (pts[i][0] - c[0]) * k, c[1] + (pts[i][1] - c[1]) * k]);
+      }
+      return pathOf(out);
+    }
+
+    function wrapMod(a, m) { a = a % m; return a < 0 ? a + m : a; }
+
+    /* =====================================================================
+       4. 时间轴
+       ===================================================================== */
+    var steps = [], CYCLE = 0, PEAK = 0;
+
+    function build(psi) {
+      steps = [];
+      var seq = CFG.counts, i, t = 0, theta = 0;
+
+      for (i = 1; i < seq.length; i++) if (seq[i] > seq[PEAK]) PEAK = i;
+
+      function push(s) {
+        // 时长为 0 的片段不进入时间轴，
+        // 否则 stepAt 的二分查找会命中一个零长度区间。
+        if (!(s.ms > 0)) return;
+        s.t0 = t; t += s.ms; s.t1 = t;
+        s.thetaMid = (s.theta0 + s.theta1) / 2;
+        steps.push(s);
+      }
+
+      /* psi = 让整轮旋转闭环的补偿角。
+         有自转时它被塞进自转那一段；没有自转时，均摊到最后两段变形里，
+         避免单独一段角速度突兀。psi 通常只有几度，分到两段后完全看不出来。 */
+      var tailCount = 0, j;
+      if (!CFG.spin) { for (j = seq.length - 2; j < seq.length; j++) tailCount++; }
+      var absorbTail = CFG.spin ? 0 : psi / Math.max(1, tailCount);
+
+      for (i = 1; i < seq.length; i++) {
+        var m = seq[i - 1], target = seq[i], rot = TAU / m;
+        var last = (i >= seq.length - 2);   // 最后两段一起分摊补偿角
+        var extra = last ? absorbTail : 0;
+
+        if (target > m) {
+          push({ type: "morph", base: m, d0: 0, d1: PI / (m + 1),
+                 theta0: theta, theta1: theta + rot + extra, ms: CFG.morphMs,
+                 from: m, to: target });
+          // 参数族终点落在 π/(m+1) 的奇数倍上，补齐半格后与 regularPoints 对齐
+          theta = theta + rot + extra + PI / (m + 1);
+        } else {
+          push({ type: "morph", base: m - 1, d0: PI / m, d1: 0,
+                 theta0: theta - PI / m, theta1: theta - PI / m + rot + extra,
+                 ms: CFG.morphMs, from: m, to: target });
+          theta = theta - PI / m + rot + extra;
+        }
+
+        push({ type: "hold", n: target, theta0: theta, theta1: theta,
+               ms: CFG.holdMs, from: target, to: target });
+
+        if (i === PEAK && CFG.spin) {
+          /* 视觉圈数 → 实际弧度：正 n 边形转 2π/n 看起来就是转了一圈，
+             所以 眼睛看到 T 圈 = 实际 T * 2π/n 弧度。 */
+          var nHat = target;
+          var unit = CFG.spinMode === 'geometric' ? TAU : TAU / nHat;
+          var spin = unit * CFG.spinTurns + psi;
+          push({ type: "spin", n: nHat, theta0: theta, theta1: theta + spin,
+                 ms: CFG.spinMs, turn: spin, from: nHat, to: nHat,
+                 apparent: Math.abs(spin) / (TAU / nHat) });
+          theta += spin;
+          push({ type: "hold", n: nHat, theta0: theta, theta1: theta,
+                 ms: CFG.holdMs, from: nHat, to: nHat });
+        }
+      }
+      CYCLE = t;
+      return theta;
+    }
+
+    (function calibrate() {
+      /* 循环首尾要逐点重合：起止都是三角形，总旋转只要是 360/3 = 120° 的整数倍即可。
+         先按 0 建一遍算出偏差，再把偏差作为 psi 重新建；psi 会被自转段
+         或最后一段变形吸收掉。 */
+      var thetaEnd = build(0);
+      var sym = TAU / CFG.counts[0];
+      var psi = wrapMod(-thetaEnd, sym);
+      if (psi > sym / 2) psi -= sym;
+      build(psi);
+    })();
+
+    function stepAt(time) {
+      var lo = 0, hi = steps.length - 1, mid;
+      while (lo < hi) {
+        mid = (lo + hi + 1) >> 1;
+        if (steps[mid].t0 <= time) lo = mid; else hi = mid - 1;
+      }
+      return steps[lo];
+    }
+
+    function rot(pts, ang) {
+      var c = Math.cos(ang), s = Math.sin(ang), out = [], i;
+      for (i = 0; i < pts.length; i++) {
+        out.push([c * pts[i][0] - s * pts[i][1], s * pts[i][0] + c * pts[i][1]]);
+      }
+      return out;
+    }
+
+    /* 任意时刻 → { pts（已旋转到屏幕坐标）, angle, n, delta } */
+    function sample(ms) {
+      var time = ms % CYCLE;
+      if (time < 0) time += CYCLE;
+      var s = stepAt(time);
+      var u = s.ms > 0 ? (time - s.t0) / s.ms : 1;
+      if (u < 0) u = 0; if (u > 1) u = 1;
+      var angle;
+
+      if (s.type === "morph") {
+        var e = EASE(u);
+        var delta = s.d0 + (s.d1 - s.d0) * e;
+        angle = s.theta0 + (s.theta1 - s.theta0) * e;
+        var pts = centered(familyPoints(s.base, delta));
+        return {
+          pts: rot(pts, angle), angle: angle, delta: delta, base: s.base,
+          e: e, from: s.from, to: s.to,
+          radius: familyRadius(s.base, delta)
+        };
+      }
+      if (s.type === "spin") {
+        angle = s.theta0 + s.turn * smooth(u);
+        return { pts: rot(regularPoints(s.n), angle), angle: angle, n: s.n,
+                 radius: familyRadius(s.n, 0) };
+      }
+      angle = s.theta0;
+      return { pts: rot(regularPoints(s.n), angle), angle: angle, n: s.n,
+               radius: familyRadius(s.n, 0) };
+    }
+
+    root.PolyMorph = {
+      cfg: CFG, steps: steps, cycle: CYCLE, sample: sample, pathOf: pathOf,
+      holePathOf: holePathOf,
+      familyPoints: familyPoints, familyRadius: familyRadius,
+      familyAngles: familyAngles, regularPoints: regularPoints,
+      innerPeri: INNER_PERI, ease: EASE, centroid: centroid
+    };
+
+    /* =====================================================================
+       5. 播放
+       ===================================================================== */
+    if (typeof document !== 'undefined') (function boot() {
+      var stage = document.getElementById('pmStage');
+      var shape = document.getElementById('pmShape');
+      if (!stage || !shape) return;
+
+      shape.setAttribute("stroke-width", String(CFG.corner * 2));
+
+      var mq = root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)");
+      var hole = document.getElementById("pmHole");
+
+      function paint(f) {
+        shape.setAttribute("d", pathOf(f.pts));
+        if (hole) hole.setAttribute("d", holePathOf(f.pts));
+      }
+
+      if (mq && mq.matches) { paint(sample(0)); return; }
+
+      var m = /[?&]t=([0-9]+(?:\.[0-9]+)?)/.exec(root.location.search || "");
+      if (m) { paint(sample(parseFloat(m[1]))); return; }
+
+      var start = null;
+      function tick(now) {
+        if (start === null) start = now;
+        paint(sample(now - start));
+        root.requestAnimationFrame(tick);
+      }
+      root.requestAnimationFrame(tick);
+    })();
+
+  })(typeof window !== 'undefined' ? window : this);
+  ]]></script>
+</svg>

@@ -77,6 +77,15 @@ class MobileGlassPillAction extends StatelessWidget {
   /// 只有次要的紧凑药丸（如节点编辑器缩放条）才传更小的值，且不低于 40。
   final double minTarget;
 
+  /// 是否在图标下绘制 [bg] 指定的圆形底盘（默认 true，桌面端生效）。
+  ///
+  /// 移动端本来就**不画**圆盘（见下方 build 里的说明）。桌面端顶栏如果也把
+  /// [bg] 画成一圈实色圆，会出现两个问题：圆盘直径（size + 内边距）比药丸内
+  /// 边距更宽，视觉上顶到玻璃边缘；动态主题色也会混进中性玻璃面。
+  /// 需要「只有图标、没有彩色圆圈」的调用点传 false，此时图标前景色完全由
+  /// [color] 决定（调用方自己保证在玻璃面上可读）。
+  final bool showDisk;
+
   const MobileGlassPillAction({
     super.key,
     required this.icon,
@@ -88,16 +97,19 @@ class MobileGlassPillAction extends StatelessWidget {
     this.iconSize = MobileUi.actionIconSize,
     this.padding,
     this.minTarget = MobileUi.pillHeight,
+    this.showDisk = true,
   });
 
   @override
   Widget build(BuildContext context) {
     final mobile = isMobilePlatform;
     final pad =
-        padding ?? EdgeInsets.symmetric(horizontal: mobile ? 1 : 2, vertical: 2);
+        padding ??
+        EdgeInsets.symmetric(horizontal: mobile ? 1 : 2, vertical: 2);
     // 移动端玻璃药丸里不再画主题色（莫奈）实心圆：圆盘既会溢出药丸内边距，
     // 又让动态色混进中性玻璃。图标统一用中性前景色，层级靠分组表达。
-    final Color? disk = mobile ? null : bg;
+    // 桌面端默认仍保留调用方要求的圆盘，但可以由 [showDisk] 显式关掉。
+    final Color? disk = (mobile || !showDisk) ? null : bg;
     final Color? glyphColor = mobile && bg != null
         ? Theme.of(context).colorScheme.onSurface
         : color;
@@ -112,10 +124,7 @@ class MobileGlassPillAction extends StatelessWidget {
     );
     if (mobile) {
       face = ConstrainedBox(
-        constraints: BoxConstraints(
-          minWidth: minTarget,
-          minHeight: minTarget,
-        ),
+        constraints: BoxConstraints(minWidth: minTarget, minHeight: minTarget),
         child: Align(widthFactor: 1, heightFactor: 1, child: face),
       );
     }

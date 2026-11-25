@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../theme/app_accent_surface.dart';
 import '../theme/app_neutral_surface.dart';
 import 'liquid_glass_fallback.dart' show cachedGlassBlur;
 
@@ -25,18 +26,34 @@ class AppDialogAction extends StatelessWidget {
       : AppNeutralSurface.lightCardHigh;
 
   /// Shared role styling for buttons in custom modal headers and footers.
+  ///
+  /// 主行动不再铺满 `scheme.primary`：那在琥珀 / 亮黄主题下会变成一整块
+  /// 无边框的荧光色块。改走 [AppAccentSurface]（主题色低透明度混进中性表面 +
+  /// 同色系 1px 描边），保留主题倾向但不再是纯色板砖；
+  /// cancel / neutral 仍是中性表面，destructive 仍用 error / onError。
   static ButtonStyle styleOf(BuildContext context, AppDialogActionRole role) {
     final colors = Theme.of(context).colorScheme;
-    final (background, foreground) = switch (role) {
+    final accent = AppAccentSurface.of(context);
+    final (background, foreground, border) = switch (role) {
       AppDialogActionRole.cancel => (
         _secondaryBackgroundOf(context),
         colors.onSurface,
+        Colors.transparent,
       ),
-      AppDialogActionRole.primary => (colors.primary, colors.onPrimary),
-      AppDialogActionRole.destructive => (colors.error, colors.onError),
+      AppDialogActionRole.primary => (
+        accent.fill,
+        accent.foreground,
+        accent.border,
+      ),
+      AppDialogActionRole.destructive => (
+        colors.error,
+        colors.onError,
+        colors.error,
+      ),
       AppDialogActionRole.neutral => (
         _secondaryBackgroundOf(context),
         colors.onSurface,
+        Colors.transparent,
       ),
     };
     return ButtonStyle(
@@ -59,7 +76,7 @@ class AppDialogAction extends StatelessWidget {
       shape: WidgetStatePropertyAll(
         RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
       ),
-      side: const WidgetStatePropertyAll(BorderSide.none),
+      side: WidgetStatePropertyAll(BorderSide(color: border, width: 1)),
       visualDensity: VisualDensity.standard,
       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       alignment: Alignment.center,
@@ -69,12 +86,13 @@ class AppDialogAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final accent = AppAccentSurface.of(context);
     final (background, foreground) = switch (role) {
       AppDialogActionRole.cancel => (
         _secondaryBackgroundOf(context),
         colors.onSurface,
       ),
-      AppDialogActionRole.primary => (colors.primary, colors.onPrimary),
+      AppDialogActionRole.primary => (accent.fill, accent.foreground),
       AppDialogActionRole.destructive => (colors.error, colors.onError),
       AppDialogActionRole.neutral => (
         _secondaryBackgroundOf(context),

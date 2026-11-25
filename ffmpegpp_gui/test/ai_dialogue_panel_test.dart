@@ -2,8 +2,11 @@ import 'package:ffmpegpp_gui/models/models.dart';
 import 'package:ffmpegpp_gui/pages/pipeline_editor_page.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_strings.dart';
+import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/theme/mobile_visual_theme.dart';
+import 'package:ffmpegpp_gui/theme/app_neutral_surface.dart';
 import 'package:ffmpegpp_gui/widgets/ai_workflow_card.dart';
+import 'package:ffmpegpp_gui/widgets/glass_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_ai_sdk/flutter_ai_sdk.dart' as ai;
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -76,6 +79,71 @@ Future<void> _teardownPanel(WidgetTester tester) async {
 
 void main() {
   group('AiPanelView', () {
+    testWidgets('expanded chat is an opaque surface, not the wallpaper', (
+      tester,
+    ) async {
+      await _pumpPanel(tester, _testPanel());
+      await tester.pumpAndSettle();
+      // 展开后的对话面板不能再用「透壁纸的玻璃」：壁纸亮块会从气泡与正文
+      // 底下透出来，长段落糊成一片（用户反馈的核心问题）。
+      expect(
+        find.descendant(
+          of: find.byType(AiPanelView),
+          matching: find.byType(GlassPanel),
+        ),
+        findsNothing,
+      );
+      final surface = find.descendant(
+        of: find.byType(AiPanelView),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is DecoratedBox &&
+              widget.decoration is BoxDecoration &&
+              ((widget.decoration as BoxDecoration).color?.a ?? 0) == 1 &&
+              (widget.decoration as BoxDecoration).borderRadius ==
+                  BorderRadius.circular(16),
+        ),
+      );
+      expect(surface, findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await _teardownPanel(tester);
+    });
+
+    testWidgets('chat surface stays neutral in dark glass themes', (
+      tester,
+    ) async {
+      for (final effect in ['liquid', 'blur', 'none']) {
+        await _pumpPanel(
+          tester,
+          _testPanel(),
+          theme: AppTheme.dark(glassEffect: effect),
+          disposeState: false,
+        );
+        await tester.pumpAndSettle();
+        final box = tester
+            .widgetList<DecoratedBox>(
+              find.descendant(
+                of: find.byType(AiPanelView),
+                matching: find.byType(DecoratedBox),
+              ),
+            )
+            .map((widget) => widget.decoration)
+            .whereType<BoxDecoration>()
+            .firstWhere(
+              (decoration) =>
+                  (decoration.color?.a ?? 0) == 1 &&
+                  decoration.borderRadius == BorderRadius.circular(16),
+            );
+        final color = box.color!;
+        // 与 Miuix/玻璃对话面同一约定：暗色实体面必须严格中性（R == G == B），
+        // 否则整块面板会带黄/褐色偏。
+        expect(color.r, color.g);
+        expect(color.g, color.b);
+        expect(color, AppNeutralSurface.darkCardHigh);
+        await _teardownPanel(tester);
+      }
+    });
+
     testWidgets('should preserve handoff blocks and show final text once', (
       tester,
     ) async {

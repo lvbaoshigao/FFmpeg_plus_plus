@@ -1,3 +1,4 @@
+import 'package:ffmpegpp_gui/theme/app_accent_surface.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/widgets/app_alert_dialog.dart';
 import 'package:flutter/material.dart';
@@ -21,17 +22,21 @@ void main() {
         final time = theme.timePickerTheme;
         expect(date.dayBackgroundColor!.resolve(selected), colors.primary);
         expect(date.dayForegroundColor!.resolve(selected), colors.onPrimary);
+        // 确认按钮不再是纯 primary 板砖（见 AppAccentSurface）：主题色低透明度
+        // 混进中性表面 + 同色系描边。日历格子里的「选中日期」仍是满色 primary，
+        // 那是日期的选中语义，不属于按钮。
         expect(date.dayBackgroundColor!.resolve({}), isNull);
         expect(date.todayBackgroundColor!.resolve(selected), colors.primary);
         expect(date.todayForegroundColor!.resolve(selected), colors.onPrimary);
         expect(date.todayBorder!.color, colors.primary);
+        final pickerAccent = AppAccentSurface.fromScheme(colors);
         expect(
           date.confirmButtonStyle!.backgroundColor!.resolve({}),
-          colors.primary,
+          pickerAccent.fill,
         );
         expect(
           date.confirmButtonStyle!.foregroundColor!.resolve({}),
-          colors.onPrimary,
+          pickerAccent.foreground,
         );
         expect(time.dialHandColor, colors.primary);
         expect(time.entryModeIconColor, colors.primary);
@@ -57,11 +62,11 @@ void main() {
         );
         expect(
           time.confirmButtonStyle!.backgroundColor!.resolve({}),
-          colors.primary,
+          pickerAccent.fill,
         );
         expect(
           time.confirmButtonStyle!.foregroundColor!.resolve({}),
-          colors.onPrimary,
+          pickerAccent.foreground,
         );
       }
       expect(
@@ -106,14 +111,15 @@ void main() {
         final destructive = tester.widget<TextButton>(
           find.widgetWithText(TextButton, 'Delete'),
         );
+        // 主行动：主题色着色但**不是**满色铺底，且有 1px 同色系描边。
+        final accent = AppAccentSurface.fromScheme(theme.colorScheme);
+        expect(primary.style!.backgroundColor!.resolve({}), accent.fill);
+        expect(primary.style!.foregroundColor!.resolve({}), accent.foreground);
         expect(
           primary.style!.backgroundColor!.resolve({}),
-          theme.colorScheme.primary,
+          isNot(theme.colorScheme.primary),
         );
-        expect(
-          primary.style!.foregroundColor!.resolve({}),
-          theme.colorScheme.onPrimary,
-        );
+        expect(primary.style!.side!.resolve({})!.width, 1);
         expect(
           primary.style!.backgroundColor!.resolve({WidgetState.disabled}),
           isNot(theme.colorScheme.primary),

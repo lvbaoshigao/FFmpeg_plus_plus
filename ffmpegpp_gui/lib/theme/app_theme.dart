@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
 import '../widgets/app_slider.dart' show appSliderThemeFor;
+import 'app_accent_surface.dart';
 import 'app_neutral_surface.dart';
 import 'app_page_transitions.dart';
 import 'app_press_feedback.dart';
@@ -140,6 +141,8 @@ class AppTheme {
         : isDark
         ? AppNeutralSurface.darkCardHigh.withAlpha(235)
         : scheme.surfaceContainerHigh.withAlpha(246);
+    // 选择器确认按钮的「主题色克制着色」（与对话框主行动同源）。
+    final pickerAccent = AppAccentSurface.fromScheme(scheme);
     const modalRadius = Radius.circular(28);
     final dialogShape = RoundedRectangleBorder(
       borderRadius: const BorderRadius.all(modalRadius),
@@ -450,12 +453,15 @@ class AppTheme {
             borderRadius: BorderRadius.circular(20),
           ),
         ),
+        // 确认按钮与对话框主行动同一套「主题色克制着色」：
+        // 不再铺满 scheme.primary（琥珀/亮黄主题下会变成无边框荧光板砖）。
         confirmButtonStyle: TextButton.styleFrom(
-          backgroundColor: scheme.primary,
-          foregroundColor: scheme.onPrimary,
+          backgroundColor: pickerAccent.fill,
+          foregroundColor: pickerAccent.foreground,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
+            side: BorderSide(color: pickerAccent.border),
           ),
         ),
       ),
@@ -498,11 +504,12 @@ class AppTheme {
           ),
         ),
         confirmButtonStyle: TextButton.styleFrom(
-          backgroundColor: scheme.primary,
-          foregroundColor: scheme.onPrimary,
+          backgroundColor: pickerAccent.fill,
+          foregroundColor: pickerAccent.foreground,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(20),
+            side: BorderSide(color: pickerAccent.border),
           ),
         ),
       ),

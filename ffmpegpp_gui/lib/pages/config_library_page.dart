@@ -42,6 +42,30 @@ const _kCompactMobileTabStyle = LiquidGlassTabBarStyle(
   iconSize: 18,
 );
 
+/// 桌面端顶栏切换成「紧凑排布」的内容区宽度阈值。
+///
+/// 与项目页（lib/pages/project_page.dart 的 `compact` 判定）同一套思路：
+/// 「窗口被拖窄」时把整条玻璃顶栏换成「药丸标题栏 + 换行文字按钮」。
+///
+/// 取值依据（桌面窗口最小宽度 1100 见 main.dart 的 setMinimumSize）：
+/// * 侧栏展开 190 + 外边距 12 → 内容区最窄约 898，落在阈值以下 → 触发；
+/// * 侧栏收起 72 + 外边距 12 → 内容区最窄约 1016，略高于阈值；
+/// 所以「把窗口拖到最窄」一定会看到紧凑排布，而默认 1280 窗口
+/// （内容区约 1078 / 1196）仍是原来的宽排布，不改变日常观感。
+///
+/// 大字号下按文字缩放比例放大阈值：字号变大后同样的操作按钮与标题需要的
+/// 宽度更多，提前切换能避免宽排布里标题被挤成省略号。
+const double kCompactDesktopTopBarBreakpoint = 1020;
+
+/// 桌面端顶栏是否走紧凑排布：移动端恒定 false（它走自己的药丸顶栏浮层），
+/// 桌面端按内容区宽度 + 文字缩放判定。
+bool isCompactDesktopTopBar(BuildContext context, BoxConstraints constraints) {
+  if (isMobilePlatform) return false;
+  final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+  return constraints.maxWidth <
+      kCompactDesktopTopBarBreakpoint * textScale.clamp(1.0, 1.4);
+}
+
 class _ConfigEntry {
   final String id;
   String name;
@@ -1496,30 +1520,50 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                           },
                         ),
                 )
-              : Column(
-                  children: [
-                    GlassTopBar(
-                      // 顶栏高度固定 56：标题必须单行省略，否则大字号下换行会顶出栏外
-                      title: Text(
-                        zh ? '配置库' : 'Config Library',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      actions: _buildTopActions(scheme, zh),
-                    ),
-                    _buildTabSelector(scheme, zh),
-                    Expanded(
-                      child: !_loaded
-                          ? const Center(child: CircularProgressIndicator())
-                          : ListView(
-                              // 开窗卡所在列表必须关（见 app_card 的
-                              // _WallpaperWindowPainter）
-                              addRepaintBoundaries: false,
-                              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                              children: _buildTabContent(scheme, zh),
+              // 桌面端：宽窗口用整条玻璃顶栏（GlassTopBar），窗口缩窄后换成
+              // 「药丸标题栏 + 换行文字按钮」——与项目页 lib/pages/project_page.dart
+              // 的 compact 分支完全同构（同一套 MobilePillTopBar / Wrap /
+              // 玻璃主按钮），用户在任一页缩窗时看到的排布变化是一致的。
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = isCompactDesktopTopBar(
+                      context,
+                      constraints,
+                    );
+                    return Column(
+                      children: [
+                        if (compact)
+                          _buildCompactDesktopTopBar(scheme, zh)
+                        else
+                          GlassTopBar(
+                            // 顶栏高度固定 56：标题必须单行省略，否则大字号下换行会顶出栏外
+                            title: Text(
+                              zh ? '配置库' : 'Config Library',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                    ),
-                  ],
+                            actions: _buildTopActions(scheme, zh),
+                          ),
+                        _buildTabSelector(scheme, zh, compact: compact),
+                        Expanded(
+                          child: !_loaded
+                              ? const Center(child: CircularProgressIndicator())
+                              : ListView(
+                                  // 开窗卡所在列表必须关（见 app_card 的
+                                  // _WallpaperWindowPainter）
+                                  addRepaintBoundaries: false,
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    8,
+                                    16,
+                                    16,
+                                  ),
+                                  children: _buildTabContent(scheme, zh),
+                                ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
           // 移动端顶栏浮层（不影响滚动）
           if (isMobilePlatform)
@@ -1534,10 +1578,111 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     );
   }
 
+  /// 窄窗口（桌面端 compact）顶栏：与项目页同一套结构 ——
+  /// 第一行 [MobilePillTopBar]（左标题药丸 + 右操作药丸），
+  /// 第二行 [Wrap] 放换行文字按钮，窗口继续变窄时按钮自动换行/横向滚动，
+  /// 不再是「一排图标硬挤」或「标题被挤成省略号」。
+  Widget _buildCompactDesktopTopBar(ColorScheme scheme, bool zh) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        MobilePillTopBar(
+          title: Text(zh ? '配置库' : 'Config Library'),
+          // 桌面端紧凑态没有搜索层，操作只有这三颗固定的高频入口；
+          // 窄桌面窗口允许收纳多余动作，避免标题与三颗按钮互相挤压。
+          actions: _buildTopActions(scheme, zh),
+          collapseActions: true,
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: _buildCompactDesktopActions(scheme, zh),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 紧凑态第二行的文字按钮：导入 / 新建快捷配置 / 新建配置。
+  /// 与项目页 `_buildMobileActions` 同一套 TextButton 规格（高 48、水平 12），
+  /// 主 CTA 复用项目页「添加文件」那颗玻璃主按钮的外观。
+  List<Widget> _buildCompactDesktopActions(ColorScheme scheme, bool zh) {
+    final secondaryStyle = TextButton.styleFrom(
+      foregroundColor: scheme.onSurface,
+      minimumSize: const Size(0, 44),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    );
+    return [
+      _compactPrimaryButton(
+        key: const ValueKey('configs_new_config'),
+        icon: Icons.add,
+        label: zh ? '新建配置' : 'New Config',
+        onTap: _newConfig,
+      ),
+      TextButton.icon(
+        key: const ValueKey('configs_new_quick'),
+        onPressed: _newQuickConfig,
+        style: secondaryStyle,
+        icon: const Icon(Icons.bolt_outlined, size: 20),
+        label: Text(zh ? '新建快捷配置' : 'New Quick Config'),
+      ),
+      TextButton.icon(
+        key: const ValueKey('configs_import_fppx'),
+        onPressed: _importFppx,
+        style: secondaryStyle,
+        icon: const Icon(Icons.file_download_outlined, size: 20),
+        label: Text(zh ? '导入 .fppx' : 'Import .fppx'),
+      ),
+    ];
+  }
+
+  /// 主 CTA：玻璃面板 + 透明描边按钮（项目页「添加文件」的唯一实现风格）。
+  /// 浮层样式跟随「顶部药丸样式」（pillStyle），与它所处的顶栏一致。
+  Widget _compactPrimaryButton({
+    required Key key,
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    const radius = 16.0;
+    final scheme = Theme.of(context).colorScheme;
+    final pillStyle = context.select<AppState, String>(
+      (s) => s.config.pillStyle,
+    );
+    return GlassPanel(
+      radius: radius,
+      style: pillStyle,
+      child: OutlinedButton.icon(
+        key: key,
+        onPressed: onTap,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: scheme.onSurface,
+          backgroundColor: Colors.transparent,
+          side: BorderSide.none,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(radius)),
+          ),
+          minimumSize: const Size(0, 44),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        ),
+        icon: Icon(icon, size: 20),
+        label: Text(label, textAlign: TextAlign.center),
+      ),
+    );
+  }
+
   /// 标签切换器：节点编辑器 / 快捷配置，各自带数量角标。
   /// 统一改用 [MobileSegmentedPills]（玻璃药丸外壳 + 主题色滑动指示器），
   /// 不再本页自绘 LayoutBuilder + Stack + AnimatedPositioned。
-  Widget _buildTabSelector(ColorScheme scheme, bool zh) {
+  Widget _buildTabSelector(
+    ColorScheme scheme,
+    bool zh, {
+    bool compact = false,
+  }) {
     return MobileSegmentedPills(
       tabs: [
         MobilePillTab(
@@ -1553,10 +1698,12 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       ],
       selectedIndex: _tabIndex,
       onSelected: (i) => setState(() => _tabIndex = i),
+      // 紧凑态顶栏第二行已经是贴边的文字按钮（左右各 8），分段控件跟着收到 8：
+      // 两条内容左边缘对齐，不会出现「按钮在 8、标签在 16」的错位。
       margin: EdgeInsets.fromLTRB(
-        isMobilePlatform ? 8 : 16,
-        12,
-        isMobilePlatform ? 8 : 16,
+        isMobilePlatform || compact ? 8 : 16,
+        compact ? 8 : 12,
+        isMobilePlatform || compact ? 8 : 16,
         6,
       ),
     );
@@ -1604,33 +1751,37 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   /// 全部用 MobileGlassPillAction（透明 InkWell 紧凑圆形按钮）替代 Material IconButton，
   /// 避免主题色 splash/focus 出现在液态玻璃药丸内；同时与项目页"+/导入/容器"
   /// 按钮完全一致的尺寸与风格。
+  ///
+  /// 桌面端不画主题色圆盘（[MobileGlassPillAction.showDisk] = false）：圆形底色
+  /// 直径比药丸内边距更宽，套在玻璃顶栏里会顶到圆角边缘，动态主题色也会混进
+  /// 中性玻璃面。用户要求「PC 端去掉外面那个带颜色的圆圈」，所以桌面端三颗
+  /// 按钮统一只用中性前景色图标；移动端药丸顶栏本来就不画圆盘，行为不变。
   List<Widget> _buildTopActions(ColorScheme scheme, bool zh) {
     return [
       MobileGlassPillAction(
         icon: Icons.file_download_outlined,
         tooltip: zh ? '导入 .fppx' : 'Import .fppx',
         color: scheme.onSurface,
+        showDisk: false,
         onTap: _importFppx,
       ),
       // 分组（仅移动端药丸顶栏）：导入（外部来源）| 新建（快捷配置 / 配置）。
       // 桌面端 GlassTopBar 共用这份列表，不插分隔符。
       if (isMobilePlatform) const MobileActionGroupBreak(),
-      // 「新建快捷配置」补上与「新建配置」一致的圆形修饰：原来是透明底的裸图标，
-      // 与旁边那颗实心圆并排看不出属于同一组操作。底色取 primaryContainer
-      // （实心 primary 仍留给主 CTA），层级不颠倒。
       MobileGlassPillAction(
         icon: Icons.bolt_outlined,
         tooltip: zh ? '新建快捷配置' : 'New Quick Config',
-        color: scheme.onPrimaryContainer,
-        bg: scheme.primaryContainer,
+        color: scheme.onSurface,
+        showDisk: false,
         onTap: _newQuickConfig,
       ),
-      // 主题色实心圆"+"按钮（CTA），与项目页"+"完全一致
+      // 主 CTA「新建配置」：去掉圆盘后靠图标本身承担强调（主题色图标），
+      // 与项目页"+"的层级一致，但不再出现一整颗实心圆。
       MobileGlassPillAction(
         icon: Icons.add,
         tooltip: zh ? '新建配置' : 'New Config',
-        color: scheme.onPrimary,
-        bg: scheme.primary,
+        color: scheme.onSurface,
+        showDisk: false,
         onTap: _newConfig,
       ),
     ];

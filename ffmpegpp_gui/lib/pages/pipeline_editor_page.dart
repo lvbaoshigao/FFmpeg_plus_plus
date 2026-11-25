@@ -35,7 +35,9 @@ import '../services/pipeline_autosave.dart';
 import '../services/thumbnail_service.dart';
 // 控件高度档位令牌：顶栏 AI 药丸、AI 面板的批准/拒绝与发送按钮统一取档位高度，
 // 不再各自写 32 / 36 / 40 这些互不相干的数字
+import '../theme/app_accent_surface.dart';
 import '../theme/app_control_size.dart';
+import '../theme/app_neutral_surface.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_text_scale.dart';
@@ -16251,7 +16253,45 @@ Available actions: __TOOLS__''';
         ],
       );
     }
-    return GlassPanel(radius: 16, blur: 14, style: panelStyle, child: content);
+    // 对话面板**不再用玻璃透出壁纸**（用户反馈：聊天框直接拿壁纸当背景，
+    // 壁纸的亮块/花纹从气泡与文字底下透出来 → 正文糊、对比度不足）。
+    // 改为应用自己的不透明「对话表面」：中性卡底 + 一条细描边 + 柔和外阴影，
+    // 让消息区成为可读的实体面板，壁纸只出现在面板之外。
+    // 保留 panelStyle 参数：调用方与折叠态（GlassPanel）仍需要它，
+    // 玻璃观感留给折叠药丸，展开后的对话区必须是实心底。
+    return _chatPanelSurface(scheme, content);
+  }
+
+  /// 展开态 AI 对话面板的实体表面（不透明，不透壁纸）。
+  ///
+  /// 圆角 16 与原先的 GlassPanel 一致，因此面板在画布上的位置/尺寸不变，
+  /// 只是「透壁纸的玻璃」换成了「实心卡片」。
+  Widget _chatPanelSurface(ColorScheme scheme, Widget content) {
+    final dark = scheme.brightness == Brightness.dark;
+    const radius = 16.0;
+    final br = BorderRadius.circular(radius);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: br,
+        color: dark
+            ? AppNeutralSurface.darkCardHigh
+            : AppNeutralSurface.lightCardHigh,
+        border: Border.all(
+          color: dark
+              ? Colors.white.withValues(alpha: 0.10)
+              : scheme.outlineVariant.withValues(alpha: 0.55),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: dark ? 0.28 : 0.10),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: ClipRRect(borderRadius: br, child: content),
+    );
   }
 
   Widget _buildChatHeader(ColorScheme scheme, AppStrings strings) {
@@ -16673,6 +16713,9 @@ Available actions: __TOOLS__''';
   /// 「聊天区 + 侧栏页面」两种布局复用同一段内容。
   Widget _buildChatBody(ColorScheme scheme, AppStrings s, String cardStyle) {
     const btn = AppControlSize.comfortable;
+    // 强调块（待批准卡 / 批准按钮 / 发送按钮）的统一配色：主题色只做倾向，
+    // 不做整块纯色铺底。见 AppAccentSurface 文件头的理由。
+    final accent = AppAccentSurface.of(context);
     // 移动端输入框做成多行自适应。桌面端有物理 Enter（onSubmitted 直接发送）更快；
     // 移动端软键盘换行只能靠 ↵ 键，写死单行等于「长描述只能挤成一行横着滚」。
     return LayoutBuilder(
@@ -16888,10 +16931,13 @@ Available actions: __TOOLS__''';
                   child: Container(
                     margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                     padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                    // 待批准卡的底色同样走克制着色：主题色若非常高饱和
+                    // （琥珀 / 亮黄），primaryContainer 70/255 的整块底会明显泛黄，
+                    // 与对话区的中性实体面不协调。
                     decoration: BoxDecoration(
-                      color: scheme.primaryContainer.withAlpha(70),
+                      color: accent.fill,
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: scheme.primary.withAlpha(70)),
+                      border: Border.all(color: accent.border),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -16941,7 +16987,17 @@ Available actions: __TOOLS__''';
                             // 内容宽度，两颗宽度差近一倍；高度也各自跟着主题默认走，一高一矮
                             Expanded(
                               child: FilledButton.icon(
-                                style: btn.buttonStyle(filled: true),
+                                // 「批准」不再铺满主题色（主题色是琥珀时整块发黄、
+                                // 又没有边界）：改成主题色低透明度混入中性表面 +
+                                // 同色系描边，保留强调语义但有轮廓与层次。
+                                style: accent.style(
+                                  minimumSize: Size(0, btn.height),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(
+                                      btn.radius,
+                                    ),
+                                  ),
+                                ),
                                 onPressed: () {
                                   context.read<AppState>().logAiGraphApplied(
                                     _pendingNodes!.length,
@@ -17016,6 +17072,7 @@ Available actions: __TOOLS__''';
     final mobile = widget.mobileSheet;
     final zh = strings.isZh;
     final side = mobile ? 44.0 : 36.0;
+    final accent = AppAccentSurface.of(context);
     final editingStyle = Theme.of(context).textTheme.bodyMedium;
     final field = TextField(
       key: const ValueKey('ai-chat-input'),
@@ -17069,12 +17126,14 @@ Available actions: __TOOLS__''';
                       _pickingAttachments
                   ? null
                   : _send);
-        final style = FilledButton.styleFrom(
-          minimumSize: Size.square(side),
+        // 发送按钮同样是「不去依附主题色」的一处：原先用
+        // FilledButton.tonal，主题色高饱和时整块泛黄且无描边；
+        // 现在统一成克制着色 + 描边，禁用态自动降透明度。
+        final style = accent.style(
           padding: compact
               ? EdgeInsets.zero
               : const EdgeInsets.symmetric(horizontal: 14),
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          minimumSize: Size.square(side),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
@@ -17084,7 +17143,7 @@ Available actions: __TOOLS__''';
             message: label,
             child: SizedBox.square(
               dimension: side,
-              child: FilledButton.tonal(
+              child: FilledButton(
                 onPressed: action,
                 style: style,
                 child: glyph,
@@ -17094,7 +17153,7 @@ Available actions: __TOOLS__''';
         }
         return Tooltip(
           message: label,
-          child: FilledButton.tonalIcon(
+          child: FilledButton.icon(
             onPressed: action,
             style: style,
             icon: glyph,
