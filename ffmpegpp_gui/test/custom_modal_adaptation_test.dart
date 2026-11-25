@@ -1,12 +1,11 @@
 import 'dart:io';
 
-import 'package:ffmpegpp_gui/models/quick_config.dart';
+import 'package:ffmpegpp_gui/models/models.dart';
 import 'package:ffmpegpp_gui/pages/quick_config_page.dart';
 import 'package:ffmpegpp_gui/platform/app_platform.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/widgets/app_alert_dialog.dart';
-import 'package:ffmpegpp_gui/widgets/app_dropdown.dart';
 import 'package:ffmpegpp_gui/widgets/font_picker.dart';
 import 'package:ffmpegpp_gui/widgets/step_editors/image_crop_dialog.dart';
 import 'package:ffmpegpp_gui/widgets/step_editors/video_crop_step_editor.dart';
@@ -60,6 +59,37 @@ void _expectPill(WidgetTester tester, String label) {
   expect(tester.getSize(action).height, greaterThanOrEqualTo(44));
 }
 
+QuickConfig _serialModalConfig() => QuickConfig(
+  id: 'serial',
+  name: 'Audio settings',
+  fileType: QuickFileType.audio,
+  nodes: [
+    PipelineNode(
+      id: 'first',
+      type: PipelineStepType.audioQuality,
+      params: {'bitrate_mode': 'custom', 'audio_bitrate': 128},
+    ),
+    PipelineNode(
+      id: 'second',
+      type: PipelineStepType.audioQuality,
+      params: {'bitrate_mode': 'custom', 'audio_bitrate': 192},
+    ),
+  ],
+);
+
+Future<void> _expectQuickReachable(
+  WidgetTester tester,
+  Finder finder,
+  double bottom,
+) async {
+  expect(finder, findsOneWidget);
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  final rect = tester.getRect(finder);
+  expect(rect.top, greaterThanOrEqualTo(0));
+  expect(rect.bottom, lessThanOrEqualTo(bottom));
+}
+
 Future<void> _cacheImage(WidgetTester tester, Iterable<int> widths) async {
   final context = tester.element(find.byType(Scaffold));
   await tester.runAsync(() async {
@@ -95,33 +125,35 @@ void main() {
     },
   );
 
-  testWidgets(
-    'quick editor keeps accessible modal actions in a narrow viewport',
-    (tester) async {
-      final state = AppState()..config.language = 'en';
-      addTearDown(state.dispose);
-      await _host(
-        tester,
-        QuickConfigPage(
-          config: QuickConfig(
-            id: 'test',
-            fileType: QuickFileType.video,
-            name: 'A long configuration title',
-          ),
-          onSave: (_) async {},
+  testWidgets('quick wizard keeps actions reachable in a narrow viewport', (
+    tester,
+  ) async {
+    final state = AppState()..config.language = 'en';
+    addTearDown(state.dispose);
+    await _host(
+      tester,
+      QuickConfigPage(
+        config: QuickConfig(
+          id: 'empty',
+          fileType: QuickFileType.audio,
+          nodes: [],
         ),
-        state: state,
-      );
-      await tester.pump();
-
-      expect(tester.takeException(), isNull);
-      _expectPill(tester, 'Cancel');
-      _expectPill(tester, 'Save');
-    },
-  );
+        onSave: (_) async {},
+      ),
+      state: state,
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    for (final key in ['quick_save', 'quick_close']) {
+      final action = find.byKey(ValueKey(key));
+      await tester.ensureVisible(action);
+      expect(tester.getSize(action).height, greaterThanOrEqualTo(44));
+      expect(action.hitTestable(), findsOneWidget);
+    }
+  });
 
   testWidgets(
-    'quick editor keeps title, actions, selector and editing reachable with large text and IME',
+    'quick wizard keeps nodes, editing and actions reachable with large text and IME',
     (tester) async {
       final state = AppState()..config.language = 'en';
       addTearDown(state.dispose);
@@ -134,23 +166,7 @@ void main() {
               context: context,
               barrierDismissible: false,
               builder: (_) => QuickConfigPage(
-                config: QuickConfig(
-                  id: 'compact',
-                  fileType: QuickFileType.video,
-                  name: 'Quick configuration',
-                  items: [
-                    QuickConfigItem(
-                      key: 'first',
-                      title: 'First item',
-                      params: {'label': 'First value'},
-                    ),
-                    QuickConfigItem(
-                      key: 'second',
-                      title: 'Second item',
-                      params: {'label': 'Second value'},
-                    ),
-                  ],
-                ),
+                config: _serialModalConfig(),
                 onSave: (config) async => saved = config,
               ),
             ),
@@ -164,75 +180,54 @@ void main() {
       );
       await tester.tap(find.text('Open editor'));
       await tester.pumpAndSettle();
-
-      expect(find.text('Quick configuration'), findsOneWidget);
       expect(tester.takeException(), isNull);
-      await tester.ensureVisible(find.text('Quick configuration'));
       expect(
-        tester.getRect(find.text('Quick configuration')).bottom,
-        lessThanOrEqualTo(260),
+        find.byKey(const ValueKey('quick_compact_scroll')),
+        findsOneWidget,
       );
-      _expectPill(tester, 'Cancel');
-      _expectPill(tester, 'Save');
-      for (final label in ['Cancel', 'Save']) {
-        final action = find.ancestor(
-          of: find.text(label),
-          matching: find.byType(AppDialogAction),
-        );
-        await tester.ensureVisible(action);
-        expect(tester.getRect(action).top, greaterThanOrEqualTo(0));
-        expect(tester.getRect(action).bottom, lessThanOrEqualTo(260));
-      }
+      await _expectQuickReachable(
+        tester,
+        find.text('Quick configuration'),
+        260,
+      );
+      await _expectQuickReachable(
+        tester,
+        find.byKey(const ValueKey('quick_save')),
+        260,
+      );
+      await _expectQuickReachable(
+        tester,
+        find.byKey(const ValueKey('quick_close')),
+        260,
+      );
 
-      final selector = find.byType(AppDropdown<String>);
-      expect(selector, findsOneWidget);
-      await tester.ensureVisible(selector);
-      expect(tester.getRect(selector).bottom, lessThanOrEqualTo(260));
-      final selectorTrigger = find.descendant(
-        of: selector,
-        matching: find.text('First item'),
-      );
-      await tester.tap(selectorTrigger);
+      final catalog = find.text('Available nodes');
+      await _expectQuickReachable(tester, catalog, 260);
+      final second = find.byKey(const ValueKey('quick_node_second'));
+      await _expectQuickReachable(tester, second, 260);
+      await tester.tap(second);
       await tester.pumpAndSettle();
-      final secondItem = find.text('Second item').last;
-      final menuPanel = find.ancestor(
-        of: secondItem,
-        matching: find.byType(ClipRRect),
-      );
-      expect(tester.getRect(menuPanel).top, greaterThanOrEqualTo(0));
-      expect(tester.getRect(menuPanel).bottom, lessThanOrEqualTo(260));
-      await tester.drag(find.byType(ListView).last, const Offset(0, -96));
-      await tester.pumpAndSettle();
-      expect(tester.getRect(secondItem).top, greaterThanOrEqualTo(0));
-      expect(tester.getCenter(secondItem).dy, lessThanOrEqualTo(260));
-      await tester.tap(secondItem);
-      await tester.pumpAndSettle();
-
-      final field = find.byType(TextField);
-      expect(tester.widget<TextField>(field).controller!.text, 'Second value');
-      await tester.ensureVisible(field);
-      expect(tester.getRect(field).bottom, lessThanOrEqualTo(260));
-      await tester.enterText(field, 'Edited value');
+      final field = find.byType(TextField).first;
+      expect(tester.widget<TextField>(field).controller!.text, '192');
+      await _expectQuickReachable(tester, field, 260);
+      await tester.enterText(field, '256');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
       expect(tester.takeException(), isNull);
-
-      final save = find.widgetWithText(FilledButton, 'Save');
-      expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
-      await tester.ensureVisible(save);
-      expect(tester.getRect(save).top, greaterThanOrEqualTo(0));
-      expect(tester.getRect(save).bottom, lessThanOrEqualTo(260));
+      final save = find.byKey(const ValueKey('quick_save'));
+      await _expectQuickReachable(tester, save, 260);
+      expect(tester.widget<OutlinedButton>(save).onPressed, isNotNull);
       await tester.tap(save);
       await tester.pumpAndSettle();
-      expect(saved?.items[1].params['label'], 'Edited value');
+      expect(saved!.nodes![0].params['audio_bitrate'], 128);
+      expect(saved!.nodes![1].params['audio_bitrate'], 256);
       expect(find.byType(QuickConfigPage), findsNothing);
 
       await tester.tap(find.text('Open editor'));
       await tester.pumpAndSettle();
-      final cancel = find.widgetWithText(TextButton, 'Cancel');
-      await tester.ensureVisible(cancel);
-      expect(tester.getRect(cancel).bottom, lessThanOrEqualTo(260));
-      await tester.tap(cancel);
+      final close = find.byKey(const ValueKey('quick_close'));
+      await _expectQuickReachable(tester, close, 260);
+      await tester.tap(close);
       await tester.pumpAndSettle();
       expect(find.byType(QuickConfigPage), findsNothing);
     },
@@ -240,7 +235,7 @@ void main() {
 
   for (final scale in [1.0, 2.0]) {
     testWidgets(
-      'quick editor stays editable with a short keyboard viewport at $scale',
+      'quick wizard stays editable with a short keyboard viewport at $scale',
       (tester) async {
         final state = AppState()..config.language = 'en';
         addTearDown(state.dispose);
@@ -252,23 +247,7 @@ void main() {
                 context: context,
                 barrierDismissible: false,
                 builder: (_) => QuickConfigPage(
-                  config: QuickConfig(
-                    id: 'keyboard',
-                    fileType: QuickFileType.video,
-                    name: 'Keyboard configuration',
-                    items: [
-                      QuickConfigItem(
-                        key: 'custom',
-                        title: 'Custom item',
-                        params: {'label': 'Original'},
-                      ),
-                      QuickConfigItem(
-                        key: 'second',
-                        title: 'Second item',
-                        params: {'label': 'Second'},
-                      ),
-                    ],
-                  ),
+                  config: _serialModalConfig(),
                   onSave: (_) async {},
                 ),
               ),
@@ -283,32 +262,28 @@ void main() {
         await tester.tap(find.text('Open editor'));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        _expectPill(tester, 'Cancel');
-        _expectPill(tester, 'Save');
-        final selector = find.byType(AppDropdown<String>);
-        expect(selector, findsOneWidget);
-        await tester.ensureVisible(selector);
-        final selectorTrigger = find.descendant(
-          of: selector,
-          matching: find.text('Custom item'),
+        await _expectQuickReachable(
+          tester,
+          find.byKey(const ValueKey('quick_save')),
+          340,
         );
-        await tester.tap(selectorTrigger.last);
+        final second = find.byKey(const ValueKey('quick_node_second'));
+        await _expectQuickReachable(tester, second, 340);
+        await tester.tap(second);
         await tester.pumpAndSettle();
-        await tester.tap(find.text('Second item').last);
-        await tester.pumpAndSettle();
-        final field = find.byType(TextField);
-        expect(tester.widget<TextField>(field).controller!.text, 'Second');
-        await tester.ensureVisible(field);
-        await tester.enterText(field, 'Edited');
+        final field = find.byType(TextField).first;
+        expect(tester.widget<TextField>(field).controller!.text, '192');
+        await _expectQuickReachable(tester, field, 340);
+        await tester.enterText(field, '224');
         await tester.testTextInput.receiveAction(TextInputAction.done);
         await tester.pump();
         expect(tester.takeException(), isNull);
-        expect(
-          tester
-              .widget<FilledButton>(find.widgetWithText(FilledButton, 'Save'))
-              .onPressed,
-          isNotNull,
-        );
+        final save = find.byKey(const ValueKey('quick_save'));
+        await _expectQuickReachable(tester, save, 340);
+        expect(tester.widget<OutlinedButton>(save).onPressed, isNotNull);
+        await tester.tap(save);
+        await tester.pumpAndSettle();
+        expect(find.byType(QuickConfigPage), findsNothing);
       },
     );
   }

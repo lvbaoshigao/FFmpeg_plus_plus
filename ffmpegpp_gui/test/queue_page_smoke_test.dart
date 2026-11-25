@@ -86,7 +86,9 @@ void main() {
       config: TranscodeConfig(),
       status: TaskStatus.paused,
       progress: 37,
-      pipelineCalls: calls,
+      // Freeze a measured current-call value, rather than a synthetic overall %.
+      pipelineCalls: [calls.first],
+      callProgresses: const [0.37],
     ));
     await tester.pumpWidget(_harness(state));
     await tester.pump();

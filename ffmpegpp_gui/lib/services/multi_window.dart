@@ -60,6 +60,12 @@ enum DetachedPanel {
   }
 }
 
+/// 仅 AI 面板需要库与任务数据；其他面板不遍历或序列化这些集合。
+Map<String, dynamic> panelAppDataSnapshot(
+  DetachedPanel panel,
+  Map<String, dynamic> Function() buildAiData,
+) => panel == DetachedPanel.ai ? buildAiData() : const <String, dynamic>{};
+
 /// 子窗口的启动参数。
 ///
 /// 跨引擎边界只能传一个字符串，所以统一 JSON 编码后塞进

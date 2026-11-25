@@ -2591,6 +2591,7 @@ class AppState extends ChangeNotifier {
         _tasks[fi] = _tasks[fi].copyWith(
           currentCallIndex: ci,
           progress: stepProgress * 100,
+          remaining: '',
         );
         _tasksNotify();
       }
@@ -2608,7 +2609,9 @@ class AppState extends ChangeNotifier {
             if (!_ownsRun(taskId, run)) return false;
             final i = _tasks.indexWhere((t) => t.id == taskId);
             // 已取消/已完成/已失败的任务不再被进度消息改回 processing
-            if (i < 0 || _tasks[i].status != TaskStatus.processing) {
+            if (i < 0 ||
+                _tasks[i].status != TaskStatus.processing ||
+                _tasks[i].currentCallIndex != ci) {
               return false;
             }
             final overallProgress =
@@ -3513,6 +3516,9 @@ class AppState extends ChangeNotifier {
         if (!_ownsRun(taskId, run)) return false;
         final i = _tasks.indexWhere((tk) => tk.id == taskId);
         if (i < 0 || _tasks[i].status != TaskStatus.processing) return false;
+        if (callIndex != null && _tasks[i].currentCallIndex != callIndex) {
+          return false;
+        }
         List<double> newCallProgresses = _tasks[i].callProgresses;
         if (callIndex != null && callIndex < _tasks[i].callProgresses.length) {
           newCallProgresses = List<double>.from(_tasks[i].callProgresses);

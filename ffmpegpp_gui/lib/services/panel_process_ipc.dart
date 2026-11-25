@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 typedef PanelIpcRequestHandler =
     FutureOr<dynamic> Function(String method, Map<String, dynamic> args);
@@ -21,7 +22,9 @@ class PanelProcessIpc {
   final Socket _socket;
   late final StreamSubscription<List<int>> _subscription;
   final Map<int, Completer<dynamic>> _pending = {};
-  List<int> _buffer = [];
+  // Keep fragmented frames in typed chunks instead of general-purpose list slots.
+  final BytesBuilder _buffer = BytesBuilder(copy: false);
+  int _bufferLength = 0;
   int _nextId = 0;
   bool _closed = false;
   PanelIpcRequestHandler? onRequest;
@@ -61,20 +64,29 @@ class PanelProcessIpc {
   }
 
   void _onData(List<int> bytes) {
-    for (final byte in bytes) {
-      if (byte == 10) {
-        final line = _buffer;
-        _buffer = [];
-        _onLine(line);
-        if (_closed) return;
-      } else {
-        if (_buffer.length >= maxMessageBytes) {
-          _finish(StateError('Panel IPC message exceeds the size limit'));
-          return;
-        }
-        _buffer.add(byte);
-      }
+    var start = 0;
+    for (var i = 0; i < bytes.length; i++) {
+      if (bytes[i] != 10) continue;
+      if (!_append(bytes, start, i)) return;
+      final line = _buffer.takeBytes();
+      _bufferLength = 0;
+      _onLine(line);
+      if (_closed) return;
+      start = i + 1;
     }
+    if (start < bytes.length) _append(bytes, start, bytes.length);
+  }
+
+  bool _append(List<int> bytes, int start, int end) {
+    final length = end - start;
+    if (length == 0) return true;
+    if (_bufferLength > maxMessageBytes - length) {
+      _finish(StateError('Panel IPC message exceeds the size limit'));
+      return false;
+    }
+    _buffer.add(bytes.sublist(start, end));
+    _bufferLength += length;
+    return true;
   }
 
   void _onLine(List<int> bytes) {
@@ -138,7 +150,8 @@ class PanelProcessIpc {
       if (!completer.isCompleted) completer.completeError(error);
     }
     _pending.clear();
-    _buffer = [];
+    _buffer.clear();
+    _bufferLength = 0;
     _socket.destroy();
     onClosed?.call();
   }
@@ -152,7 +165,8 @@ class PanelProcessIpc {
       }
     }
     _pending.clear();
-    _buffer = [];
+    _buffer.clear();
+    _bufferLength = 0;
     await _subscription.cancel();
     await _socket.close();
     onClosed?.call();

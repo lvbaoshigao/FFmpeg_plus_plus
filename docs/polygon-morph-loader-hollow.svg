@@ -55,30 +55,34 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800"
      preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="pmTitle pmDesc">
   <title id="pmTitle">多边形变形加载动画</title>
-  <desc id="pmDesc">柔和的单色空心加载动画：圆角多边形从三角形逐级变形到八边形，再由八边形逐级变回三角形；整体是空心的边框形态。</desc>
+  <desc id="pmDesc">透明背景的单色空心加载动画：圆角多边形从三角形逐级变形到八边形，再连续逐级变回三角形；中心的软件图标保持静止。</desc>
 
   <defs>
     <!-- 白 = 保留、黑 = 挖掉。坐标在 pmStage 平移后、原点位于形状中心的空间。 -->
     <mask id="pmHoleMask" maskUnits="userSpaceOnUse" x="-400" y="-400" width="800" height="800">
       <rect x="-400" y="-400" width="800" height="800" fill="#fff"/>
       <path id="pmHole" fill="#000" stroke="#000" stroke-width="104"
-            stroke-linejoin="round" stroke-linecap="round" d="M0 0Z"/>
+            stroke-linejoin="round" stroke-linecap="round"
+            d="M229.08 0L-114.54 198.37L-114.54 -198.37Z"/>
     </mask>
   </defs>
 
-  <!-- 背景。嵌进深色界面时删掉这一行，或把 fill 换成页面底色。 -->
-  <rect id="pmBG" x="0" y="0" width="800" height="800" fill="#F5F0E8"/>
+  <!-- 保持透明；嵌入时可用 CSS 自定义属性指定主题色，见形状的 style。 -->
 
   <!-- 形状本体：fill 与 stroke 同色，stroke-width = 2 × 圆角半径 -->
   <g id="pmStage" transform="translate(400 400)">
     <!-- 空心 = 实心外形 + mask 挖掉中间「同形状但更小」的一块。
          内外两条边都用「内缩 + round 描边」绘制，所以都是圆弧，边框等宽。 -->
     <g mask="url(#pmHoleMask)">
-      <path id="pmShape" fill="#7A675C" stroke="#7A675C" stroke-width="104"
+      <path id="pmShape" fill="currentColor" stroke="currentColor" style="color:var(--polygon-morph-color, #7A675C)" stroke-width="104"
             stroke-linejoin="round" stroke-linecap="round"
             d="M318.17 0L-159.09 275.52L-159.09 -275.52Z"/>
     </g>
   </g>
+
+  <!-- 图标保持静止；尺寸与 Flutter 空心款一致，始终位于最小内孔中。 -->
+  <image href="../ffmpegpp_gui/rele/icon.png" x="288" y="288" width="224" height="224"
+         preserveAspectRatio="xMidYMid meet" aria-hidden="true"/>
 
   <script><![CDATA[
   (function (root) {

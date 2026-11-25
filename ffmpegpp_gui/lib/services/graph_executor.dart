@@ -2035,13 +2035,20 @@ class GraphExecutor {
     final visualizers = plan.steps.where((step) =>
         step.action == 'audio_spectrum' || step.action == 'audio_waveform');
     final hasVisualization = visualizers.isNotEmpty;
+    final hasSingleFrame = plan.steps.any((step) => step.action == 'frame' &&
+        (step.nodes.first.params['extract_mode'] ?? 'single') == 'single');
     final finalMedia = plan.steps.isEmpty ? null : plan.steps.last.nodes.last.outputType;
-    if (format != 'keep' && !(hasVisualization && finalMedia == MediaType.image)) {
+    // A still-image producer changes the container as well as the media type.
+    // Retained video output settings must not turn a later image edit into MP4.
+    final hasImageOutput = (hasVisualization || hasSingleFrame) && finalMedia == MediaType.image;
+    if (format != 'keep' && !hasImageOutput) {
       ext = format;
     } else {
       ext = video.filename.split('.').last;
       for (final step in plan.steps) {
         ext = switch (step.action) {
+          'frame' when (step.nodes.first.params['extract_mode'] ?? 'single') == 'single' =>
+            step.nodes.first.params['output_format'] as String? ?? 'png',
           'audio_convert' || 'extract_audio' => step.nodes.first.params['output_format'] as String? ?? 'm4a',
           'audio_spectrum' || 'audio_waveform' => AudioVisualization.fromParams(step.nodes.first.params).format,
           'image_sequence' => step.nodes.first.params['output_format'] as String? ?? 'mp4',

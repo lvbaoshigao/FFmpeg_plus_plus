@@ -11,9 +11,11 @@ import '../providers/app_state.dart';
 import '../services/saved_config_application.dart';
 import '../services/thumbnail_service.dart';
 import '../theme/app_strings.dart';
+import '../widgets/adaptive_top_bar.dart';
 import '../widgets/animated_popup.dart';
 import '../widgets/app_alert_dialog.dart';
 import '../widgets/app_card.dart';
+import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
@@ -60,7 +62,40 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
         WindowChrome(
           child: Scaffold(
             backgroundColor: Colors.transparent,
-            body: Center(child: Text(s.isZh ? '容器不存在' : 'Container not found')),
+            body: Column(
+              children: [
+                AdaptiveTopBar(
+                  compactBuilder: (_) => MobileSubPageTopBar(
+                    title: Text(s.isZh ? '容器不存在' : 'Container not found'),
+                  ),
+                  expandedBuilder: (context) => GlassTopBar(
+                    title: Row(
+                      children: [
+                        IconButton(
+                          tooltip: MaterialLocalizations.of(
+                            context,
+                          ).backButtonTooltip,
+                          icon: const Icon(Icons.arrow_back),
+                          onPressed: () => Navigator.of(context).maybePop(),
+                        ),
+                        Expanded(
+                          child: Text(
+                            s.isZh ? '容器不存在' : 'Container not found',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Center(
+                    child: Text(s.isZh ? '容器不存在' : 'Container not found'),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -148,139 +183,94 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
       const SizedBox(width: 8),
     ];
 
-    final Widget content;
-    if (isMobilePlatform) {
-      // 移动端沉浸：列表钻到药丸顶栏底下（见 ImmersiveTopBar），
-      // 顶部留白 = 顶栏实际高度（insetOf），否则首行被药丸压住。
-      content = ImmersiveTopBar(
-        bar: MobileSubPageTopBar(
-          // 两组共 4 个操作直接显示为两颗药丸，不按条数折叠；屏幕太窄 /
-          // 大字号放不下时仍由宽度判定收进「…」。
-          inlineActionLimit: 4,
-          title: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.folder_special, size: 15, color: scheme.primary),
-              const SizedBox(width: 4),
-              // 标题药丸按内容取宽，长容器名约束在屏宽 1/3 内省略
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width * 0.34,
-                ),
-                child: Text(
-                  container.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Text(
-                ' (${container.fileCount})',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: scheme.outline,
-                  fontWeight: FontWeight.normal,
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            MobileGlassPillAction(
-              icon: Icons.edit_note,
-              tooltip: s.isZh ? '编辑节点图' : 'Edit Pipeline',
-              color: hasParsed ? scheme.onSurface : scheme.outlineVariant,
-              onTap: hasParsed ? () => _editPipeline(state, container) : null,
-            ),
-            MobileGlassPillAction(
-              icon: Icons.drive_file_rename_outline,
-              tooltip: s.isZh ? '重命名' : 'Rename',
-              color: scheme.onSurface,
-              onTap: () => _rename(state, container, s),
-            ),
-            // 分组：容器本身（编辑节点图 / 重命名）| 容器内容（添加文件 / 排序）。
-            const MobileActionGroupBreak(),
-            MobileGlassPillAction(
-              icon: Icons.add,
-              tooltip: s.containerAddFiles,
-              color: scheme.onPrimary,
-              bg: scheme.primary,
-              onTap: () => _addFiles(state),
-            ),
-            // 排序菜单：与桌面端同一个 ScaleMenuButton（浮层宽度由 menuWidth 控制，
-            // 不再依赖 PopupMenuButton 的 constraints 去压制菜单宽度）。
-            ScaleMenuButton<ContainerSortMode>(
-              icon: Icons.sort,
-              iconSize: 19,
-              size: 34,
-              tooltip: s.isZh ? '排序' : 'Sort',
-              items: [
-                OptionItem(ContainerSortMode.name, s.containerSortName),
-                OptionItem(ContainerSortMode.size, s.containerSortSize),
-                OptionItem(ContainerSortMode.duration, s.containerSortDuration),
-              ],
-              onSelected: (mode) => state.sortContainerBy(container.id, mode),
-            ),
-          ],
-        ),
-        child: listWidget,
-      );
-    } else {
-      content = Column(
+    final containerTitle = GestureDetector(
+      onDoubleTap: () => _rename(state, container, s),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Padding(
-            // 垂直内边距上下相等：原先下边距只有 2，工具栏整体偏上。
-            // Linux 的 36px 自绘标题栏已统一由 WindowChrome 让位（内容整体下移），
-            // 这里不再额外留 40；macOS 走系统标题栏，保留历史上的 40 视觉间距。
-            padding: EdgeInsets.fromLTRB(8, Platform.isMacOS ? 40 : 4, 8, 4),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back, size: 20),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                const SizedBox(width: 4),
-                // 标题组由「裸 GestureDetector + Spacer」改为 Expanded：容器名拿到有界宽度，
-                // 大字号/超长名称时单行省略，而不是把整条工具栏撑到横向溢出。
-                // Expanded 已吸收全部剩余空间，操作按钮依旧被顶到最右侧（原 Spacer 的作用）。
-                Expanded(
-                  child: GestureDetector(
-                    onDoubleTap: () => _rename(state, container, s),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.folder_special,
-                          size: 18,
-                          color: scheme.primary,
-                        ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            container.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              color: scheme.onSurface,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          '  (${container.fileCount})',
-                          style: TextStyle(fontSize: 12, color: scheme.outline),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                ...toolbarActions,
-              ],
+          Icon(Icons.folder_special, size: 18, color: scheme.primary),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              container.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-          Expanded(child: listWidget),
+          Text(
+            '  (${container.fileCount})',
+            style: TextStyle(fontSize: 12, color: scheme.outline),
+          ),
         ],
-      );
-    }
+      ),
+    );
+    final compactTopBar = MobileSubPageTopBar(
+      inlineActionLimit: 4,
+      title: containerTitle,
+      actions: [
+        MobileGlassPillAction(
+          icon: Icons.edit_note,
+          tooltip: s.isZh ? '编辑节点图' : 'Edit Pipeline',
+          color: hasParsed ? scheme.onSurface : scheme.outlineVariant,
+          onTap: hasParsed ? () => _editPipeline(state, container) : null,
+        ),
+        MobileGlassPillAction(
+          icon: Icons.drive_file_rename_outline,
+          tooltip: s.isZh ? '重命名' : 'Rename',
+          color: scheme.onSurface,
+          onTap: () => _rename(state, container, s),
+        ),
+        // 分组：容器本身（编辑节点图 / 重命名）| 容器内容（添加文件 / 排序）。
+        const MobileActionGroupBreak(),
+        MobileGlassPillAction(
+          icon: Icons.add,
+          tooltip: s.containerAddFiles,
+          color: scheme.onPrimary,
+          bg: scheme.primary,
+          onTap: () => _addFiles(state),
+        ),
+        // 排序菜单：与桌面端同一个 ScaleMenuButton（浮层宽度由 menuWidth 控制，
+        // 不再依赖 PopupMenuButton 的 constraints 去压制菜单宽度）。
+        ScaleMenuButton<ContainerSortMode>(
+          icon: Icons.sort,
+          iconSize: 19,
+          size: 34,
+          tooltip: s.isZh ? '排序' : 'Sort',
+          items: [
+            OptionItem(ContainerSortMode.name, s.containerSortName),
+            OptionItem(ContainerSortMode.size, s.containerSortSize),
+            OptionItem(ContainerSortMode.duration, s.containerSortDuration),
+          ],
+          onSelected: (mode) => state.sortContainerBy(container.id, mode),
+        ),
+      ],
+    );
+    final Widget content = isMobilePlatform
+        ? ImmersiveTopBar(bar: compactTopBar, child: listWidget)
+        : Column(
+            children: [
+              AdaptiveTopBar(
+                compactBuilder: (_) => compactTopBar,
+                expandedBuilder: (context) => GlassTopBar(
+                  title: Row(
+                    children: [
+                      IconButton(
+                        tooltip: MaterialLocalizations.of(
+                          context,
+                        ).backButtonTooltip,
+                        icon: const Icon(Icons.arrow_back, size: 20),
+                        onPressed: () => Navigator.of(context).maybePop(),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(child: containerTitle),
+                    ],
+                  ),
+                  actions: toolbarActions,
+                ),
+              ),
+              Expanded(child: listWidget),
+            ],
+          );
 
     // Linux 客户端修饰（CSD）：统一使用 widgets/window_chrome.dart。
     //  * WindowChrome 必须放在 withWallpaper 的**内层**：标题栏玻璃用

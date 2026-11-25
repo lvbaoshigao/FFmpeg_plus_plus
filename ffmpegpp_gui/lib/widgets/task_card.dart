@@ -9,6 +9,7 @@ import '../models/models.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../services/shell_open.dart';
+import '../services/task_progress_display.dart';
 import '../services/thumbnail_service.dart';
 import '../theme/app_neutral_surface.dart';
 import '../theme/app_semantic_colors.dart';
@@ -17,6 +18,7 @@ import '../theme/app_theme.dart';
 import 'app_alert_dialog.dart';
 import 'app_card.dart';
 import 'app_slider.dart';
+import 'polygon_morph_loader.dart';
 import 'toast.dart';
 
 /// 后端流水线步骤 action → 本地化名称。
@@ -227,10 +229,11 @@ class TaskCard extends StatelessWidget {
                                     '${s.qElapsed}: ${task.elapsed}',
                                     scheme,
                                   ),
-                                // 剩余时间紧跟状态：处理中/暂停中有意义（暂停时是
-                                // 冻结的预计剩余），等待/终态不占位
-                                if (task.status == TaskStatus.processing ||
-                                    task.status == TaskStatus.paused) ...[
+                                // 只有后端提供真实剩余时间时才显示；图片等无进度
+                                // 任务的默认 N/A/旧步骤值不占位，也不制造虚假预估。
+                                if (TaskProgressDisplay.showsRemaining(
+                                  task,
+                                )) ...[
                                   const SizedBox(width: 8),
                                   _chip(
                                     Icons.timer_outlined,
@@ -350,77 +353,56 @@ class TaskCard extends StatelessWidget {
                       ),
                     ],
                   ),
-                  // 进度区：处理中/已暂停/已完成显示（等待与终态不占位）。
-                  // 暂停也要显示：进度条冻结在暂停那一刻的位置，正是用户
-                  // 判断「该不该继续」的依据。
+                  // 无当前步骤进度时只表达处理中；暂停静态，完成固定满条。
                   if (task.status == TaskStatus.processing ||
                       task.status == TaskStatus.paused ||
                       task.status == TaskStatus.completed) ...[
                     const SizedBox(height: 10),
-                    // 上层：整体进度（分段）。**只在流水线真的分多段时才画** ——
-                    // 单节点任务下它和下面的当前步骤条是同一件事，两条一模一样的长条
-                    // 并排只会让人以为是两个不同指标（用户反馈的「宽大又难读」）。
-                    if ((task.pipelineCalls?.length ?? 1) > 1) ...[
-                      _SegmentedProgressBar(
-                        segments: task.pipelineCalls!.length,
-                        callProgresses: task.callProgresses,
-                        currentCallIndex: task.currentCallIndex,
-                        // 8px：见 kQueueTrackHeight —— 不再是滑块的 16px 规格
-                        height: kQueueTrackHeight,
-                        done: task.status == TaskStatus.completed,
-                        paused: task.status == TaskStatus.paused,
-                      ),
-                      const SizedBox(height: kQueueTrackGap),
-                    ],
-                    // 下层：当前步骤进度。完成态固定画满（后端可能没为最后一步
-                    // 发过进度事件，callProgresses 停在 0 会显示成空条/不确定条）。
-                    AppProgressBar(
-                      height: kQueueTrackHeight,
-                      // 暂停时必须是**确定值**：null 会走不确定（无限滚动）动画，
-                      // 看起来像还在干活，与「已冻结」直接矛盾。
-                      value: task.status == TaskStatus.completed
-                          ? 1.0
-                          : task.status == TaskStatus.paused
-                          ? (task.callProgresses.isNotEmpty &&
-                                    task.currentCallIndex <
-                                        task.callProgresses.length
-                                ? task.callProgresses[task.currentCallIndex]
-                                : (task.progress / 100).clamp(0.0, 1.0))
-                          : task.callProgresses.isNotEmpty &&
-                                task.currentCallIndex <
-                                    task.callProgresses.length
-                          ? task.callProgresses[task.currentCallIndex]
-                          : null,
-                    ),
-                    const SizedBox(height: 6),
-                    // 速度与百分比同一行。速度为空时左侧留白会让这一行只剩一个孤零零的
-                    // 百分比飘在右边，所以补上「步骤 i/n」——它恰好是用户在看进度时
-                    // 最想知道、而折叠态里原本看不到的信息。
-                    Row(
-                      children: [
-                        if (task.speed.isNotEmpty)
-                          _chip(
-                            Icons.speed,
-                            _dashIfNa(task.speed, s.isZh),
-                            scheme,
-                          )
-                        else if ((task.pipelineCalls?.length ?? 0) > 1)
-                          _chip(
-                            Icons.account_tree,
-                            '${s.isZh ? '步骤' : 'Step'} ${task.currentCallIndex + 1}/${task.pipelineCalls!.length}',
-                            scheme,
-                          ),
-                        const Spacer(),
-                        Text(
-                          '${task.progress.toStringAsFixed(0)}%',
-                          style: TextStyle(
-                            fontSize: kQueueFsValue,
-                            fontWeight: FontWeight.w600,
-                            color: clr,
-                          ),
+                    if (TaskProgressDisplay.showsLoader(task))
+                      _IndeterminateTaskProgress(task: task, s: s)
+                    else ...[
+                      if (task.callProgresses.length > 1) ...[
+                        _SegmentedProgressBar(
+                          segments: task.callProgresses.length,
+                          callProgresses: task.callProgresses,
+                          currentCallIndex: task.currentCallIndex,
+                          height: kQueueTrackHeight,
+                          done: task.status == TaskStatus.completed,
+                          paused: task.status == TaskStatus.paused,
                         ),
+                        const SizedBox(height: kQueueTrackGap),
                       ],
-                    ),
+                      AppProgressBar(
+                        height: kQueueTrackHeight,
+                        value: TaskProgressDisplay.currentStepValue(task),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          if (task.speed.isNotEmpty)
+                            _chip(
+                              Icons.speed,
+                              _dashIfNa(task.speed, s.isZh),
+                              scheme,
+                            )
+                          else if (task.callProgresses.length > 1)
+                            _chip(
+                              Icons.account_tree,
+                              '${s.isZh ? '步骤' : 'Step'} ${task.currentCallIndex + 1}/${task.callProgresses.length}',
+                              scheme,
+                            ),
+                          const Spacer(),
+                          Text(
+                            '${(TaskProgressDisplay.overallValue(task) * 100).toStringAsFixed(0)}%',
+                            style: TextStyle(
+                              fontSize: kQueueFsValue,
+                              fontWeight: FontWeight.w600,
+                              color: clr,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                   // 失败任务：折叠态也直接显示错误摘要，点开卡片可查看完整日志
                   if (task.status == TaskStatus.failed &&
@@ -1149,7 +1131,9 @@ class _SummaryBar extends StatelessWidget {
     final String sub = switch (task.status) {
       TaskStatus.pending => zh ? '等待开始处理' : 'Waiting to start',
       TaskStatus.processing =>
-        '${s.remaining} ${_dashIfNa(task.remaining, zh)}',
+        TaskProgressDisplay.showsRemaining(task)
+            ? '${s.remaining} ${_dashIfNa(task.remaining, zh)}'
+            : s.processing,
       TaskStatus.paused =>
         zh
             ? '进程已冻结（CPU 已释放），进度与已编码数据均保留'
@@ -1178,7 +1162,7 @@ class _SummaryBar extends StatelessWidget {
       );
     }
 
-    final showPercent = task.status != TaskStatus.pending;
+    final showPercent = TaskProgressDisplay.showsPercentage(task);
 
     return _PanelBox(
       color: color.withAlpha(16),
@@ -1188,7 +1172,15 @@ class _SummaryBar extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 18, color: color),
+              if (TaskProgressDisplay.showsLoader(task))
+                PolygonMorphLoader(
+                  size: 18,
+                  color: color,
+                  reduceMotion: task.status == TaskStatus.paused ? true : null,
+                  semanticsLabel: label,
+                )
+              else
+                Icon(icon, size: 18, color: color),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -1204,7 +1196,7 @@ class _SummaryBar extends StatelessWidget {
               ),
               if (showPercent)
                 Text(
-                  '${task.progress.toStringAsFixed(0)}%',
+                  '${(TaskProgressDisplay.overallValue(task) * 100).toStringAsFixed(0)}%',
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
@@ -1814,6 +1806,54 @@ class _CopyButton extends StatelessWidget {
   }
 }
 
+/// Indeterminate task progress: honest processing state without a fake bar.
+class _IndeterminateTaskProgress extends StatelessWidget {
+  final TaskInfo task;
+  final AppStrings s;
+
+  const _IndeterminateTaskProgress({required this.task, required this.s});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final paused = task.status == TaskStatus.paused;
+    final label = paused ? taskPausedLabel(s.isZh) : s.processing;
+    final color = paused ? scheme.sem.info : scheme.sem.warning;
+    final count = task.callProgresses.isNotEmpty
+        ? task.callProgresses.length
+        : task.pipelineCalls?.length ?? 0;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        PolygonMorphLoader(
+          size: 24,
+          color: color,
+          // Null preserves the system reduced-motion preference while paused
+          // is always static because no work is advancing.
+          reduceMotion: paused ? true : null,
+          semanticsLabel: label,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: kQueueFsValue,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ),
+        if (count > 1)
+          Text(
+            '${s.isZh ? '步骤' : 'Step'} ${task.currentCallIndex + 1}/$count',
+            style: TextStyle(fontSize: kQueueFsLabel, color: scheme.outline),
+          ),
+      ],
+    );
+  }
+}
+
 /// 分段进度条：上层整体进度，每段代表一个节点。
 ///
 /// 外观与全应用滑块 / 进度条统一（胶囊 + 玻璃留空）：整条轨道底下垫**一层**
@@ -2134,8 +2174,13 @@ class _ViewportNode extends StatelessWidget {
     final running =
         status == TaskStatus.processing || status == TaskStatus.paused;
     return Tooltip(
-      message:
-          '$label\n${zh ? '进度' : 'Progress'}: ${(progress * 100).toStringAsFixed(0)}%',
+      message: progress.isFinite && progress > 0
+          ? '$label\n${zh ? '进度' : 'Progress'}: ${(progress * 100).toStringAsFixed(0)}%'
+          : '$label\n${isCurrent && status == TaskStatus.processing
+                ? (zh ? '处理中' : 'Processing')
+                : isCurrent && status == TaskStatus.paused
+                ? taskPausedLabel(zh)
+                : (zh ? '等待中' : 'Pending')}',
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2164,24 +2209,25 @@ class _ViewportNode extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 5),
-          // 动态进度条：值直接来自 callProgresses（暂停时冻结原位）。
-          ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: SizedBox(
-              height: 4,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  ColoredBox(color: color.withAlpha(30)),
-                  FractionallySizedBox(
-                    alignment: Alignment.centerLeft,
-                    widthFactor: progress.clamp(0.0, 1.0),
-                    child: ColoredBox(color: color),
-                  ),
-                ],
+          // 没有可用比例时不画空条，避免把默认零当作已测得进度。
+          if (progress.isFinite && progress > 0)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: SizedBox(
+                height: 4,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ColoredBox(color: color.withAlpha(30)),
+                    FractionallySizedBox(
+                      alignment: Alignment.centerLeft,
+                      widthFactor: progress.clamp(0.0, 1.0),
+                      child: ColoredBox(color: color),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
           const SizedBox(height: 3),
           Text(
             '${index + 1}',
@@ -2330,8 +2376,13 @@ class _NodeDot extends StatelessWidget {
     final abbr = taskActionAbbr(call.action, zh);
 
     return Tooltip(
-      message:
-          '$label\n${(zh ? AppStrings.zh : AppStrings.en).qProgress}: ${(progress * 100).toStringAsFixed(0)}%',
+      message: progress.isFinite && progress > 0
+          ? '$label\n${zh ? '进度' : 'Progress'}: ${(progress * 100).toStringAsFixed(0)}%'
+          : '$label\n${isCurrent && status == TaskStatus.processing
+                ? (zh ? '处理中' : 'Processing')
+                : isCurrent && status == TaskStatus.paused
+                ? taskPausedLabel(zh)
+                : (zh ? '等待中' : 'Pending')}',
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

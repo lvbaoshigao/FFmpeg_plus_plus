@@ -4,22 +4,24 @@
 // 配置库页负责新建/删除/展示，Quick Config 编辑器（另一模块）负责读写编辑。
 // ═══════════════════════════════════════════
 
+import 'models.dart' show PipelineNode;
+
 enum QuickFileType {
   video,
   image,
   audio;
 
   String get name => switch (this) {
-        QuickFileType.video => 'video',
-        QuickFileType.image => 'image',
-        QuickFileType.audio => 'audio',
-      };
+    QuickFileType.video => 'video',
+    QuickFileType.image => 'image',
+    QuickFileType.audio => 'audio',
+  };
 
   String label(bool isZh) => switch (this) {
-        QuickFileType.video => isZh ? '视频' : 'Video',
-        QuickFileType.image => isZh ? '图片' : 'Image',
-        QuickFileType.audio => isZh ? '音频' : 'Audio',
-      };
+    QuickFileType.video => isZh ? '视频' : 'Video',
+    QuickFileType.image => isZh ? '图片' : 'Image',
+    QuickFileType.audio => isZh ? '音频' : 'Audio',
+  };
 
   /// 宽容解析历史文件里的 file_type：大小写/前后空格、常见别名、
   /// 以及旧版可能写成的数字索引（0=video, 1=image, 2=audio）。
@@ -72,15 +74,16 @@ class QuickConfigItem {
   }
 
   Map<String, dynamic> toJson() => {
-        'key': key,
-        'title': title,
-        'title_zh': titleZh,
-        'title_en': titleEn,
-        'params': params,
-        'enabled': enabled,
-      };
+    'key': key,
+    'title': title,
+    'title_zh': titleZh,
+    'title_en': titleEn,
+    'params': params,
+    'enabled': enabled,
+  };
 
-  factory QuickConfigItem.fromJson(Map<String, dynamic> json) => QuickConfigItem(
+  factory QuickConfigItem.fromJson(Map<String, dynamic> json) =>
+      QuickConfigItem(
         key: json['key'] as String? ?? '',
         title: json['title'] as String? ?? '',
         titleZh: json['title_zh'] as String? ?? '',
@@ -100,6 +103,14 @@ class QuickConfig {
   DateTime updatedAt;
   List<QuickConfigItem> items;
 
+  /// 有序的处理节点；null 表示旧版参数模板，空列表表示尚未添加节点。
+  /// 每个节点保留独立 id，同一类型可以出现多次。
+  List<PipelineNode>? nodes;
+
+  /// 从单链图恢复时保留源/输出参数，避免丢失输出目录、文件名等设置。
+  Map<String, dynamic> inputParams;
+  Map<String, dynamic> outputParams;
+
   QuickConfig({
     required this.id,
     required this.fileType,
@@ -108,25 +119,59 @@ class QuickConfig {
     DateTime? createdAt,
     DateTime? updatedAt,
     List<QuickConfigItem>? items,
-  })  : createdAt = createdAt ?? DateTime.now(),
-        updatedAt = updatedAt ?? DateTime.now(),
-        items = items ?? [];
+    this.nodes,
+    Map<String, dynamic>? inputParams,
+    Map<String, dynamic>? outputParams,
+  }) : createdAt = createdAt ?? DateTime.now(),
+       updatedAt = updatedAt ?? DateTime.now(),
+       items = items ?? [],
+       inputParams = inputParams ?? {},
+       outputParams = outputParams ?? {};
+
+  /// 编辑、取消及保存回调互不共享可变参数。
+  QuickConfig deepCopy() => QuickConfig(
+    id: id,
+    fileType: fileType,
+    name: name,
+    description: description,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+    items: items
+        .map(
+          (item) => QuickConfigItem(
+            key: item.key,
+            title: item.title,
+            titleZh: item.titleZh,
+            titleEn: item.titleEn,
+            params: PipelineNode.deepCopyMap(item.params),
+            enabled: item.enabled,
+          ),
+        )
+        .toList(),
+    nodes: nodes?.map((node) => node.deepCopy()).toList(),
+    inputParams: PipelineNode.deepCopyMap(inputParams),
+    outputParams: PipelineNode.deepCopyMap(outputParams),
+  );
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'file_type': fileType.name,
-        'name': name,
-        'description': description,
-        'created_at': createdAt.toIso8601String(),
-        'updated_at': updatedAt.toIso8601String(),
-        'items': items.map((i) => i.toJson()).toList(),
-      };
+    'id': id,
+    'file_type': fileType.name,
+    'name': name,
+    'description': description,
+    'created_at': createdAt.toIso8601String(),
+    'updated_at': updatedAt.toIso8601String(),
+    'items': items.map((i) => i.toJson()).toList(),
+    if (nodes != null) 'nodes': nodes!.map((node) => node.toJson()).toList(),
+    if (nodes != null) 'input_params': inputParams,
+    if (nodes != null) 'output_params': outputParams,
+  };
 
   factory QuickConfig.fromJson(Map<String, dynamic> json) {
     final created = DateTime.tryParse(json['created_at'] as String? ?? '');
     final updated = DateTime.tryParse(json['updated_at'] as String? ?? '');
     // [FIX L-7] 过滤非 Map 元素，并对单条坏元素 try/catch 跳过，坏一条不影响其余
-    final items = (json['items'] as List?)
+    final items =
+        (json['items'] as List?)
             ?.whereType<Map>()
             .map((e) {
               try {
@@ -148,6 +193,22 @@ class QuickConfig {
       createdAt: created ?? DateTime.now(),
       updatedAt: updated ?? DateTime.now(),
       items: items,
+      // 新版节点列表不可静默过滤：坏一条就拒绝，防止读回后保存残缺流程。
+      nodes: json['nodes'] == null
+          ? null
+          : (json['nodes'] as List)
+                .map(
+                  (node) => PipelineNode.fromJson(
+                    Map<String, dynamic>.from(node as Map),
+                  ),
+                )
+                .toList(),
+      inputParams: Map<String, dynamic>.from(
+        (json['input_params'] as Map?) ?? const {},
+      ),
+      outputParams: Map<String, dynamic>.from(
+        (json['output_params'] as Map?) ?? const {},
+      ),
     );
   }
 }
@@ -155,110 +216,109 @@ class QuickConfig {
 /// 各文件类型的默认配置项模板（新建快捷配置时预填）。
 /// 每一项含 key、中英标题与合理的默认参数。
 List<QuickConfigItem> quickDefaultsFor(QuickFileType type) => switch (type) {
-      QuickFileType.video => [
-          QuickConfigItem(
-            key: 'bitrate',
-            titleZh: '码率控制',
-            titleEn: 'Bitrate',
-            params: {'bitrate': '4M', 'crf': 23},
-          ),
-          QuickConfigItem(
-            key: 'subtitle',
-            titleZh: '字幕',
-            titleEn: 'Subtitle',
-            params: {'subtitle_path': '', 'burn': true},
-          ),
-          QuickConfigItem(
-            key: 'crop',
-            titleZh: '裁剪',
-            titleEn: 'Crop',
-            params: {'w': 1920, 'h': 1080, 'x': 0, 'y': 0},
-          ),
-          QuickConfigItem(
-            key: 'rotate',
-            titleZh: '旋转',
-            titleEn: 'Rotate',
-            params: {'angle': 90},
-          ),
-          QuickConfigItem(
-            key: 'watermark',
-            titleZh: '水印',
-            titleEn: 'Watermark',
-            params: {'image': '', 'position': 'bottom_right'},
-          ),
-          QuickConfigItem(
-            key: 'compress',
-            titleZh: '压缩',
-            titleEn: 'Compress',
-            params: {'codec': 'h264', 'preset': 'medium'},
-          ),
-        ],
-      QuickFileType.image => [
-          QuickConfigItem(
-            key: 'resize',
-            titleZh: '缩放',
-            titleEn: 'Resize',
-            params: {'w': 1920, 'h': 1080, 'fit': 'contain'},
-          ),
-          QuickConfigItem(
-            key: 'compress',
-            titleZh: '压缩',
-            titleEn: 'Compress',
-            params: {'quality': 85, 'format': 'jpg'},
-          ),
-          QuickConfigItem(
-            key: 'watermark',
-            titleZh: '水印',
-            titleEn: 'Watermark',
-            params: {'image': '', 'position': 'bottom_right'},
-          ),
-          QuickConfigItem(
-            key: 'convert_format',
-            titleZh: '格式转换',
-            titleEn: 'Convert Format',
-            params: {'format': 'png'},
-          ),
-          QuickConfigItem(
-            key: 'filters',
-            titleZh: '滤镜',
-            titleEn: 'Filters',
-            params: {'brightness': 0, 'contrast': 1.0, 'saturation': 1.0},
-          ),
-        ],
-      QuickFileType.audio => [
-          QuickConfigItem(
-            key: 'bitrate',
-            titleZh: '码率',
-            titleEn: 'Bitrate',
-            params: {'bitrate': '192k'},
-          ),
-          QuickConfigItem(
-            key: 'sample_rate',
-            titleZh: '采样率',
-            titleEn: 'Sample Rate',
-            params: {'rate': 44100},
-          ),
-          QuickConfigItem(
-            key: 'channels',
-            titleZh: '声道',
-            titleEn: 'Channels',
-            params: {'count': 2},
-          ),
-          QuickConfigItem(
-            key: 'normalize',
-            titleZh: '音量归一化',
-            titleEn: 'Normalize',
-            params: {'level': -14},
-          ),
-          QuickConfigItem(
-            key: 'convert_format',
-            titleZh: '格式转换',
-            titleEn: 'Convert Format',
-            params: {'format': 'mp3'},
-          ),
-        ],
-    };
-
+  QuickFileType.video => [
+    QuickConfigItem(
+      key: 'bitrate',
+      titleZh: '码率控制',
+      titleEn: 'Bitrate',
+      params: {'bitrate': '4M', 'crf': 23},
+    ),
+    QuickConfigItem(
+      key: 'subtitle',
+      titleZh: '字幕',
+      titleEn: 'Subtitle',
+      params: {'subtitle_path': '', 'burn': true},
+    ),
+    QuickConfigItem(
+      key: 'crop',
+      titleZh: '裁剪',
+      titleEn: 'Crop',
+      params: {'w': 1920, 'h': 1080, 'x': 0, 'y': 0},
+    ),
+    QuickConfigItem(
+      key: 'rotate',
+      titleZh: '旋转',
+      titleEn: 'Rotate',
+      params: {'angle': 90},
+    ),
+    QuickConfigItem(
+      key: 'watermark',
+      titleZh: '水印',
+      titleEn: 'Watermark',
+      params: {'image': '', 'position': 'bottom_right'},
+    ),
+    QuickConfigItem(
+      key: 'compress',
+      titleZh: '压缩',
+      titleEn: 'Compress',
+      params: {'codec': 'h264', 'preset': 'medium'},
+    ),
+  ],
+  QuickFileType.image => [
+    QuickConfigItem(
+      key: 'resize',
+      titleZh: '缩放',
+      titleEn: 'Resize',
+      params: {'w': 1920, 'h': 1080, 'fit': 'contain'},
+    ),
+    QuickConfigItem(
+      key: 'compress',
+      titleZh: '压缩',
+      titleEn: 'Compress',
+      params: {'quality': 85, 'format': 'jpg'},
+    ),
+    QuickConfigItem(
+      key: 'watermark',
+      titleZh: '水印',
+      titleEn: 'Watermark',
+      params: {'image': '', 'position': 'bottom_right'},
+    ),
+    QuickConfigItem(
+      key: 'convert_format',
+      titleZh: '格式转换',
+      titleEn: 'Convert Format',
+      params: {'format': 'png'},
+    ),
+    QuickConfigItem(
+      key: 'filters',
+      titleZh: '滤镜',
+      titleEn: 'Filters',
+      params: {'brightness': 0, 'contrast': 1.0, 'saturation': 1.0},
+    ),
+  ],
+  QuickFileType.audio => [
+    QuickConfigItem(
+      key: 'bitrate',
+      titleZh: '码率',
+      titleEn: 'Bitrate',
+      params: {'bitrate': '192k'},
+    ),
+    QuickConfigItem(
+      key: 'sample_rate',
+      titleZh: '采样率',
+      titleEn: 'Sample Rate',
+      params: {'rate': 44100},
+    ),
+    QuickConfigItem(
+      key: 'channels',
+      titleZh: '声道',
+      titleEn: 'Channels',
+      params: {'count': 2},
+    ),
+    QuickConfigItem(
+      key: 'normalize',
+      titleZh: '音量归一化',
+      titleEn: 'Normalize',
+      params: {'level': -14},
+    ),
+    QuickConfigItem(
+      key: 'convert_format',
+      titleZh: '格式转换',
+      titleEn: 'Convert Format',
+      params: {'format': 'mp3'},
+    ),
+  ],
+};
 
 /// 从快捷配置项推断文件类型。
 ///
@@ -300,7 +360,8 @@ QuickFileType inferQuickFileTypeFromMaps(List<Map<String, dynamic>> items) {
 
   // 图片 compress：quality + 图片格式；视频 compress：codec/preset。
   if (keys.contains('compress')) {
-    final imageCompress = blob.contains('quality:') ||
+    final imageCompress =
+        blob.contains('quality:') ||
         blob.contains('format:jpg') ||
         blob.contains('format:jpeg') ||
         blob.contains('format:png') ||

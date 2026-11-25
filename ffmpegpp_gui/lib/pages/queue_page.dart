@@ -14,6 +14,7 @@ import '../theme/app_control_size.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_theme.dart';
+import '../widgets/adaptive_top_bar.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
 // 生效的菜单栏位置（底部 ↔ 左右竖排导轨）：列表底部留白随之在 96 / 20 间切换
@@ -65,7 +66,8 @@ class _QueuePageState extends State<QueuePage> with WidgetsBindingObserver {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _monitorVisible = TickerMode.valuesOf(context).enabled &&
+    _monitorVisible =
+        TickerMode.valuesOf(context).enabled &&
         (!isMobilePlatform || MediaQuery.sizeOf(context).width >= 430);
     _syncMonitor();
   }
@@ -87,7 +89,8 @@ class _QueuePageState extends State<QueuePage> with WidgetsBindingObserver {
 
   void _syncMonitor() {
     // Inactive desktop windows can still be visible beside another window.
-    final visible = _monitorVisible &&
+    final visible =
+        _monitorVisible &&
         (_lifecycle == null ||
             _lifecycle == AppLifecycleState.resumed ||
             _lifecycle == AppLifecycleState.inactive);
@@ -180,14 +183,17 @@ class _QueuePageState extends State<QueuePage> with WidgetsBindingObserver {
                     )
                   : Column(
                       children: [
-                        GlassTopBar(
-                          // 桌面顶栏高度固定 56：标题单行省略，大字号下不会折行顶出栏外
-                          title: Text(
-                            s.navQueue,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                        AdaptiveTopBar(
+                          expandedBuilder: (_) => GlassTopBar(
+                            title: Text(
+                              s.navQueue,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            actions: _buildActions(scheme, state, s),
                           ),
-                          actions: _buildActions(scheme, state, s),
+                          compactBuilder: (_) =>
+                              _buildMobileTopBar(scheme, state, s),
                         ),
                         Expanded(
                           child: tasks.isEmpty
@@ -285,11 +291,8 @@ class _QueuePageState extends State<QueuePage> with WidgetsBindingObserver {
     return card;
   }
 
-  Widget _monitorBar(ColorScheme scheme) => _MonitorWidget(
-    monitor: _monitor,
-    active: _monitorActive,
-    scheme: scheme,
-  );
+  Widget _monitorBar(ColorScheme scheme) =>
+      _MonitorWidget(monitor: _monitor, active: _monitorActive, scheme: scheme);
 
   /// 顶栏操作按钮 + 资源占用（桌面端与移动端共用同一份逻辑）。
   /// 按钮文字统一单行省略：顶栏高度固定，字号调大时折行会把整条顶栏撑高
@@ -302,8 +305,9 @@ class _QueuePageState extends State<QueuePage> with WidgetsBindingObserver {
     const size = AppControlSize.regular;
     // 有暂停任务时给出「继续全部」：暂停中的任务仍算 processing（占着并发槽位），
     // 若不提供入口，用户停掉全部卡片后只能逐张点开恢复。
-    final pausedCount =
-        state.tasks.where((t) => t.status == TaskStatus.paused).length;
+    final pausedCount = state.tasks
+        .where((t) => t.status == TaskStatus.paused)
+        .length;
     return [
       if (pausedCount > 0)
         FilledButton.icon(
@@ -384,8 +388,9 @@ class _QueuePageState extends State<QueuePage> with WidgetsBindingObserver {
     AppState state,
     AppStrings s,
   ) {
-    final pausedCount =
-        state.tasks.where((t) => t.status == TaskStatus.paused).length;
+    final pausedCount = state.tasks
+        .where((t) => t.status == TaskStatus.paused)
+        .length;
     return [
       // 暂停中的任务仍算「处理中」：此时顶栏是「停止全部 + 继续全部」，
       // 不会出现「开始处理」把暂停任务再拉一遍的按钮。

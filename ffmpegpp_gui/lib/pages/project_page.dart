@@ -12,9 +12,9 @@ import '../providers/app_state.dart';
 import '../services/directory_picker.dart';
 import '../services/fppx2_service.dart';
 import '../services/quick_config_pipeline.dart';
-import '../services/quick_config_storage.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
+import '../widgets/adaptive_top_bar.dart';
 import '../widgets/app_alert_dialog.dart';
 import '../widgets/container_card.dart';
 import '../widgets/fppx_password.dart';
@@ -27,13 +27,6 @@ import '../widgets/toast.dart';
 import '../widgets/video_card.dart';
 import 'pipeline_editor_page.dart';
 import 'quick_config_page.dart';
-
-/// 快速配置选择器「现场编辑」的哨兵返回值（区别于 QuickConfig 预设与 null 取消）。
-class _QuickPickLiveEdit {
-  const _QuickPickLiveEdit();
-}
-
-const _quickPickLiveEdit = _QuickPickLiveEdit();
 
 class ProjectPage extends StatefulWidget {
   const ProjectPage({super.key});
@@ -75,6 +68,7 @@ class ProjectPageState extends State<ProjectPage> {
   final Set<String> _selectedIds = {};
   final Set<String> _selectedContainerIds = {};
   bool _dragging = false;
+  bool _quickConfigOpen = false;
 
   /// 移动端多选模式：长按单个项目进入，选中项高亮（左侧不再常驻复选框）。
   bool _selectionMode = false;
@@ -187,12 +181,8 @@ class ProjectPageState extends State<ProjectPage> {
 
     // 只在媒体库相关状态变化时重建（视频/容器数量、探测状态、语言），
     // 不再订阅整个 AppState——进度心跳/日志/任务通知不会触发本页重建。
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
-        final compact =
-            isMobilePlatform ||
-            constraints.maxWidth < 600 * textScale.clamp(1.0, 1.5);
+    return AppTopBarLayout(
+      builder: (context, compact) {
         return _buildProjectContent(
           context,
           compact: compact,
@@ -732,8 +722,9 @@ class ProjectPageState extends State<ProjectPage> {
           ? child
           : DecoratedBox(
               decoration: BoxDecoration(
-                color: (dark ? const Color(0xFF1A1A1A) : const Color(0xFFFAFAFA))
-                    .withValues(alpha: dark ? 0.72 : 0.80),
+                color:
+                    (dark ? const Color(0xFF1A1A1A) : const Color(0xFFFAFAFA))
+                        .withValues(alpha: dark ? 0.72 : 0.80),
                 borderRadius: BorderRadius.circular(24),
                 border: Border.all(
                   color: Colors.white.withValues(alpha: dark ? 0.14 : 0.40),
@@ -751,60 +742,62 @@ class ProjectPageState extends State<ProjectPage> {
                 : EdgeInsets.zero,
             child: plate(
               Padding(
-              padding: const EdgeInsets.all(28),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // 用户要求：空状态只保留媒体图标，不要主题色矩形底/描边。
-                  // 移动端图标用中性前景色，不混入莫奈动态色。
-                  Icon(
-                    Icons.movie_creation_outlined,
-                    size: 56,
-                    color: isMobilePlatform ? scheme.onSurface : scheme.primary,
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    s.noVideos,
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 用户要求：空状态只保留媒体图标，不要主题色矩形底/描边。
+                    // 移动端图标用中性前景色，不混入莫奈动态色。
+                    Icon(
+                      Icons.movie_creation_outlined,
+                      size: 56,
+                      color: isMobilePlatform
+                          ? scheme.onSurface
+                          : scheme.primary,
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    isMobilePlatform
-                        ? (s.isZh
-                              ? '轻点右上角 ＋ 添加视频、音频或图片'
-                              : 'Tap + at the top right to add media')
-                        : s.clickAdd,
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: isMobilePlatform ? scheme.onSurface : clr,
-                    ),
-                  ),
-                  if (!isMobilePlatform) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 24),
                     Text(
-                      s.dragDropHint,
+                      s.noVideos,
                       textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: clr.withAlpha(170),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ],
-                  if (!isMobilePlatform) ...[
-                    const SizedBox(height: 22),
-                    _addFilesButton(
-                      state,
-                      s,
-                      scheme,
-                      key: const ValueKey('project_empty_add_files'),
-                      compact: compact,
+                    const SizedBox(height: 8),
+                    Text(
+                      isMobilePlatform
+                          ? (s.isZh
+                                ? '轻点右上角 ＋ 添加视频、音频或图片'
+                                : 'Tap + at the top right to add media')
+                          : s.clickAdd,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: isMobilePlatform ? scheme.onSurface : clr,
+                      ),
                     ),
+                    if (!isMobilePlatform) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        s.dragDropHint,
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: clr.withAlpha(170),
+                        ),
+                      ),
+                    ],
+                    if (!isMobilePlatform) ...[
+                      const SizedBox(height: 22),
+                      _addFilesButton(
+                        state,
+                        s,
+                        scheme,
+                        key: const ValueKey('project_empty_add_files'),
+                        compact: compact,
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
             ),
           ),
         ),
@@ -1553,69 +1546,109 @@ class ProjectPageState extends State<ProjectPage> {
     if (paths.isNotEmpty) await state.addVideos(paths);
   }
 
-  /// 快速模式：选择文件后弹出快速配置选择对话框。
-  /// - 选预设 → 参数编辑 → 保存并把启用项翻译成节点图应用到该文件；
-  /// - 「现场编辑」→ 直接打开节点编辑器（PipelineEditorPage）。
+  /// 为当前文件直接打开串行向导，并从已保存的节点链恢复配置。
   Future<void> _showQuickConfigDialog(
     BuildContext context,
     AppState state,
     VideoFile video,
     AppStrings s,
   ) async {
-    final zh = s.isZh;
-    final fileType = _fileTypeForMediaType(video.fileMediaType);
-    final configs = await QuickConfigStorage.loadAll(fileType);
-    if (!context.mounted) return;
-    final selected = await showDialog<Object>(
-      context: context,
-      builder: (ctx) => _QuickConfigPicker(
-        configs: configs,
-        fileType: fileType,
-        scheme: Theme.of(context).colorScheme,
-        isZh: zh,
-      ),
-    );
-    if (!context.mounted) return;
-    if (selected is QuickConfig) {
+    if (_quickConfigOpen) return;
+    _quickConfigOpen = true;
+    try {
+      final current = state.videoById(video.id);
+      if (current == null) return;
+      final zh = s.isZh;
+      final fileType = _fileTypeForMediaType(current.fileMediaType);
+      final QuickConfig config;
+      try {
+        config = quickConfigFromGraph(
+          graph: current.pipelineGraph,
+          fileType: fileType,
+          id: current.id,
+          name: current.filename,
+        );
+      } on FormatException {
+        final openEditor = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AppAlertDialog(
+            title: Text(
+              zh ? '此流程需要节点编辑器' : 'Open this workflow in the node editor',
+            ),
+            content: Text(
+              zh
+                  ? '现有流程含有分支、逻辑或不支持串行编辑的节点。请使用节点编辑器继续编辑。'
+                  : 'This workflow contains branches, logic, or nodes that require the node editor.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(zh ? '取消' : 'Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(zh ? '打开节点编辑器' : 'Open node editor'),
+              ),
+            ],
+          ),
+        );
+        if (openEditor == true && context.mounted) {
+          _openLiveEditor(context, state, current, s);
+        }
+        return;
+      }
+      if (!context.mounted) return;
+      var queued = false;
       final saved = await showDialog<QuickConfig>(
         context: context,
         barrierDismissible: false,
         builder: (_) => QuickConfigPage(
-          config: selected,
+          config: config,
+          video: current,
+          isZh: zh,
           onSave: (updated) async {
-            await QuickConfigStorage.save(updated);
+            if (!mounted || state.videoById(current.id) == null) {
+              throw StateError(
+                zh ? '文件已移除，请重新选择' : 'This file was removed. Select it again.',
+              );
+            }
+            final result = buildGraphFromQuickConfig(updated, isZh: zh);
+            if (result.isEmpty || result.skippedNotes.isNotEmpty) {
+              throw FormatException(result.skippedNotes.join(' '));
+            }
+            state.updateVideoPipeline(current.id, result.graph);
+          },
+          onExecute: (updated, graph) async {
+            if (!mounted || state.videoById(current.id) == null) {
+              throw StateError(
+                zh ? '文件已移除，请重新选择' : 'This file was removed. Select it again.',
+              );
+            }
+            final before = state.tasks.length;
+            state.addTask(current.id);
+            if (state.tasks.length == before) {
+              throw StateError(
+                zh
+                    ? '无法加入队列，请检查节点配置'
+                    : 'Could not queue this workflow. Check the node settings.',
+              );
+            }
+            queued = true;
           },
         ),
       );
       if (saved == null || !context.mounted) return;
-      // 关键修复：此前预设保存后与视频毫无关联，任务入队时 pipelineGraph
-      // 为空 → 图片输出与输入完全相同。这里把启用项翻译成节点图再应用。
-      final result = buildGraphFromQuickConfig(saved, isZh: zh);
-      if (result.isEmpty) {
-        showToast(
-          context,
-          zh
-              ? '该预设没有可应用的处理项。${result.skippedNotes.join(' ')}'
-              : 'No applicable items. ${result.skippedNotes.join(' ')}',
-          type: ToastType.warning,
-        );
-        return;
-      }
-      state.updateVideoPipeline(video.id, result.graph);
-      final note = result.skippedNotes.isEmpty
-          ? ''
-          : (zh
-                ? '；${result.skippedNotes.join('；')}'
-                : '; ${result.skippedNotes.join('; ')}');
       showToast(
         context,
-        zh
-            ? '已应用 ${result.appliedKeys.length} 项设置，加入队列后生效$note'
-            : 'Applied ${result.appliedKeys.length} settings, effective when queued$note',
+        queued
+            ? (zh ? '串行流程已保存并加入队列' : 'Serial workflow saved and queued')
+            : (zh
+                  ? '串行流程已保存，加入队列后生效'
+                  : 'Serial workflow saved, ready to queue'),
         type: ToastType.success,
       );
-    } else if (identical(selected, _quickPickLiveEdit)) {
-      _openLiveEditor(context, state, video, s);
+    } finally {
+      _quickConfigOpen = false;
     }
   }
 
@@ -1891,150 +1924,6 @@ class _ProbingBannerState extends State<_ProbingBanner>
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// 快速模式配置选择器对话框
-class _QuickConfigPicker extends StatelessWidget {
-  final List<QuickConfig> configs;
-  final QuickFileType fileType;
-  final ColorScheme scheme;
-  final bool isZh;
-
-  const _QuickConfigPicker({
-    required this.configs,
-    required this.fileType,
-    required this.scheme,
-    required this.isZh,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AppAlertDialog(
-      title: Row(
-        children: [
-          Icon(Icons.tune, size: 20, color: scheme.primary),
-          const SizedBox(width: 8),
-          Text(
-            isZh ? '选择快速配置' : 'Select Quick Config',
-            style: TextStyle(color: scheme.onSurface, fontSize: 16),
-          ),
-        ],
-      ),
-      content: SizedBox(
-        width: 400,
-        child: configs.isEmpty
-            ? Padding(
-                padding: const EdgeInsets.symmetric(vertical: 24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.inbox_outlined,
-                      size: 48,
-                      color: scheme.outlineVariant,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      isZh ? '暂无匹配的快速配置' : 'No matching quick configs',
-                      style: TextStyle(fontSize: 14, color: scheme.outline),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      isZh ? '请先在设置中创建快速配置' : 'Create one in Settings first',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: scheme.outline.withAlpha(150),
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            : ListView.separated(
-                shrinkWrap: true,
-                itemCount: configs.length,
-                separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (_, i) {
-                  final cfg = configs[i];
-                  return ListTile(
-                    leading: _fileTypeIcon(cfg.fileType),
-                    title: Text(
-                      cfg.name.isNotEmpty ? cfg.name : '(unnamed)',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: scheme.onSurface,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    subtitle: cfg.description.isNotEmpty
-                        ? Text(
-                            cfg.description,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: scheme.outline,
-                            ),
-                          )
-                        : Text(
-                            isZh
-                                ? '${cfg.items.where((i) => i.enabled).length} 项已启用'
-                                : '${cfg.items.where((i) => i.enabled).length} items enabled',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: scheme.outline.withAlpha(150),
-                            ),
-                          ),
-                    trailing: Icon(
-                      Icons.chevron_right,
-                      size: 18,
-                      color: scheme.outline,
-                    ),
-                    onTap: () => Navigator.pop(context, cfg),
-                  );
-                },
-              ),
-      ),
-      actions: [
-        // 快速模式「现场编辑」：不选预设直接进入节点编辑器（Bug 修复：
-        // 之前快速模式只能选预设，无法对该文件做自由编辑）。
-        AppDialogAction(
-          role: AppDialogActionRole.primary,
-          child: TextButton.icon(
-            onPressed: () => Navigator.pop(context, _quickPickLiveEdit),
-            icon: const Icon(Icons.tune, size: 16),
-            label: Text(isZh ? '现场编辑' : 'Live Edit'),
-          ),
-        ),
-        AppDialogAction(
-          role: AppDialogActionRole.cancel,
-          child: TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(isZh ? '取消' : 'Cancel'),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _fileTypeIcon(QuickFileType ft) {
-    return Container(
-      width: 32,
-      height: 32,
-      decoration: BoxDecoration(
-        color: scheme.primaryContainer.withAlpha(120),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Icon(
-        switch (ft) {
-          QuickFileType.video => Icons.videocam_outlined,
-          QuickFileType.image => Icons.image_outlined,
-          QuickFileType.audio => Icons.audiotrack_outlined,
-        },
-        size: 16,
-        color: scheme.primary,
       ),
     );
   }

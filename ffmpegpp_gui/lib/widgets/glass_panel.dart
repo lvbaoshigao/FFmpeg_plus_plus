@@ -456,6 +456,11 @@ class GlassPanel extends StatelessWidget {
 /// `isMobilePlatform` 分流，因此本组件不再包含移动端分支（原分支依赖的
 /// `MobileTopBar` 是不可达的死代码，已删除）。
 class GlassTopBar extends StatelessWidget {
+  static const double defaultHeight = 56;
+
+  /// Standard bar height including the 12px top and 4px bottom margins.
+  static const double defaultExtent = 12 + defaultHeight + 4;
+
   final Widget title;
   final List<Widget> actions;
 
@@ -468,53 +473,66 @@ class GlassTopBar extends StatelessWidget {
     required this.title,
     this.actions = const [],
     this.center,
-    this.height = 56,
+    this.height = defaultHeight,
   });
 
   @override
   Widget build(BuildContext context) {
-    // 桌面端：浮动玻璃圆角框（样式跟随「菜单样式」menuStyle）
     final scheme = Theme.of(context).colorScheme;
     final menuStyle = context.select<AppState, String>(
       (s) => s.config.menuStyle,
     );
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    final titleMinWidth = 88 * textScale.clamp(1.0, 1.5);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-      child: GlassPanel(
-        radius: 18,
-        style: menuStyle,
-        child: SizedBox(
-          height: height,
+      // Constrain the whole surface, including its border, to the bar height.
+      child: SizedBox(
+        height: height,
+        child: GlassPanel(
+          radius: 18,
+          style: menuStyle,
           child: Stack(
             children: [
-              // 标题（左）与操作按钮（右）保持原布局
               Positioned.fill(
-                child: Row(
-                  children: [
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: DefaultTextStyle.merge(
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: scheme.onSurface,
+                child: LayoutBuilder(
+                  builder: (context, constraints) => Row(
+                    children: [
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DefaultTextStyle.merge(
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurface,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          child: title,
                         ),
-                        child: title,
                       ),
-                    ),
-                    ...actions,
-                    const SizedBox(width: 4),
-                  ],
+                      if (actions.isNotEmpty)
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth:
+                                (constraints.maxWidth - 16 - titleMinWidth)
+                                    .clamp(0.0, double.infinity),
+                          ),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: actions,
+                            ),
+                          ),
+                        ),
+                      const SizedBox(width: 4),
+                    ],
+                  ),
                 ),
               ),
-              // 居中内容（如搜索框）：水平垂直都绝对居中；
-              // Align 不拦截子项外区域的点击（两侧可点到 title/actions）
               if (center != null)
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  top: 0,
-                  bottom: 0,
+                Positioned.fill(
                   child: Align(alignment: Alignment.center, child: center),
                 ),
             ],

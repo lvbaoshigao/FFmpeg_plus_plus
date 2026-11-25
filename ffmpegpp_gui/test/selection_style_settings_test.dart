@@ -63,8 +63,8 @@ void main() {
           menuStyle: 'gray',
           navStyle: 'blur',
         );
-        final json = jsonDecode(jsonEncode(config.toJson()))
-            as Map<String, dynamic>;
+        final json =
+            jsonDecode(jsonEncode(config.toJson())) as Map<String, dynamic>;
         expect(json[_styleKey], style);
         final restored = AppConfig.fromJson(json);
         expect(restored.selectionIndicatorStyle, style);
@@ -117,9 +117,11 @@ void main() {
 
       final pane = find.byKey(const ValueKey('pane_appearance'));
       final paneElement = tester.element(pane);
-      final scroll = tester.state<ScrollableState>(
-        find.descendant(of: pane, matching: find.byType(Scrollable)).first,
-      ).position;
+      final scroll = tester
+          .state<ScrollableState>(
+            find.descendant(of: pane, matching: find.byType(Scrollable)).first,
+          )
+          .position;
       final offset = scroll.pixels;
       final mask = find.byKey(const ValueKey('settings_section_selection'));
       expect(tester.widget(mask), isA<SelectionHighlight>());
@@ -148,9 +150,18 @@ void main() {
       expect(scroll.pixels, closeTo(offset, 0.01));
       expect(mask, findsOneWidget);
       expect(tester.getRect(mask), tester.getRect(row));
-      final decoration = tester.widget<DecoratedBox>(
-        find.descendant(of: mask, matching: find.byType(DecoratedBox)).first,
-      ).decoration as BoxDecoration;
+      final decoration =
+          tester
+                  .widget<DecoratedBox>(
+                    find
+                        .descendant(
+                          of: mask,
+                          matching: find.byType(DecoratedBox),
+                        )
+                        .first,
+                  )
+                  .decoration
+              as BoxDecoration;
       expect(decoration.border, isNotNull);
       expect(decoration.color, isNull);
       expect(tester.takeException(), isNull);
@@ -161,7 +172,14 @@ void main() {
     testWidgets('should expose a usable control on a 320dp large-text pane', (
       tester,
     ) async {
-      await _pumpSettings(tester, state, size: const Size(320, 720), textScale: 2);
+      await _pumpSettings(
+        tester,
+        state,
+        size: const Size(320, 720),
+        textScale: 2,
+      );
+      await tester.tap(find.byTooltip('Search settings...'));
+      await tester.pumpAndSettle();
       final search = find.byType(TextField).first;
       await tester.enterText(search, '选中遮罩');
       await tester.pumpAndSettle();

@@ -41,6 +41,13 @@ analyzer:
     # 配置不会增加任何诊断。想收敛这批静默吞异常，只能靠人工复查
     # 「涉及配置持久化」的那批（用户以为生效其实没有）。
     empty_catches: warning
+  exclude:
+    - build/**
+    - android/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
 
 linter:
   # The lint rules applied to this project can be customized in the

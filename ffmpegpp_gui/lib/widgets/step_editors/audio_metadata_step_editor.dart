@@ -85,7 +85,7 @@ class _AudioMetadataStepEditorState extends State<AudioMetadataStepEditor> with 
         Row(children: [
           Checkbox(value: removeCover, onChanged: (v) { update('remove_cover', v ?? false); if (v == true) update('cover_path', ''); },
               visualDensity: VisualDensity.compact),
-          Text(zh ? '删除现有封面' : 'Remove existing cover', style: TextStyle(fontSize: 12, color: cs.onSurface)),
+          Expanded(child: Text(zh ? '删除现有封面' : 'Remove existing cover', style: TextStyle(fontSize: 12, color: cs.onSurface))),
         ]),
 
         const SizedBox(height: 8),
@@ -124,7 +124,7 @@ class _AudioMetadataStepEditorState extends State<AudioMetadataStepEditor> with 
         Row(children: [
           Checkbox(value: removeLyrics, onChanged: (v) { update('remove_lyrics', v ?? false); if (v == true) update('lyrics_path', ''); },
               visualDensity: VisualDensity.compact),
-          Text(zh ? '删除现有歌词' : 'Remove existing lyrics', style: TextStyle(fontSize: 12, color: cs.onSurface)),
+          Expanded(child: Text(zh ? '删除现有歌词' : 'Remove existing lyrics', style: TextStyle(fontSize: 12, color: cs.onSurface))),
         ]),
       ],
     );

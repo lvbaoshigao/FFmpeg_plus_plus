@@ -5,6 +5,7 @@ import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../services/shell_open.dart';
 import '../theme/app_strings.dart';
+import '../widgets/adaptive_top_bar.dart';
 import '../widgets/app_card.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_top_bar.dart';
@@ -89,7 +90,13 @@ class CreditsPage extends StatelessWidget {
       children: [
         Icon(Icons.favorite_outline, size: 20, color: scheme.primary),
         const SizedBox(width: 8),
-        Text(s.aboutReferencesTitle),
+        Flexible(
+          child: Text(
+            s.aboutReferencesTitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
       ],
     );
 
@@ -142,7 +149,7 @@ class CreditsPage extends StatelessWidget {
         child: Scaffold(
           backgroundColor: Colors.transparent,
           // 移动端：沉浸式浮动药丸顶栏（滚动条目从底下穿过）；
-          // 桌面端：保持 Column + GlassTopBar 不变。
+          // 桌面端保持 Column，顶栏按页面可用宽度切换长条 / 药丸。
           body: isMobilePlatform
               ? ImmersiveTopBar(
                   bar: MobileSubPageTopBar(
@@ -153,19 +160,25 @@ class CreditsPage extends StatelessWidget {
                 )
               : Column(
                   children: [
-                    GlassTopBar(
-                      title: title,
-                      actions: [
-                        IconButton(
-                          tooltip: s.aboutClose,
-                          icon: Icon(
-                            Icons.close,
-                            size: 18,
-                            color: scheme.onSurfaceVariant,
+                    AdaptiveTopBar(
+                      compactBuilder: (context) => MobileSubPageTopBar(
+                        title: title,
+                        onBack: () => Navigator.of(context).maybePop(),
+                      ),
+                      expandedBuilder: (context) => GlassTopBar(
+                        title: title,
+                        actions: [
+                          IconButton(
+                            tooltip: s.aboutClose,
+                            icon: Icon(
+                              Icons.close,
+                              size: 18,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                            onPressed: () => Navigator.of(context).maybePop(),
                           ),
-                          onPressed: () => Navigator.of(context).maybePop(),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                     Expanded(child: content),
                   ],

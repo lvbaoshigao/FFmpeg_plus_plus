@@ -8,10 +8,12 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
+import '../services/task_progress_display.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import 'app_slider.dart';
 import 'glass_panel.dart';
+import 'polygon_morph_loader.dart';
 import 'toast.dart';
 
 /// The first Unicode letter or number in a filename, ignoring symbols.
@@ -105,9 +107,7 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
             final visibleCardIds = prioritizedIds
                 .take(_maxVisibleTaskCards)
                 .toSet();
-            final cardIds = _order
-                .where(visibleCardIds.contains)
-                .toList();
+            final cardIds = _order.where(visibleCardIds.contains).toList();
             final dockIds = <String>[];
             var dockItemCount = 0;
             for (final id in _order) {
@@ -119,8 +119,10 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
               }
             }
             final overflowCount =
-                prioritizedIds.length - cardIds.length +
-                dockItemCount - dockIds.length;
+                prioritizedIds.length -
+                cardIds.length +
+                dockItemCount -
+                dockIds.length;
             return Stack(
               clipBehavior: Clip.hardEdge,
               children: [
@@ -181,7 +183,9 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
                                     onPressed: () => state.selectNav(1),
                                     icon: Badge(
                                       label: Text(
-                                        overflowCount > 99 ? '99+' : '$overflowCount',
+                                        overflowCount > 99
+                                            ? '99+'
+                                            : '$overflowCount',
                                       ),
                                       child: const Icon(Icons.queue_outlined),
                                     ),
@@ -235,11 +239,11 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
         : paused
         ? _pausedLabel(s.isZh)
         : s.processing;
-    final progress = task.progress.isFinite
-        ? (task.progress / 100).clamp(0.0, 1.0)
-        : 0.0;
+    final progress = TaskProgressDisplay.overallValue(task);
     final scheme = Theme.of(context).colorScheme;
-    final calls = task.pipelineCalls?.length ?? 0;
+    final calls = task.callProgresses.isNotEmpty
+        ? task.callProgresses.length
+        : (task.pipelineCalls?.length ?? 0);
     return Positioned(
       key: ValueKey('task-float-position-${task.id}'),
       left: position.dx,
@@ -353,11 +357,20 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    // Determinate updates avoid perpetual motion and respect reduced motion.
-                    AppProgressBar(
-                      value: progress,
-                      semanticsLabel: task.filename,
-                    ),
+                    if (TaskProgressDisplay.showsLoader(task))
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: PolygonMorphLoader(
+                          size: 24,
+                          reduceMotion: paused ? true : null,
+                          semanticsLabel: statusText,
+                        ),
+                      )
+                    else if (TaskProgressDisplay.showsDeterminate(task))
+                      AppProgressBar(
+                        value: progress,
+                        semanticsLabel: task.filename,
+                      ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -371,7 +384,8 @@ class _TaskFloatLayerState extends State<TaskFloatLayer> {
                             style: const TextStyle(fontSize: 12),
                           ),
                         ),
-                        Text('${(progress * 100).round()}%'),
+                        if (TaskProgressDisplay.showsPercentage(task))
+                          Text('${(progress * 100).round()}%'),
                         IconButton(
                           key: ValueKey('task-pause-${task.id}'),
                           tooltip: paused

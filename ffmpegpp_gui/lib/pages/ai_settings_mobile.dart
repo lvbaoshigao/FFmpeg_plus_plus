@@ -11,6 +11,7 @@ import '../theme/app_control_size.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
 import '../theme/settings_typography.dart';
+import '../widgets/adaptive_top_bar.dart';
 import '../widgets/app_alert_dialog.dart';
 import '../widgets/app_card.dart';
 import '../widgets/brand_logo.dart';
@@ -511,7 +512,7 @@ class MobileAiProvidersPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = AppStrings.of(state.config.language);
-    final desktop = !_useMobileAiLayout(context);
+    final desktop = !isMobilePlatform;
     // 移动端沉浸式骨架：药丸顶栏浮在列表上，条目可滑到顶栏底下
     // （列表顶部留白见 _MobileAiSettingsView 内的 insetOf）。
     // 桌面端保持原 Column + _DesktopProviderHeader 布局。
@@ -538,11 +539,8 @@ class MobileAiProvidersPage extends StatelessWidget {
                     // 角落，而不是当成列表子项被一起滚走。
                     // PC 端保持原样（一整列卡片，由外层统一滚动）。
                     //
-                    // ⚠️ 判定条件必须与 _MobileAiSettingsView.build 里的分支**逐字一致**
-                    // （`!isMobilePlatform && width >= 900`）。页面层的 desktop 走的是
-                    // `_useMobileAiLayout`（阈值 700），两者在 700~899 宽的桌面窗口上会
-                    // 分叉：那时视图内部走移动端布局，外层若不给滚动，一列卡片就会直接
-                    // 溢出（而不是可滚动）。
+                    // 内容是否自带滚动必须与 _MobileAiSettingsView 的 900 宽度
+                    // 分支一致；顶栏宽窄独立使用主界面的共享断点。
                     child:
                         (!isMobilePlatform &&
                             MediaQuery.sizeOf(context).width >= 900)
@@ -586,54 +584,71 @@ class _DesktopProviderHeader extends StatelessWidget {
   final String? subtitle;
   final VoidCallback onBack;
   final List<Widget> actions;
+  final List<Widget>? compactActions;
+  final int inlineActionLimit;
 
   const _DesktopProviderHeader({
     required this.title,
     this.subtitle,
     required this.onBack,
     this.actions = const [],
+    this.compactActions,
+    this.inlineActionLimit = 1,
   });
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return GlassTopBar(
-      title: Row(
-        children: [
-          IconButton(
-            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-            onPressed: onBack,
-            icon: const Icon(Icons.arrow_back),
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 15.5),
-                ),
-                if (subtitle != null)
+    return AdaptiveTopBar(
+      compactBuilder: (_) => MobileSubPageTopBar(
+        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        onBack: onBack,
+        inlineActionLimit: inlineActionLimit,
+        actions: compactActions ?? actions,
+      ),
+      expandedBuilder: (context) => GlassTopBar(
+        height: subtitle == null
+            ? GlassTopBar.defaultHeight
+            : (MediaQuery.textScalerOf(context).scale(15.5 + 11.5) * 1.4 + 8)
+                  .clamp(GlassTopBar.defaultHeight, double.infinity),
+        title: Row(
+          children: [
+            IconButton(
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+              onPressed: onBack,
+              icon: const Icon(Icons.arrow_back),
+            ),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    subtitle!,
+                    title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w400,
-                      color: scheme.onSurfaceVariant,
-                    ),
+                    style: const TextStyle(fontSize: 15.5, height: 1.4),
                   ),
-              ],
+                  if (subtitle != null)
+                    Text(
+                      subtitle!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        height: 1.4,
+                        fontWeight: FontWeight.w400,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
+        actions: actions,
       ),
-      actions: actions,
     );
   }
 }
@@ -2034,13 +2049,17 @@ class _AiStatusPill extends StatelessWidget {
             decoration: BoxDecoration(shape: BoxShape.circle, color: color),
           ),
           const SizedBox(width: 5),
-          Text(
-            enabled ? s.aiEnabledStatus : s.aiDisabledStatus,
-            style: TextStyle(
-              fontSize: 10.5,
-              height: 1.1,
-              fontWeight: FontWeight.w600,
-              color: color,
+          Flexible(
+            child: Text(
+              enabled ? s.aiEnabledStatus : s.aiDisabledStatus,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10.5,
+                height: 1.1,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
             ),
           ),
         ],
@@ -3343,112 +3362,111 @@ class _MobileAiProviderDetailPageState
     // （safeTop + barInsetTop），insetOf 与顶栏读同一个 padding.top，两边
     // 口径一致；若把沉浸分支放进 SafeArea 再从外面取 insetOf，会多算一条
     // 状态栏（见 ImmersiveTopBar.insetOf 注释）。
+    final header = _DesktopProviderHeader(
+      title: title,
+      subtitle: _isNew
+          ? (s.isZh ? '新建提供商配置' : 'New provider configuration')
+          : '${_draft.provider.isEmpty ? s.aiProviderDetail : _draft.provider}'
+                ' · ${s.aiModelCount(_modelCount(_draft))}',
+      onBack: () => Navigator.of(context).maybePop(),
+      compactActions: [
+        if (!_isNew)
+          MobileGlassPillAction(
+            key: const ValueKey('provider_delete'),
+            icon: Icons.delete_outline,
+            tooltip: s.remove,
+            color: scheme.error,
+            onTap: _delete,
+          ),
+        // 分组：删除（破坏性，单独一颗）| 搜索模型（作用于列表）| 保存。
+        const MobileActionGroupBreak(),
+        if (_tab == 1)
+          MobileGlassPillAction(
+            key: const ValueKey('provider_model_search'),
+            icon: Icons.search,
+            tooltip: s.isZh ? '搜索模型' : 'Search models',
+            color: scheme.onSurface,
+            onTap: () => setState(() {
+              _showModelSearch = !_showModelSearch;
+              if (!_showModelSearch) _modelSearchCtrl.clear();
+            }),
+          ),
+        const MobileActionGroupBreak(),
+        MobileGlassPillAction(
+          icon: Icons.check_rounded,
+          tooltip: s.save,
+          color: scheme.primary,
+          onTap: _save,
+        ),
+      ],
+      inlineActionLimit: 3,
+      actions: [
+        if (_tab == 1)
+          IconButton(
+            key: const ValueKey('provider_model_search'),
+            tooltip: s.isZh ? '搜索模型' : 'Search models',
+            onPressed: () => setState(() {
+              _showModelSearch = !_showModelSearch;
+              if (!_showModelSearch) _modelSearchCtrl.clear();
+            }),
+            icon: const Icon(Icons.search),
+          ),
+        if (!_isNew)
+          IconButton(
+            key: const ValueKey('provider_delete'),
+            tooltip: s.remove,
+            onPressed: _delete,
+            icon: Icon(Icons.delete_outline, color: scheme.error),
+          ),
+        const SizedBox(width: 8),
+        FilledButton.icon(
+          onPressed: _save,
+          icon: const Icon(Icons.save_outlined, size: 18),
+          label: Text(s.save),
+        ),
+        const SizedBox(width: 16),
+      ],
+    );
     final Widget body;
     if (useMobileLayout) {
-      body = ImmersiveTopBar(
-        bar: MobileSubPageTopBar(
-          title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-          onBack: () => Navigator.of(context).maybePop(),
-          inlineActionLimit: 3,
-          actions: [
-            if (!_isNew)
-              MobileGlassPillAction(
-                key: const ValueKey('provider_delete'),
-                icon: Icons.delete_outline,
-                tooltip: s.remove,
-                color: scheme.error,
-                onTap: _delete,
-              ),
-            // 分组：删除（破坏性，单独一颗）| 搜索模型（作用于列表）| 保存。
-            const MobileActionGroupBreak(),
-            if (_tab == 1)
-              MobileGlassPillAction(
-                key: const ValueKey('provider_model_search'),
-                icon: Icons.search,
-                tooltip: s.isZh ? '搜索模型' : 'Search models',
-                color: scheme.onSurface,
-                onTap: () => setState(() {
-                  _showModelSearch = !_showModelSearch;
-                  if (!_showModelSearch) _modelSearchCtrl.clear();
-                }),
-              ),
-            const MobileActionGroupBreak(),
-            MobileGlassPillAction(
-              icon: Icons.check_rounded,
-              tooltip: s.save,
-              color: scheme.primary,
-              onTap: _save,
-            ),
-          ],
-        ),
-        // 沉浸底栏：内容铺满全屏，菜单栏浮在底部（Stack 覆盖），
-        // 信息流可从下方穿插滚动，而非被 Column 截断。
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: double.infinity),
-                  child: _buildProviderTabContent(context, state, s, scheme),
-                ),
+      final mobileContent = Stack(
+        children: [
+          Positioned.fill(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: double.infinity),
+                child: _buildProviderTabContent(context, state, s, scheme),
               ),
             ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: _buildBottomTabBar(
-                context,
-                state,
-                scheme,
-                s,
-                bottomActionSide,
-              ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _buildBottomTabBar(
+              context,
+              state,
+              scheme,
+              s,
+              bottomActionSide,
             ),
-          ],
-        ),
+          ),
+        ],
       );
+      body = isMobilePlatform
+          ? ImmersiveTopBar(bar: header, child: mobileContent)
+          : Column(
+              children: [
+                header,
+                Expanded(child: mobileContent),
+              ],
+            );
     } else {
-      // bottom:false：底部菜单栏 AppLiquidTabBar 自带 bottomGap + 安全区，
-      // 外层 SafeArea 再吃掉安全区会变成双倍底部留白。
       body = SafeArea(
         bottom: false,
         child: Column(
           children: [
-            _DesktopProviderHeader(
-              title: title,
-              subtitle: _isNew
-                  ? (s.isZh ? '新建提供商配置' : 'New provider configuration')
-                  : '${_draft.provider.isEmpty ? s.aiProviderDetail : _draft.provider}'
-                        ' · ${s.aiModelCount(_modelCount(_draft))}',
-              onBack: () => Navigator.of(context).maybePop(),
-              actions: [
-                if (_tab == 1)
-                  IconButton(
-                    key: const ValueKey('provider_model_search'),
-                    tooltip: s.isZh ? '搜索模型' : 'Search models',
-                    onPressed: () => setState(() {
-                      _showModelSearch = !_showModelSearch;
-                      if (!_showModelSearch) _modelSearchCtrl.clear();
-                    }),
-                    icon: const Icon(Icons.search),
-                  ),
-                if (!_isNew)
-                  IconButton(
-                    key: const ValueKey('provider_delete'),
-                    tooltip: s.remove,
-                    onPressed: _delete,
-                    icon: Icon(Icons.delete_outline, color: scheme.error),
-                  ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: _save,
-                  icon: const Icon(Icons.save_outlined, size: 18),
-                  label: Text(s.save),
-                ),
-                const SizedBox(width: 16),
-              ],
-            ),
+            header,
             Expanded(
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3855,7 +3873,9 @@ class _MobileAiProviderDetailPageState
       padding: desktop
           ? const EdgeInsets.fromLTRB(16, 8, 16, 24)
           : EdgeInsets.only(
-              top: ImmersiveTopBar.insetOf(context) + 12,
+              top:
+                  (isMobilePlatform ? ImmersiveTopBar.insetOf(context) : 0) +
+                  12,
               // 沉浸底栏：内容可从菜单栏下方穿插，底部留足底栏高度
               // （动作簇 66 + tab 栏 74 + 安全区），最后一项仍可滚出。
               bottom: 140 + MediaQuery.paddingOf(context).bottom,
@@ -4275,7 +4295,7 @@ class _MobileAiProviderDetailPageState
           ? const EdgeInsets.fromLTRB(16, 8, 16, 24)
           : EdgeInsets.fromLTRB(
               12,
-              ImmersiveTopBar.insetOf(context) + 12,
+              (isMobilePlatform ? ImmersiveTopBar.insetOf(context) : 0) + 12,
               12,
               // 沉浸底栏：与 _buildBasicTab 同款底部让位
               140 + MediaQuery.paddingOf(context).bottom,
@@ -4534,7 +4554,8 @@ class _MobileAiProviderDetailPageState
     setState(() => _fetchingBalance = true);
     try {
       final result = await fetchAiBalance(
-        _draft, trace: context.read<AppState>().diagnosticTrace,
+        _draft,
+        trace: context.read<AppState>().diagnosticTrace,
       );
       if (!mounted) return;
       showToast(
@@ -4998,90 +5019,91 @@ class _MobileMultiKeyPageState extends State<MobileMultiKeyPage> {
       context.select<AppState, String>((st) => st.config.language),
     );
     final filled = _keys.where((k) => k.isNotEmpty).length;
-    // 移动端沉浸：药丸顶栏浮在列表上，条目可滑到顶栏底下（列表顶部留白
-    // 含 insetOf）。本页只有移动布局，无需桌面分支。
-    //
-    // ⚠️ 不套 SafeArea：MobileSubPageTopBar 自己处理状态栏，insetOf 与
-    // 顶栏读同一个 padding.top（见 ImmersiveTopBar.insetOf 注释）。
-    final Widget page = Scaffold(
-      backgroundColor: Colors.transparent,
-      body: ImmersiveTopBar(
-        bar: MobileSubPageTopBar(
-          title: Text(s.isZh ? 'API Keys 管理（$filled）' : 'API Keys ($filled)'),
-          onBack: () => Navigator.of(context).maybePop(),
-        ),
-        child: ListView(
-          // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
-          addRepaintBoundaries: false,
-          padding: MobileUi.subListPadding(
-            top: ImmersiveTopBar.insetOf(context) + 4,
-            bottom: 16,
-          ),
+    final header = _DesktopProviderHeader(
+      title: s.isZh ? 'API Keys 管理（$filled）' : 'API Keys ($filled)',
+      onBack: () => Navigator.of(context).maybePop(),
+    );
+    final content = ListView(
+      // 开窗卡所在列表必须关（见 app_card 的 _WallpaperWindowPainter）
+      addRepaintBoundaries: false,
+      padding: MobileUi.subListPadding(
+        top: (isMobilePlatform ? ImmersiveTopBar.insetOf(context) : 0) + 4,
+        bottom: 16,
+      ),
+      children: [
+        _AiSectionCard(
+          cardStyle: context.read<AppState>().config.cardStyle,
+          icon: Icons.vpn_key_outlined,
+          title: s.isZh ? 'Key 列表' : 'Key List',
           children: [
-            _AiSectionCard(
-              cardStyle: context.read<AppState>().config.cardStyle,
-              icon: Icons.vpn_key_outlined,
-              title: s.isZh ? 'Key 列表' : 'Key List',
-              children: [
-                Text(
-                  s.isZh
-                      ? '请求时按顺序轮换使用这些 Key。清空输入框再返回即删除该 Key。'
-                      : 'Keys are rotated in order. Clear a field to remove it.',
-                  style: SettingsTypography.description.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                for (var i = 0; i < _keys.length; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: _AiField(
-                            // 绑定索引与内容，删除中间项时不会串位
-                            key: ValueKey('mk_${i}_${_keys[i].hashCode}'),
-                            value: _keys[i],
-                            scheme: scheme,
-                            obscure: true,
-                            hint: 'sk-...',
-                            onCommit: (v) {
-                              _keys[i] = v;
-                              _commit();
-                            },
-                          ),
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            Icons.remove_circle_outline,
-                            size: 18,
-                            color: scheme.error,
-                          ),
-                          tooltip: s.remove,
-                          onPressed: () {
-                            setState(() => _keys.removeAt(i));
-                            _commit();
-                          },
-                        ),
-                      ],
+            Text(
+              s.isZh
+                  ? '请求时按顺序轮换使用这些 Key。清空输入框再返回即删除该 Key。'
+                  : 'Keys are rotated in order. Clear a field to remove it.',
+              style: SettingsTypography.description.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 8),
+            for (var i = 0; i < _keys.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _AiField(
+                        // 绑定索引与内容，删除中间项时不会串位
+                        key: ValueKey('mk_${i}_${_keys[i].hashCode}'),
+                        value: _keys[i],
+                        scheme: scheme,
+                        obscure: true,
+                        hint: 'sk-...',
+                        onCommit: (v) {
+                          _keys[i] = v;
+                          _commit();
+                        },
+                      ),
                     ),
-                  ),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    icon: const Icon(Icons.add, size: 16),
-                    label: Text(
-                      s.isZh ? '添加 Key' : 'Add Key',
-                      style: const TextStyle(fontSize: 12),
+                    IconButton(
+                      icon: Icon(
+                        Icons.remove_circle_outline,
+                        size: 18,
+                        color: scheme.error,
+                      ),
+                      tooltip: s.remove,
+                      onPressed: () {
+                        setState(() => _keys.removeAt(i));
+                        _commit();
+                      },
                     ),
-                    onPressed: () => setState(() => _keys.add('')),
-                  ),
+                  ],
                 ),
-              ],
+              ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                icon: const Icon(Icons.add, size: 16),
+                label: Text(
+                  s.isZh ? '添加 Key' : 'Add Key',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                onPressed: () => setState(() => _keys.add('')),
+              ),
             ),
           ],
         ),
-      ),
+      ],
+    );
+    final Widget page = Scaffold(
+      backgroundColor: Colors.transparent,
+      body: isMobilePlatform
+          ? ImmersiveTopBar(bar: header, child: content)
+          : Column(
+              children: [
+                header,
+                Expanded(child: content),
+              ],
+            ),
     );
     // 壁纸 → WindowChrome（Linux 36px 玻璃 CSD）→ Scaffold；非 Linux no-op。
     return withWallpaper(context, WindowChrome(child: page));
@@ -5139,7 +5161,10 @@ class MobileAiAdvancedPage extends StatelessWidget {
                           MobileUi.subPagePaddingH,
                           // 沉浸式顶栏：预留顶栏（含状态栏）高度，
                           // 首屏第一张卡落在药丸下沿，往下滑就钻到药丸底下。
-                          ImmersiveTopBar.insetOf(context) + 4,
+                          (isMobilePlatform
+                                  ? ImmersiveTopBar.insetOf(context)
+                                  : 0) +
+                              4,
                           MobileUi.subPagePaddingH,
                           16,
                         )
@@ -5329,40 +5354,22 @@ class MobileAiAdvancedPage extends StatelessWidget {
               ),
             );
 
-            // 顶栏沉浸：移动端列表铺满整屏、顶栏浮在最上层（条目可滑到药丸底下，
-            // 透过玻璃显示）；桌面端仍是「通栏顶栏 + 内容区」的 Column。
+            final header = _DesktopProviderHeader(
+              title: s.aiAdvanced,
+              onBack: () => Navigator.of(context).maybePop(),
+            );
             final Widget page = Scaffold(
               backgroundColor: Colors.transparent,
-              body: SafeArea(
-                child: mobileLayout
-                    ? ImmersiveTopBar(
-                        bar: MobileSubPageTopBar(
-                          title: Text(s.aiAdvanced),
-                          onBack: () => Navigator.of(context).maybePop(),
-                        ),
-                        child: content,
-                      )
-                    : Column(
+              body: isMobilePlatform
+                  ? ImmersiveTopBar(bar: header, child: content)
+                  : SafeArea(
+                      child: Column(
                         children: [
-                          GlassTopBar(
-                            title: Row(
-                              children: [
-                                IconButton(
-                                  tooltip: MaterialLocalizations.of(
-                                    context,
-                                  ).backButtonTooltip,
-                                  onPressed: () =>
-                                      Navigator.of(context).maybePop(),
-                                  icon: const Icon(Icons.arrow_back),
-                                ),
-                                Text(s.aiAdvanced),
-                              ],
-                            ),
-                          ),
+                          header,
                           Expanded(child: content),
                         ],
                       ),
-              ),
+                    ),
             );
             // 壁纸与 WindowChrome 已提到外层（见 build 开头）。
             return page;

@@ -9,6 +9,7 @@ import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_theme.dart';
+import '../widgets/adaptive_top_bar.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
@@ -126,7 +127,10 @@ class _LogPageState extends State<LogPage> {
             minWidth: constraints.maxWidth,
           ),
           child: Center(
-            child: Text(message, style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13)),
+            child: Text(
+              message,
+              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
+            ),
           ),
         ),
       ),
@@ -197,10 +201,9 @@ class _LogPageState extends State<LogPage> {
             },
           ),
         ];
-    if (isMobilePlatform) {
-      return MobileSubPageTopBar(
-        title: title,
-        actions: [
+    return AdaptiveTopBar(
+      compactBuilder: (_) {
+        final pillActions = [
           for (final action in actions)
             MobileGlassPillAction(
               icon: action.icon,
@@ -208,20 +211,34 @@ class _LogPageState extends State<LogPage> {
               color: action.color,
               onTap: action.run,
             ),
+        ];
+        if (widget.embedded && !isMobilePlatform) {
+          return MobilePillTopBar(title: title, actions: pillActions);
+        }
+        return MobileSubPageTopBar(
+          title: title,
+          actions: pillActions,
+          onBack: () => Navigator.of(context).maybePop(),
+        );
+      },
+      expandedBuilder: (_) => GlassTopBar(
+        title: widget.embedded
+            ? title
+            : Row(
+                children: [
+                  BackButton(onPressed: () => Navigator.of(context).maybePop()),
+                  Expanded(child: title),
+                ],
+              ),
+        actions: [
+          for (final action in actions)
+            IconButton(
+              icon: Icon(action.icon, size: 18),
+              tooltip: action.label,
+              onPressed: action.run,
+            ),
         ],
-        onBack: () => Navigator.of(context).maybePop(),
-      );
-    }
-    return GlassTopBar(
-      title: title,
-      actions: [
-        for (final action in actions)
-          IconButton(
-            icon: Icon(action.icon, size: 18),
-            tooltip: action.label,
-            onPressed: action.run,
-          ),
-      ],
+      ),
     );
   }
 

@@ -1,1533 +1,1036 @@
 import 'dart:math' as math;
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/quick_config.dart';
+import '../models/models.dart';
 import '../providers/app_state.dart';
+import '../services/quick_config_pipeline.dart';
 import '../theme/app_strings.dart';
-// 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）
 import '../widgets/app_alert_dialog.dart';
-import '../widgets/app_dropdown.dart';
-import '../widgets/option_menu_bar.dart';
+import '../widgets/step_editors/audio_compressor_step_editor.dart';
+import '../widgets/step_editors/audio_convert_step_editor.dart';
+import '../widgets/step_editors/audio_denoise_step_editor.dart';
+import '../widgets/step_editors/audio_equalizer_step_editor.dart';
+import '../widgets/step_editors/audio_fade_step_editor.dart';
+import '../widgets/step_editors/audio_metadata_step_editor.dart';
+import '../widgets/step_editors/audio_noise_gate_step_editor.dart';
+import '../widgets/step_editors/audio_normalize_step_editor.dart';
+import '../widgets/step_editors/audio_quality_step_editor.dart';
+import '../widgets/step_editors/audio_reverse_step_editor.dart';
+import '../widgets/step_editors/audio_silence_trim_step_editor.dart';
+import '../widgets/step_editors/audio_spectrum_step_editor.dart';
+import '../widgets/step_editors/audio_speed_step_editor.dart';
+import '../widgets/step_editors/audio_volume_step_editor.dart';
+import '../widgets/step_editors/audio_waveform_step_editor.dart';
+import '../widgets/step_editors/av_process_step_editor.dart';
+import '../widgets/step_editors/clip_step_editor.dart';
+import '../widgets/step_editors/concat_media_step_editor.dart';
+import '../widgets/step_editors/extract_audio_step_editor.dart';
+import '../widgets/step_editors/frame_step_editor.dart';
+import '../widgets/step_editors/generic_step_editor.dart';
+import '../widgets/step_editors/image_adjust_step_editor.dart';
+import '../widgets/step_editors/image_brightness_step_editor.dart';
+import '../widgets/step_editors/image_channel_extract_step_editor.dart';
+import '../widgets/step_editors/image_compress_step_editor.dart';
+import '../widgets/step_editors/image_convert_step_editor.dart';
+import '../widgets/step_editors/image_crop_step_editor.dart';
+import '../widgets/step_editors/image_denoise_step_editor.dart';
+import '../widgets/step_editors/image_noise_step_editor.dart';
+import '../widgets/step_editors/image_rotate_step_editor.dart';
+import '../widgets/step_editors/image_scale_step_editor.dart';
+import '../widgets/step_editors/image_sharpen_step_editor.dart';
+import '../widgets/step_editors/image_to_video_step_editor.dart';
+import '../widgets/step_editors/speed_step_editor.dart';
+import '../widgets/step_editors/subtitle_step_editor.dart';
+import '../widgets/step_editors/video_crop_step_editor.dart';
+import '../widgets/step_editors/video_deinterlace_step_editor.dart';
+import '../widgets/step_editors/video_fade_step_editor.dart';
+import '../widgets/step_editors/video_filter_step_editor.dart';
+import '../widgets/step_editors/video_frame_rate_step_editor.dart';
+import '../widgets/step_editors/video_geometry_step_editor.dart';
+import '../widgets/step_editors/video_overlay_step_editor.dart';
+import '../widgets/step_editors/video_reverse_step_editor.dart';
 
-/// 预设选项：值 + 显示标签。
-typedef _Preset = ({Object value, String label});
-
-/// 快捷配置编辑器 —— 悬浮玻璃窗口（居中对话框），而非整页。
-/// 左侧列配置项，右侧编辑参数；通过 showDialog 打开，onSave 回调保存更新后的配置。
+/// 单文件快捷配置向导。第一页选择有序处理节点，点击一行打开原节点参数编辑器。
+///
+/// onSave 完成后才执行 onExecute；后者由项目入口负责入队，页面不持有全局任务状态。
+/// 通过 video 提供裁剪/帧预览/内嵌字幕信息；省略时可编辑保存的配置库模板。
 class QuickConfigPage extends StatefulWidget {
-  final QuickConfig config;
-  final Future<void> Function(QuickConfig updated) onSave;
-
   const QuickConfigPage({
     super.key,
     required this.config,
     required this.onSave,
+    this.video,
+    this.isZh,
+    this.onExecute,
   });
+
+  final QuickConfig config;
+  final Future<void> Function(QuickConfig updated) onSave;
+  final VideoFile? video;
+  final bool? isZh;
+  final Future<void> Function(QuickConfig updated, PipelineGraph graph)?
+  onExecute;
 
   @override
   State<QuickConfigPage> createState() => _QuickConfigPageState();
 }
 
 class _QuickConfigPageState extends State<QuickConfigPage> {
-  late QuickConfig _config;
-  String? _selectedKey;
+  late final QuickConfig _config;
+  bool _initialized = false;
   bool _dirty = false;
   bool _saving = false;
+  bool _closing = false;
+  bool _editing = false;
+  String? _selectedId;
+  String? _error;
+  List<String> _legacyNotes = const [];
+
+  List<PipelineNode> get _nodes => _config.nodes!;
+  bool get _isZh =>
+      widget.isZh ??
+      AppStrings.of(context.read<AppState>().config.language).isZh;
+  String _text(String zh, String en) => _isZh ? zh : en;
+  String _label(PipelineNode node) => _isZh ? node.label : node.labelEn;
 
   @override
   void initState() {
     super.initState();
-    _config = _deepCopy(widget.config);
-    if (_config.items.isNotEmpty) {
-      _selectedKey = _config.items.first.key;
-    }
+    _config = widget.config.deepCopy();
   }
 
-  /// 深拷贝一份工作副本，避免直接修改传入的配置对象。
-  QuickConfig _deepCopy(QuickConfig src) {
-    return QuickConfig(
-      id: src.id,
-      fileType: src.fileType,
-      name: src.name,
-      description: src.description,
-      createdAt: src.createdAt,
-      updatedAt: src.updatedAt,
-      items: src.items
-          .map(
-            (it) => QuickConfigItem(
-              key: it.key,
-              title: it.title,
-              titleZh: it.titleZh,
-              titleEn: it.titleEn,
-              params: Map<String, dynamic>.from(it.params),
-              enabled: it.enabled,
-            ),
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    if (_config.nodes == null) {
+      // 旧配置仍按原映射读取，原 items 完整留在工作副本里。
+      final legacy = buildGraphFromQuickConfig(_config, isZh: _isZh);
+      _legacyNotes = legacy.skippedNotes;
+      _config.nodes = legacy.graph.nodes
+          .where(
+            (node) =>
+                node.type != PipelineStepType.start &&
+                node.type != PipelineStepType.output,
           )
-          .toList(),
-    );
+          .map((node) => node.deepCopy())
+          .toList();
+    }
+    if (_nodes.isNotEmpty) _selectedId = _nodes.first.id;
   }
 
-  void _toggleItemEnabled(int index) {
+  void _changed() {
+    if (!mounted) return;
     setState(() {
-      _config.items[index].enabled = !_config.items[index].enabled;
       _dirty = true;
+      _error = null;
     });
   }
 
-  void _updateParam(String itemKey, String paramKey, dynamic value) {
-    final idx = _config.items.indexWhere((it) => it.key == itemKey);
-    if (idx < 0) return;
+  void _add(PipelineStepType type) {
+    final media = _nodes.isEmpty
+        ? quickMediaType(_config.fileType)
+        : _nodes.last.outputType!;
     setState(() {
-      _config.items[idx].params[paramKey] = value;
+      final node = createQuickConfigNode(type, media);
+      _nodes.add(node);
+      _selectedId = node.id;
       _dirty = true;
+      _error = null;
     });
   }
 
-  Future<void> _save() async {
-    if (_saving) return;
+  void _remove(int index) {
+    setState(() {
+      final removed = _nodes.removeAt(index);
+      if (_selectedId == removed.id) {
+        _selectedId = _nodes.isEmpty ? null : _nodes.last.id;
+      }
+      _dirty = true;
+      _error = null;
+    });
+  }
+
+  void _move(int index, int delta) {
+    final target = index + delta;
+    if (target < 0 || target >= _nodes.length) return;
+    setState(() {
+      final node = _nodes.removeAt(index);
+      _nodes.insert(target, node);
+      _dirty = true;
+      _error = null;
+    });
+  }
+
+  void _openNode(PipelineNode node) => setState(() {
+    _selectedId = node.id;
+    _editing = true;
+  });
+
+  Future<void> _save({bool execute = false}) async {
+    if (_saving || _nodes.isEmpty) return;
     FocusScope.of(context).unfocus();
-    setState(() => _saving = true);
-    final snapshot = _deepCopy(_config);
+    final errors = [
+      ...validateQuickConfigNodes(_config, isZh: _isZh),
+      ...validateQuickConfigParameters(_config, isZh: _isZh),
+    ];
+    if (errors.isNotEmpty) {
+      setState(() => _error = errors.join('\n'));
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    var saved = false;
     try {
-      await widget.onSave(snapshot);
+      final snapshot = _config.deepCopy()..updatedAt = DateTime.now();
+      final result = buildGraphFromQuickConfig(snapshot, isZh: _isZh);
+      await widget.onSave(snapshot.deepCopy());
+      saved = true;
       if (!mounted) return;
-      setState(() => _dirty = false);
-      Navigator.pop(context, snapshot);
-    } catch (_) {
+      _dirty = false;
+      if (execute) await widget.onExecute!(snapshot.deepCopy(), result.graph);
       if (!mounted) return;
-      final isZh = AppStrings.of(context.read<AppState>().config.language).isZh;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            isZh
-                ? '保存失败，更改仍保留，请重试。'
-                : 'Save failed. Your changes are retained. Please retry.',
-          ),
-        ),
+      _close(snapshot);
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _error = saved
+            ? _text(
+                '配置已保存，加入队列失败：$error',
+                'Configuration saved; could not queue: $error',
+              )
+            : _text('保存失败：$error', 'Could not save: $error'),
       );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
-  Future<bool> _onWillPop() async {
-    if (_saving) return false;
-    if (!_dirty) return true;
-    final scheme = Theme.of(context).colorScheme;
-    final isZh = AppStrings.of(context.read<AppState>().config.language).isZh;
-    final result = await showDialog<bool>(
+  void _close([QuickConfig? result]) {
+    setState(() => _closing = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.of(context).pop(result);
+    });
+  }
+
+  Future<void> _requestClose() async {
+    if (_saving) return;
+    if (!_dirty) {
+      _close();
+      return;
+    }
+    final discard = await showDialog<bool>(
       context: context,
       builder: (ctx) => AppAlertDialog(
-        title: Text(
-          isZh ? '放弃更改?' : 'Discard changes?',
-          style: TextStyle(color: scheme.onSurface),
-        ),
+        title: Text(_text('放弃更改？', 'Discard changes?')),
         content: Text(
-          isZh ? '你有未保存的更改，确定要退出吗？' : 'You have unsaved changes. Discard?',
-          style: TextStyle(color: scheme.onSurfaceVariant),
+          _text(
+            '尚未保存的节点与参数将被丢弃。',
+            'Unsaved nodes and settings will be discarded.',
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text(isZh ? '取消' : 'Cancel'),
+            child: Text(_text('继续编辑', 'Keep editing')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text(isZh ? '放弃' : 'Discard'),
+            child: Text(_text('放弃', 'Discard')),
           ),
         ],
       ),
     );
-    return result ?? false;
+    if (discard == true && mounted) _close();
   }
-
-  // ── 工具方法 ──
-
-  /// snake_case → Title Case（未知键兜底显示）
-  String _humanizeKey(String key) {
-    return key
-        .split('_')
-        .map((w) => w.isEmpty ? '' : '${w[0].toUpperCase()}${w.substring(1)}')
-        .join(' ');
-  }
-
-  /// 参数名本地化标签。
-  String _paramLabel(String key, bool isZh) {
-    switch (key) {
-      case 'bitrate':
-        return isZh ? '码率' : 'Bitrate';
-      case 'crf':
-        return 'CRF';
-      case 'angle':
-        return isZh ? '角度' : 'Angle';
-      case 'subtitle_path':
-      case 'subtitle_file':
-        return isZh ? '字幕文件' : 'Subtitle File';
-      case 'w':
-        return isZh ? '宽度' : 'Width';
-      case 'h':
-        return isZh ? '高度' : 'Height';
-      case 'x':
-        return isZh ? 'X 偏移' : 'X Offset';
-      case 'y':
-        return isZh ? 'Y 偏移' : 'Y Offset';
-      case 'quality':
-        return isZh ? '质量' : 'Quality';
-      case 'format':
-        return isZh ? '格式' : 'Format';
-      case 'codec':
-        return isZh ? '编码器' : 'Codec';
-      case 'preset':
-        return isZh ? '预设' : 'Preset';
-      case 'position':
-        return isZh ? '位置' : 'Position';
-      case 'image':
-        return isZh ? '水印图片' : 'Watermark Image';
-      case 'brightness':
-        return isZh ? '亮度' : 'Brightness';
-      case 'contrast':
-        return isZh ? '对比度' : 'Contrast';
-      case 'saturation':
-        return isZh ? '饱和度' : 'Saturation';
-      case 'fit':
-        return isZh ? '适配' : 'Fit Mode';
-      case 'rate':
-        return isZh ? '采样率 (Hz)' : 'Sample Rate (Hz)';
-      case 'count':
-        return isZh ? '声道数' : 'Channels';
-      case 'level':
-        return isZh ? '目标响度 (LUFS)' : 'Level (LUFS)';
-      case 'burn':
-        return isZh ? '烧录字幕' : 'Burn Subtitles';
-      default:
-        return _humanizeKey(key);
-    }
-  }
-
-  /// 左面板每项下方的简要参数描述（如 "码率 4M · CRF 23"）。
-  String _itemSummary(QuickConfigItem item, bool isZh) {
-    final parts = <String>[];
-    item.params.forEach((k, v) {
-      final label = _paramLabel(k, isZh);
-      if (v is bool) {
-        parts.add('$label${isZh ? (v ? '开启' : '关闭') : (v ? 'on' : 'off')}');
-      } else if (v is num) {
-        parts.add('$label $v');
-      } else if (v is String && v.isNotEmpty) {
-        final display = v.length > 16 ? '${v.substring(0, 16)}…' : v;
-        parts.add('$label $display');
-      } else if (v is List && v.isNotEmpty) {
-        parts.add('$label ${v.join('/')}');
-      }
-    });
-    return parts.isEmpty ? '—' : parts.join(' · ');
-  }
-
-  /// 常见参数的预设选项（供下拉框选择）。
-  List<_Preset>? _presetsFor(String paramKey, QuickFileType ft, bool isZh) {
-    switch (paramKey) {
-      case 'position':
-        return [
-          (value: 'bottom_right', label: isZh ? '右下' : 'Bottom Right'),
-          (value: 'bottom_left', label: isZh ? '左下' : 'Bottom Left'),
-          (value: 'top_right', label: isZh ? '右上' : 'Top Right'),
-          (value: 'top_left', label: isZh ? '左上' : 'Top Left'),
-          (value: 'center', label: isZh ? '居中' : 'Center'),
-        ];
-      case 'preset':
-        return <_Preset>[
-          for (final e in const [
-            'ultrafast',
-            'superfast',
-            'veryfast',
-            'faster',
-            'fast',
-            'medium',
-            'slow',
-            'slower',
-            'veryslow',
-            'placebo',
-          ])
-            (value: e, label: e),
-        ];
-      case 'codec':
-        final list = ft == QuickFileType.audio
-            ? const ['aac', 'mp3', 'opus', 'flac', 'pcm_s16le']
-            : const ['h264', 'hevc', 'av1', 'vp9', 'mpeg4'];
-        return <_Preset>[for (final e in list) (value: e, label: e)];
-      case 'format':
-        final list = switch (ft) {
-          QuickFileType.video => const [
-            'mp4',
-            'mkv',
-            'mov',
-            'avi',
-            'webm',
-            'mpeg',
-          ],
-          QuickFileType.audio => const [
-            'mp3',
-            'aac',
-            'wav',
-            'flac',
-            'ogg',
-            'm4a',
-          ],
-          QuickFileType.image => const ['jpg', 'png', 'webp', 'bmp', 'tiff'],
-        };
-        return <_Preset>[for (final e in list) (value: e, label: e)];
-      case 'fit':
-        return [
-          (value: 'contain', label: isZh ? '等比缩放' : 'Contain'),
-          (value: 'cover', label: isZh ? '裁剪填充' : 'Cover'),
-          (value: 'fill', label: isZh ? '拉伸' : 'Fill'),
-          (value: 'inside', label: isZh ? '仅缩小' : 'Inside'),
-          (value: 'outside', label: isZh ? '仅放大' : 'Outside'),
-        ];
-      case 'rate':
-        return <_Preset>[
-          for (final e in const [8000, 22050, 44100, 48000, 96000])
-            (value: e, label: '$e'),
-        ];
-      case 'count':
-        return [
-          (value: 1, label: isZh ? '单声道 (1)' : 'Mono (1)'),
-          (value: 2, label: isZh ? '立体声 (2)' : 'Stereo (2)'),
-          (value: 6, label: isZh ? '5.1 环绕 (6)' : '5.1 (6)'),
-        ];
-      case 'bitrate':
-        final list = ft == QuickFileType.audio
-            ? const ['64k', '128k', '192k', '256k', '320k']
-            : const ['500k', '1M', '2M', '4M', '8M', '20M'];
-        return <_Preset>[for (final e in list) (value: e, label: e)];
-      case 'quality':
-        return <_Preset>[
-          for (final e in const [60, 70, 75, 80, 85, 90, 95])
-            (value: e, label: '$e'),
-        ];
-      case 'level':
-        return <_Preset>[
-          for (final e in const [-23, -20, -16, -14, -12])
-            (value: e, label: '$e LUFS'),
-        ];
-      default:
-        return null;
-    }
-  }
-
-  IconData _itemIcon(String key) {
-    switch (key) {
-      case 'bitrate':
-        return Icons.speed;
-      case 'subtitle':
-        return Icons.subtitles;
-      case 'crop':
-        return Icons.crop;
-      case 'rotate':
-        return Icons.rotate_right;
-      case 'watermark':
-        return Icons.branding_watermark;
-      case 'compress':
-        return Icons.compress;
-      case 'resize':
-        return Icons.photo_size_select_large;
-      case 'convert_format':
-        return Icons.swap_horiz;
-      case 'filters':
-        return Icons.tune;
-      case 'sample_rate':
-        return Icons.multitrack_audio;
-      case 'channels':
-        return Icons.surround_sound;
-      case 'normalize':
-        return Icons.volume_up;
-      default:
-        return Icons.tune_outlined;
-    }
-  }
-
-  Color _fileTypeColor(QuickFileType type, ColorScheme scheme) {
-    switch (type) {
-      case QuickFileType.video:
-        return scheme.primary;
-      case QuickFileType.audio:
-        return scheme.tertiary;
-      case QuickFileType.image:
-        return scheme.secondary;
-    }
-  }
-
-  // ── 构建 ──
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final app = context.watch<AppState>();
-    final isZh = AppStrings.of(app.config.language).isZh;
     final media = MediaQuery.of(context);
-    final narrow = media.size.width < 760;
-    // 移动端适配（修复：布局拥挤/偏移）：
-    // - 宽度按屏宽减去小边距，不再 16px 起铺（刘海/圆角屏贴边怪异）；
-    // - 高度避开状态栏与手势条（viewPadding），内容套 SafeArea；
-    // - 键盘弹出时（viewInsets.bottom>0）压缩窗口高度，避免输入框被遮。
-    final winW = narrow
-        ? media.size.width
-        : math.min(960.0, media.size.width * 0.92);
-    final keyboardInset = media.viewInsets.bottom > 0
-        ? media.viewInsets.bottom
-        : 0.0;
-    final winH = narrow
-        ? (media.size.height - keyboardInset).clamp(0.0, media.size.height)
-        : math.min(700.0, media.size.height * 0.86);
-    final scrollCompactLayout =
-        narrow &&
-        media.size.width < 720 &&
-        (winH < 420 || media.textScaler.scale(1) > 1.3);
+    final scheme = Theme.of(context).colorScheme;
+    final errors = [
+      ...validateQuickConfigNodes(_config, isZh: _isZh),
+      ...validateQuickConfigParameters(_config, isZh: _isZh),
+    ];
+    final canSave = _nodes.isNotEmpty && errors.isEmpty && !_saving;
+    final availableHeight =
+        media.size.height -
+        media.viewInsets.bottom -
+        media.padding.vertical -
+        32;
+    final dialogHeight = math.min(740.0, math.max(0.0, availableHeight));
+    final compactViewport =
+        availableHeight < 460 || media.textScaler.scale(14) >= 20;
 
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
-        final nav = Navigator.of(context);
-        if (await _onWillPop() && nav.mounted) nav.pop();
-      },
-      child: AbsorbPointer(
-        absorbing: _saving,
-        child: AppModalSurface(
-          constraints: BoxConstraints(maxWidth: winW),
-          child: SizedBox(
-            width: winW,
-            height: winH,
-            child: MediaQuery(
-              data: media,
-              child: SafeArea(
-                top: false,
-                bottom: false,
-                child: scrollCompactLayout
-                    ? SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Padding(
-                              padding: EdgeInsets.only(top: media.padding.top),
-                              child: _buildHeader(scheme, isZh),
-                            ),
-                            Divider(
-                              height: 1,
-                              color: scheme.outlineVariant.withAlpha(70),
-                            ),
-                            SizedBox(
-                              height: winH,
-                              child: LayoutBuilder(
-                                builder: (_, constraints) =>
-                                    _buildVerticalLayout(
-                                      scheme,
-                                      isZh,
-                                      constraints,
-                                    ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Padding(
-                            // 手机上让出状态栏，避免标题被挖孔/刘海压住。
-                            padding: EdgeInsets.only(top: media.padding.top),
-                            child: _buildHeader(scheme, isZh),
-                          ),
-                          Divider(
-                            height: 1,
-                            color: scheme.outlineVariant.withAlpha(70),
-                          ),
-                          Expanded(
-                            child: LayoutBuilder(
-                              builder: (_, constraints) {
-                                if (constraints.maxWidth < 720) {
-                                  return _buildVerticalLayout(
-                                    scheme,
-                                    isZh,
-                                    constraints,
-                                  );
-                                }
-                                return _buildHorizontalLayout(scheme, isZh);
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 窗口顶栏：标题 + 文件类型徽章 + 保存/关闭。
-  Widget _buildHeader(ColorScheme scheme, bool isZh) {
-    final title = Row(
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _config.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: scheme.onSurface,
-                ),
-              ),
-              if (_config.description.isNotEmpty) ...[
-                const SizedBox(height: 2),
+    final header = Padding(
+      padding: const EdgeInsets.fromLTRB(20, 14, 8, 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 Text(
-                  _config.description,
+                  _text('快捷配置向导', 'Quick configuration'),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: scheme.onSurfaceVariant,
-                  ),
+                  style: Theme.of(context).textTheme.titleLarge,
                 ),
-              ],
-            ],
-          ),
-        ),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: _fileTypeColor(_config.fileType, scheme).withAlpha(30),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              _config.fileType.label(isZh),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                color: _fileTypeColor(_config.fileType, scheme),
-              ),
-            ),
-          ),
-        ),
-        if (_dirty) ...[
-          const SizedBox(width: 8),
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              color: Colors.orangeAccent,
-              shape: BoxShape.circle,
-            ),
-            child: SizedBox(width: 8, height: 8),
-          ),
-        ],
-      ],
-    );
-    final actions = LayoutBuilder(
-      builder: (context, constraints) {
-        final cancel = AppDialogAction(
-          role: AppDialogActionRole.cancel,
-          child: TextButton(
-            onPressed: _saving
-                ? null
-                : () async {
-                    final nav = Navigator.of(context);
-                    if (await _onWillPop() && nav.mounted) nav.pop();
-                  },
-            child: Text(isZh ? '取消' : 'Cancel'),
-          ),
-        );
-        final save = AppDialogAction(
-          role: AppDialogActionRole.primary,
-          child: FilledButton(
-            onPressed: _dirty && !_saving ? _save : null,
-            child: Text(isZh ? '保存' : 'Save'),
-          ),
-        );
-        if (constraints.maxWidth >= 260 &&
-            MediaQuery.textScalerOf(context).scale(1) <= 1.3) {
-          return Row(
-            children: [
-              Expanded(child: cancel),
-              const SizedBox(width: 8),
-              Expanded(child: save),
-            ],
-          );
-        }
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [cancel, const SizedBox(height: 8), save],
-        );
-      },
-    );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth >= 600 &&
-              MediaQuery.textScalerOf(context).scale(1) <= 1.3) {
-            return Row(
-              children: [
-                Expanded(child: title),
-                const SizedBox(width: 16),
-                SizedBox(width: 260, child: actions),
-              ],
-            );
-          }
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [title, const SizedBox(height: 12), actions],
-          );
-        },
-      ),
-    );
-  }
-
-  /// 是否处于移动端（窄屏）上下文：决定按钮触控尺寸与布局密度。
-  bool get isMobileContext => MediaQuery.sizeOf(context).width < 600;
-
-  Widget _buildHorizontalLayout(ColorScheme scheme, bool isZh) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SizedBox(width: 280, child: _buildLeftPanel(scheme, isZh)),
-        VerticalDivider(width: 1, color: scheme.outlineVariant.withAlpha(60)),
-        Expanded(child: _buildRightPanel(scheme, isZh)),
-      ],
-    );
-  }
-
-  Widget _buildVerticalLayout(
-    ColorScheme scheme,
-    bool isZh,
-    BoxConstraints constraints,
-  ) {
-    if (constraints.maxHeight < 380) {
-      final selected = _config.items
-          .where((item) => item.key == _selectedKey)
-          .firstOrNull;
-      return Column(
-        children: [
-          if (_config.items.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-              child: AppDropdown<String>(
-                label: isZh ? '配置项' : 'Config item',
-                value: selected?.key ?? _config.items.first.key,
-                height: 44,
-                items: [
-                  for (final item in _config.items)
-                    AppDropdownItem<String>(item.key, item.titleFor(isZh)),
-                ],
-                onChanged: (key) => setState(() => _selectedKey = key),
-              ),
-            ),
-          Expanded(
-            child: _config.items.isEmpty
-                ? Center(child: Text(isZh ? '暂无配置项' : 'No items'))
-                : _buildRightPanel(scheme, isZh),
-          ),
-        ],
-      );
-    }
-    final leftH = (constraints.maxHeight * 0.42).clamp(170.0, 300.0);
-    return Column(
-      children: [
-        SizedBox(height: leftH, child: _buildLeftPanel(scheme, isZh)),
-        Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
-        Expanded(child: _buildRightPanel(scheme, isZh)),
-      ],
-    );
-  }
-
-  // ── 左面板：配置项列表 ──
-
-  Widget _buildLeftPanel(ColorScheme scheme, bool isZh) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          // 上下留白必须相等（原来上 14 / 下 8）：这一行紧贴面板顶边与下方分隔线，
-          // 不等会让人误以为「配置项」标签整体偏上；左右 16 与列表项对齐。
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Icon(Icons.list, size: 14, color: scheme.outline),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  isZh ? '配置项' : 'Config Items',
-                  // 头部行高度固定：标签与数量都单行省略，大字号下不会折行加高
+                const SizedBox(height: 4),
+                Text(
+                  '${_config.fileType.label(_isZh)}${widget.video != null
+                      ? ' · ${widget.video!.filename}'
+                      : _config.name.isNotEmpty
+                      ? ' · ${_config.name}'
+                      : ''}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.outline,
-                  ),
+                  style: TextStyle(color: scheme.onSurfaceVariant),
                 ),
-              ),
-              Text(
-                '${_config.items.length}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: scheme.outline.withAlpha(120),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        const Divider(height: 1),
-        Expanded(
-          child: _config.items.isEmpty
-              ? Center(
-                  child: Text(
-                    isZh ? '暂无配置项' : 'No items',
-                    style: TextStyle(
-                      color: scheme.outline.withAlpha(100),
-                      fontSize: 13,
-                    ),
-                  ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  itemCount: _config.items.length,
-                  itemBuilder: (_, i) =>
-                      _buildItemTile(_config.items[i], i, scheme, isZh),
-                ),
-        ),
-      ],
+          IconButton(
+            key: const ValueKey('quick_close'),
+            onPressed: _saving ? null : _requestClose,
+            tooltip: _text('关闭', 'Close'),
+            icon: const Icon(Icons.close),
+          ),
+        ],
+      ),
     );
-  }
-
-  Widget _buildItemTile(
-    QuickConfigItem item,
-    int index,
-    ColorScheme scheme,
-    bool isZh,
-  ) {
-    final selected = _selectedKey == item.key;
-    final title = item.titleFor(isZh);
-    final summary = _itemSummary(item, isZh);
-
-    return Material(
-      color: selected ? scheme.primary.withAlpha(18) : Colors.transparent,
-      child: InkWell(
-        onTap: () => setState(() => _selectedKey = item.key),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            border: selected
-                ? Border(left: BorderSide(color: scheme.primary, width: 3))
-                : null,
+    final stepLabel = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      child: Text(
+        _editing
+            ? _text('2 · 配置处理节点', '2 · Configure nodes')
+            : _text('1 · 选择处理节点', '1 · Select nodes'),
+        style: TextStyle(color: scheme.primary, fontWeight: FontWeight.w600),
+      ),
+    );
+    final messages = <Widget>[
+      if (_legacyNotes.isNotEmpty)
+        _notice(_legacyNotes.join('\n'), warning: false),
+      if (_error != null || errors.isNotEmpty)
+        _notice(_error ?? errors.join('\n'), warning: true),
+    ];
+    final flow = AbsorbPointer(
+      absorbing: _saving,
+      child: _editing
+          ? _buildDetails(scrollable: !compactViewport)
+          : _buildSelection(scrollable: !compactViewport),
+    );
+    final footer = Padding(
+      padding: const EdgeInsets.all(12),
+      child: Wrap(
+        alignment: WrapAlignment.end,
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          if (_editing)
+            TextButton.icon(
+              key: const ValueKey('quick_add_node'),
+              onPressed: _saving
+                  ? null
+                  : () => setState(() => _editing = false),
+              icon: const Icon(Icons.playlist_add),
+              label: Text(_text('选择节点', 'Select nodes')),
+            )
+          else
+            OutlinedButton.icon(
+              key: const ValueKey('quick_next'),
+              onPressed:
+                  _saving ||
+                      _nodes.isEmpty ||
+                      validateQuickConfigNodes(_config, isZh: _isZh).isNotEmpty
+                  ? null
+                  : () => setState(() {
+                      _selectedId ??= _nodes.first.id;
+                      _editing = true;
+                    }),
+              icon: const Icon(Icons.tune),
+              label: Text(_text('下一步', 'Next')),
+            ),
+          OutlinedButton.icon(
+            key: const ValueKey('quick_save'),
+            onPressed: canSave ? _save : null,
+            icon: const Icon(Icons.save_outlined),
+            label: Text(_text('保存', 'Save')),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+          if (widget.onExecute != null)
+            FilledButton.icon(
+              key: const ValueKey('quick_execute'),
+              onPressed: canSave ? () => _save(execute: true) : null,
+              icon: const Icon(Icons.play_arrow),
+              label: Text(_text('保存并入队', 'Save & queue')),
+            ),
+        ],
+      ),
+    );
+    final layout = compactViewport
+        ? SingleChildScrollView(
+            key: const ValueKey('quick_compact_scroll'),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                header,
+                stepLabel,
+                const Divider(height: 1),
+                ...messages,
+                flow,
+                const Divider(height: 1),
+                footer,
+              ],
+            ),
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(
-                width: 28,
-                height: 28,
-                child: Checkbox(
-                  value: item.enabled,
-                  onChanged: (_) => _toggleItemEnabled(index),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: item.enabled
-                      ? scheme.primaryContainer.withAlpha(120)
-                      : scheme.surfaceContainerHighest.withAlpha(80),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  _itemIcon(item.key),
-                  size: 16,
-                  color: item.enabled
-                      ? scheme.onPrimaryContainer
-                      : scheme.outline.withAlpha(100),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // 标题必须单行：折行后左侧勾选框/图标会与「首行」错位，
-                    // 视觉上就是勾选框偏上、与文字上下不对称。
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: item.enabled
-                            ? scheme.onSurface
-                            : scheme.outline.withAlpha(120),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      summary,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: item.enabled
-                            ? scheme.onSurfaceVariant
-                            : scheme.outline.withAlpha(80),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              header,
+              stepLabel,
+              const Divider(height: 1),
+              ...messages,
+              Expanded(child: flow),
+              const Divider(height: 1),
+              footer,
             ],
-          ),
+          );
+
+    return PopScope(
+      canPop: _closing || (!_dirty && !_saving),
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && !_saving) _requestClose();
+      },
+      child: Dialog(
+        insetPadding: EdgeInsets.all(media.size.width < 600 ? 16 : 24),
+        constraints: const BoxConstraints(maxWidth: 980),
+        clipBehavior: Clip.antiAlias,
+        child: SizedBox(
+          width: math.min(980.0, media.size.width - 16),
+          height: dialogHeight,
+          child: layout,
         ),
       ),
     );
   }
 
-  // ── 右面板：参数编辑 ──
+  Widget _notice(String text, {required bool warning}) => ConstrainedBox(
+    constraints: const BoxConstraints(maxHeight: 96),
+    child: SingleChildScrollView(
+      child: Container(
+        width: double.infinity,
+        color: warning
+            ? Theme.of(context).colorScheme.errorContainer
+            : Theme.of(context).colorScheme.secondaryContainer,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: 12,
+            color: warning
+                ? Theme.of(context).colorScheme.onErrorContainer
+                : Theme.of(context).colorScheme.onSecondaryContainer,
+          ),
+        ),
+      ),
+    ),
+  );
 
-  Widget _buildRightPanel(ColorScheme scheme, bool isZh) {
-    if (_selectedKey == null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+  Widget _buildSelection({bool scrollable = true}) => LayoutBuilder(
+    builder: (context, bounds) {
+      if (bounds.maxWidth < 700) {
+        final content = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Icon(
-              Icons.touch_app_outlined,
-              size: 44,
-              color: scheme.outline.withAlpha(60),
+            _buildChain(),
+            const SizedBox(height: 20),
+            _buildCatalog(),
+          ],
+        );
+        return scrollable
+            ? SingleChildScrollView(
+                key: const ValueKey('quick_selection'),
+                padding: const EdgeInsets.all(16),
+                child: content,
+              )
+            : Padding(
+                key: const ValueKey('quick_selection'),
+                padding: const EdgeInsets.all(16),
+                child: content,
+              );
+      }
+      if (scrollable) {
+        return Row(
+          key: const ValueKey('quick_selection'),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: _buildCatalog(),
+              ),
             ),
-            const SizedBox(height: 12),
-            Text(
-              isZh ? '请从左侧选择一个配置项' : 'Select an item from the left',
-              style: TextStyle(
-                fontSize: 14,
-                color: scheme.outline.withAlpha(120),
+            const VerticalDivider(width: 1),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: _buildChain(),
               ),
             ),
           ],
-        ),
-      );
-    }
-
-    final idx = _config.items.indexWhere((it) => it.key == _selectedKey);
-    if (idx < 0) {
-      return Center(
-        child: Text(
-          isZh ? '配置项未找到' : 'Item not found',
-          style: TextStyle(color: scheme.error, fontSize: 14),
-        ),
-      );
-    }
-
-    final item = _config.items[idx];
-    final title = item.titleFor(isZh);
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 标题与右侧开关同处一行：显式居中对齐 + 标题单行省略。
-          // 否则大字号下标题折成两行，首行会高于开关中心 —— 正是
-          // 「字体与选择框上下不对称、整体偏上」的观感来源。
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Icon(_itemIcon(item.key), size: 20, color: scheme.primary),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurface,
-                  ),
-                ),
-              ),
-              Switch(
-                value: item.enabled,
-                onChanged: (_) {
-                  final idx2 = _config.items.indexWhere(
-                    (it) => it.key == item.key,
-                  );
-                  if (idx2 >= 0) _toggleItemEnabled(idx2);
-                },
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            isZh ? '键: ${item.key}' : 'Key: ${item.key}',
-            style: TextStyle(
-              fontSize: 11,
-              color: scheme.outline.withAlpha(120),
-            ),
-          ),
-          const SizedBox(height: 20),
-          const Divider(height: 1),
-          const SizedBox(height: 20),
-          if (item.params.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 40),
-              child: Center(
-                child: Text(
-                  isZh ? '此配置项没有可编辑的参数' : 'No editable parameters',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: scheme.outline.withAlpha(120),
-                  ),
-                ),
-              ),
-            )
-          else
-            ...item.params.entries.map((entry) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: _buildParamField(
-                  item.key,
-                  entry.key,
-                  entry.value,
-                  _config.fileType,
-                  scheme,
-                  isZh,
-                ),
-              );
-            }),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildParamField(
-    String itemKey,
-    String paramKey,
-    dynamic value,
-    QuickFileType ft,
-    ColorScheme scheme,
-    bool isZh,
-  ) {
-    final label = _paramLabel(paramKey, isZh);
-
-    if (value is bool) {
-      return _BoolSwitch(
-        key: ValueKey('$itemKey:$paramKey'),
-        label: label,
-        value: value,
-        onChanged: (v) => _updateParam(itemKey, paramKey, v),
-      );
-    }
-
-    // 角度等特殊键：int → 下拉框（90/180/270）
-    if (value is int && paramKey.toLowerCase().contains('angle')) {
-      return _NumberDropdown(
-        key: ValueKey('$itemKey:$paramKey'),
-        label: label,
-        value: value,
-        options: const [90, 180, 270],
-        onChanged: (v) => _updateParam(itemKey, paramKey, v),
-      );
-    }
-
-    // 有预设的常见参数（字符串或数字）→ 下拉框，提供可选项
-    final presets = _presetsFor(paramKey, ft, isZh);
-    if (presets != null && (value is String || value is num)) {
-      return _PresetDropdown(
-        key: ValueKey('$itemKey:$paramKey'),
-        label: label,
-        value: value,
-        options: presets,
-        onChanged: (v) => _updateParam(itemKey, paramKey, v),
-        isZh: isZh,
-      );
-    }
-
-    if (value is int) {
-      return _NumberField(
-        key: ValueKey('$itemKey:$paramKey'),
-        label: label,
-        value: value,
-        isInt: true,
-        onChanged: (v) => _updateParam(itemKey, paramKey, v),
-      );
-    }
-
-    if (value is double) {
-      return _NumberField(
-        key: ValueKey('$itemKey:$paramKey'),
-        label: label,
-        value: value,
-        isInt: false,
-        onChanged: (v) => _updateParam(itemKey, paramKey, v),
-      );
-    }
-
-    if (value is List) {
-      return _DropdownField(
-        key: ValueKey('$itemKey:$paramKey'),
-        label: label,
-        value: value.isNotEmpty ? value.first : null,
-        options: value,
-        onChanged: (v) => _updateParam(itemKey, paramKey, v),
-      );
-    }
-
-    if (value is String) {
-      final isNumeric = RegExp(r'^\d+$').hasMatch(value);
-      final isPath =
-          (paramKey == 'subtitle_path' ||
-              paramKey == 'subtitle_file' ||
-              paramKey == 'image') ||
-          ((value.contains('/') || value.contains('.')) && !isNumeric);
-      if (isPath) {
-        return _PathField(
-          key: ValueKey('$itemKey:$paramKey'),
-          label: label,
-          value: value,
-          isZh: isZh,
-          onChanged: (v) => _updateParam(itemKey, paramKey, v),
         );
       }
-      return _TextField(
-        key: ValueKey('$itemKey:$paramKey'),
-        label: label,
-        value: value,
-        onChanged: (v) => _updateParam(itemKey, paramKey, v),
+      return Row(
+        key: const ValueKey('quick_selection'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: _buildCatalog(),
+            ),
+          ),
+          const VerticalDivider(width: 1),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: _buildChain(),
+            ),
+          ),
+        ],
       );
-    }
+    },
+  );
 
-    return _TextField(
-      key: ValueKey('$itemKey:$paramKey'),
-      label: label,
-      value: '$value',
-      onChanged: (v) => _updateParam(itemKey, paramKey, v),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════
-// 参数编辑子组件
-// ═══════════════════════════════════════════════════════════════
-
-/// 数字输入框（int / double）
-class _NumberField extends StatefulWidget {
-  final String label;
-  final num value;
-  final bool isInt;
-  final ValueChanged<num> onChanged;
-
-  const _NumberField({
-    super.key,
-    required this.label,
-    required this.value,
-    required this.isInt,
-    required this.onChanged,
-  });
-
-  @override
-  State<_NumberField> createState() => _NumberFieldState();
-}
-
-class _NumberFieldState extends State<_NumberField> {
-  late TextEditingController _controller;
-  late FocusNode _focusNode;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.value.toString());
-    _focusNode = FocusNode();
-  }
-
-  @override
-  void didUpdateWidget(_NumberField old) {
-    super.didUpdateWidget(old);
-    if (widget.value != old.value && !_focusNode.hasFocus) {
-      _controller.text = widget.value.toString();
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  void _applyValue() {
-    final text = _controller.text.trim();
-    if (widget.isInt) {
-      final parsed = int.tryParse(text);
-      if (parsed != null) widget.onChanged(parsed);
-    } else {
-      final parsed = double.tryParse(text);
-      if (parsed != null) widget.onChanged(parsed);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+  Widget _buildCatalog() {
+    final types = availableQuickNodeTypes(_config.fileType, nodes: _nodes);
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Text(
-            widget.label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: scheme.onSurfaceVariant,
+        Text(
+          _text('可用节点', 'Available nodes'),
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _text(
+            '点击添加，可重复添加。不兼容的节点已自动隐藏。',
+            'Tap to add; repeat any node. Incompatible nodes are hidden.',
+          ),
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        if (types.isEmpty)
+          Text(
+            _text(
+              '请先修正右侧流程中的不兼容节点。',
+              'Resolve the incompatible nodes in the sequence first.',
             ),
           ),
-        ),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 220),
-          child: TextField(
-            controller: _controller,
-            focusNode: _focusNode,
-            keyboardType: TextInputType.number,
-            style: TextStyle(fontSize: 14, color: scheme.onSurface),
-            decoration: InputDecoration(
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 10,
+        for (final type in types)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: OutlinedButton(
+              key: ValueKey('quick_pick_${type.name}'),
+              onPressed: () => _add(type),
+              style: OutlinedButton.styleFrom(
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
               ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.check, size: 16),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                onPressed: _applyValue,
+              child: Row(
+                children: [
+                  const Icon(Icons.add_circle_outline, size: 18),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(_label(PipelineNode(id: '', type: type))),
+                  ),
+                ],
               ),
             ),
-            onSubmitted: (_) => _applyValue(),
           ),
-        ),
       ],
     );
   }
-}
 
-/// 文本输入框
-class _TextField extends StatefulWidget {
-  final String label;
-  final String value;
-  final ValueChanged<String> onChanged;
-
-  const _TextField({
-    super.key,
-    required this.label,
-    required this.value,
-    required this.onChanged,
-  });
-
-  @override
-  State<_TextField> createState() => _TextFieldState();
-}
-
-class _TextFieldState extends State<_TextField> {
-  late TextEditingController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.value);
-  }
-
-  @override
-  void didUpdateWidget(_TextField old) {
-    super.didUpdateWidget(old);
-    if (widget.value != old.value) {
-      _controller.text = widget.value;
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
+  Widget _buildChain() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        _text('处理顺序（${_nodes.length}）', 'Sequence (${_nodes.length})'),
+        style: Theme.of(context).textTheme.titleMedium,
+      ),
+      const SizedBox(height: 6),
+      Text(
+        _text(
+          '按列表从上到下串行执行。点击节点编辑参数。',
+          'Runs serially from top to bottom. Tap a node to edit its settings.',
+        ),
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+      const SizedBox(height: 12),
+      if (_nodes.isEmpty)
         Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Text(
-            widget.label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
+          padding: const EdgeInsets.symmetric(vertical: 24),
+          child: Text(_text('添加第一个处理节点', 'Add your first processing node')),
         ),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 300),
-          child: TextField(
-            controller: _controller,
-            style: TextStyle(fontSize: 14, color: scheme.onSurface),
-            decoration: InputDecoration(
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 10,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.check, size: 16),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                onPressed: () => widget.onChanged(_controller.text),
-              ),
-            ),
-            onSubmitted: (v) => widget.onChanged(v),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// 文件路径输入框（带浏览按钮）
-class _PathField extends StatefulWidget {
-  final String label;
-  final String value;
-  final bool isZh;
-  final ValueChanged<String> onChanged;
-
-  const _PathField({
-    super.key,
-    required this.label,
-    required this.value,
-    required this.isZh,
-    required this.onChanged,
-  });
-
-  @override
-  State<_PathField> createState() => _PathFieldState();
-}
-
-class _PathFieldState extends State<_PathField> {
-  late TextEditingController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.value);
-  }
-
-  @override
-  void didUpdateWidget(_PathField old) {
-    super.didUpdateWidget(old);
-    if (widget.value != old.value) {
-      _controller.text = widget.value;
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  Future<void> _pickFile() async {
-    final picked = await FilePicker.pickFile();
-    final path = picked?.path;
-    if (path != null) {
-      _controller.text = path;
-      widget.onChanged(path);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Text(
-            widget.label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Row(
+      for (final (index, node) in _nodes.indexed)
+        Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
             children: [
-              Expanded(
-                child: TextField(
-                  controller: _controller,
-                  style: TextStyle(fontSize: 13, color: scheme.onSurface),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  onSubmitted: (v) => widget.onChanged(v),
+              ListTile(
+                key: ValueKey('quick_node_${node.id}'),
+                leading: CircleAvatar(radius: 16, child: Text('${index + 1}')),
+                title: Text(
+                  _label(node),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
+                subtitle: Text(node.mediaTag, maxLines: 1),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _openNode(node),
               ),
-              const SizedBox(width: 6),
-              IconButton(
-                icon: const Icon(Icons.folder_open_outlined, size: 18),
-                tooltip: widget.isZh ? '浏览' : 'Browse',
-                onPressed: _pickFile,
-                style: IconButton.styleFrom(
-                  backgroundColor: scheme.surfaceContainerHighest.withAlpha(
-                    100,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  IconButton(
+                    key: ValueKey('quick_up_${node.id}'),
+                    tooltip: _text('上移', 'Move up'),
+                    onPressed: index == 0 ? null : () => _move(index, -1),
+                    icon: const Icon(Icons.arrow_upward, size: 18),
                   ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
+                  IconButton(
+                    key: ValueKey('quick_down_${node.id}'),
+                    tooltip: _text('下移', 'Move down'),
+                    onPressed: index == _nodes.length - 1
+                        ? null
+                        : () => _move(index, 1),
+                    icon: const Icon(Icons.arrow_downward, size: 18),
                   ),
-                ),
-                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  IconButton(
+                    key: ValueKey('quick_remove_${node.id}'),
+                    tooltip: _text('移除', 'Remove'),
+                    onPressed: () => _remove(index),
+                    icon: const Icon(Icons.remove_circle_outline, size: 18),
+                  ),
+                ],
               ),
             ],
           ),
         ),
+    ],
+  );
+
+  Widget _buildDetails({bool scrollable = true}) {
+    final index = _nodes.indexWhere((node) => node.id == _selectedId);
+    if (index < 0) return const SizedBox.shrink();
+    final node = _nodes[index];
+    final editor = _buildNodeEditor(node);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: _text('上一个节点', 'Previous node'),
+                onPressed: index == 0
+                    ? null
+                    : () => _openNode(_nodes[index - 1]),
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Expanded(
+                child: Text(
+                  '${index + 1}/${_nodes.length} · ${_label(node)}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              IconButton(
+                tooltip: _text('下一个节点', 'Next node'),
+                onPressed: index == _nodes.length - 1
+                    ? null
+                    : () => _openNode(_nodes[index + 1]),
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
+        ),
+        if (scrollable)
+          Expanded(
+            child: SingleChildScrollView(
+              key: ValueKey('quick_editor_${node.id}'),
+              child: editor,
+            ),
+          )
+        else
+          Padding(
+            key: ValueKey('quick_editor_${node.id}'),
+            padding: const EdgeInsets.all(16),
+            child: editor,
+          ),
       ],
     );
   }
-}
 
-/// 布尔开关
-class _BoolSwitch extends StatelessWidget {
-  final String label;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  const _BoolSwitch({
-    super.key,
-    required this.label,
-    required this.value,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    // 标签与开关同处一行：标签必须单行省略，否则大字号下折成两行后
-    // 首行明显高于开关中心 —— 即「字体与选择框上下不对称、整体偏上」的观感。
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
-          ),
-        ),
-        Switch(
-          value: value,
+  Widget _buildNodeEditor(PipelineNode node) {
+    final isZh = _isZh;
+    final onChanged = _changed;
+    Widget editor;
+    switch (node.type) {
+      case PipelineStepType.avProcess:
+        editor = AvProcessStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
           onChanged: onChanged,
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-      ],
-    );
-  }
-}
-
-/// 数字下拉框（如角度 90/180/270）
-class _NumberDropdown extends StatelessWidget {
-  final String label;
-  final int value;
-  final List<int> options;
-  final ValueChanged<int> onChanged;
-
-  const _NumberDropdown({
-    super.key,
-    required this.label,
-    required this.value,
-    required this.options,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: scheme.onSurfaceVariant,
-            ),
+          isZh: isZh,
+        );
+      case PipelineStepType.subtitle:
+        editor = SubtitleStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+          embeddedSubtitles: widget.video?.subtitles ?? const [],
+        );
+      case PipelineStepType.clip:
+        editor = ClipStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          videoPath: widget.video?.filepath ?? '',
+          videoDuration: widget.video?.duration ?? 0,
+          isZh: isZh,
+        );
+      case PipelineStepType.frame:
+        editor = FrameStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          videoPath: widget.video?.filepath ?? '',
+          videoDuration: widget.video?.duration ?? 0,
+          isZh: isZh,
+        );
+      case PipelineStepType.speed:
+        editor = SpeedStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.imageConvert:
+        editor = ImageConvertStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioConvert:
+        editor = AudioConvertStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioQuality:
+        editor = AudioQualityStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioSpeed:
+        editor = AudioSpeedStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioVolume:
+        editor = AudioVolumeStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioCompressor:
+        editor = AudioCompressorStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioMetadata:
+        editor = AudioMetadataStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.extractAudio:
+        editor = ExtractAudioStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+          videoPath: widget.video?.filepath ?? '',
+          videoDuration: widget.video?.duration ?? 0,
+        );
+      case PipelineStepType.concatMedia:
+        editor = ConcatMediaStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+          containerFileCount: 1,
+        );
+      case PipelineStepType.imageToVideo:
+        editor = ImageToVideoStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+          containerFileCount: 1,
+        );
+      case PipelineStepType.imageCrop:
+        editor = ImageCropStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+          sourceImagePath: widget.video?.fileMediaType == MediaType.image
+              ? widget.video?.filepath
+              : null,
+        );
+      case PipelineStepType.imageRotate:
+        editor = ImageRotateStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.imageScale:
+        editor = ImageScaleStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.imageBrightness:
+        editor = ImageBrightnessStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.imageNoise:
+        editor = ImageNoiseStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.imageSharpen:
+        editor = ImageSharpenStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.imageDenoise:
+        editor = ImageDenoiseStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.imageChannelExtract:
+        editor = ImageChannelExtractStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.videoCrop:
+        editor = VideoCropStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+          videoPath: widget.video?.filepath ?? '',
+          videoWidth: widget.video?.width ?? 0,
+          videoHeight: widget.video?.height ?? 0,
+          fps: widget.video?.fps ?? 0,
+        );
+      case PipelineStepType.videoFilter:
+        editor = VideoFilterStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.videoGeometry:
+        editor = VideoGeometryStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.videoOverlay:
+        editor = VideoOverlayStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioFade:
+        editor = AudioFadeStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioSpectrum:
+        editor = AudioSpectrumStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioWaveform:
+        editor = AudioWaveformStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioReverse:
+        editor = AudioReverseStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.videoReverse:
+        editor = VideoReverseStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioEqualizer:
+        editor = AudioEqualizerStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.videoFade:
+        editor = VideoFadeStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.imageAdjust:
+        editor = ImageAdjustStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.imageCompress:
+        editor = ImageCompressStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioNormalize:
+        editor = AudioNormalizeStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioNoiseGate:
+        editor = AudioNoiseGateStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.videoFrameRate:
+        editor = VideoFrameRateStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioDenoise:
+        editor = AudioDenoiseStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.audioSilenceTrim:
+        editor = AudioSilenceTrimStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.videoDeinterlace:
+        editor = VideoDeinterlaceStepEditor(
+          key: ValueKey(node.id),
+          params: node.params,
+          onChanged: onChanged,
+          isZh: isZh,
+        );
+      case PipelineStepType.metadataStrip:
+      case PipelineStepType.mediaConvert:
+      case PipelineStepType.mediaScale:
+      case PipelineStepType.mediaCrop:
+      case PipelineStepType.mediaRotate:
+      case PipelineStepType.mediaColor:
+      case PipelineStepType.mediaSharpen:
+      case PipelineStepType.mediaOverlay:
+        // 通用节点：媒体类型必选（属性面板顶部选择器），按类型复用既有编辑器
+        editor = GenericMediaStepEditor(
+          key: ValueKey(node.id),
+          node: node,
+          onChanged: onChanged,
+          isZh: isZh,
+          videoPath: widget.video?.filepath ?? '',
+          videoDuration: widget.video?.duration ?? 0,
+          videoWidth: widget.video?.width ?? 0,
+          videoHeight: widget.video?.height ?? 0,
+          fps: widget.video?.fps ?? 0,
+          sourceImagePath: widget.video?.fileMediaType == MediaType.image
+              ? widget.video?.filepath
+              : null,
+        );
+      case PipelineStepType.start:
+      case PipelineStepType.output:
+      case PipelineStepType.unknown:
+        editor = Text(
+          _text(
+            '此节点不支持快捷配置。',
+            'This node is not supported in quick configuration.',
           ),
-        ),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 220),
-          // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）
-          child: OptionMenuBar<int>(
-            value: options.contains(value) ? value : options.first,
-            items: [for (final v in options) OptionItem(v, '$v°')],
-            onChanged: onChanged,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// 预设下拉框：值可为字符串或数字，显示本地化标签；当前值不在预设中时自动追加。
-class _PresetDropdown extends StatelessWidget {
-  final String label;
-  final Object value;
-  final List<_Preset> options;
-  final ValueChanged<Object> onChanged;
-
-  /// 界面语言：搜索框占位符 / 空态文案要跟界面走，不能写死中文。
-  final bool isZh;
-
-  const _PresetDropdown({
-    super.key,
-    required this.label,
-    required this.value,
-    required this.options,
-    required this.onChanged,
-    required this.isZh,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final entries = <_Preset>[...options];
-    final hasCurrent = entries.any((e) => e.value == value);
-    if (!hasCurrent && value.toString().isNotEmpty) {
-      entries.insert(0, (value: value, label: '$value'));
+        );
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 260),
-          // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）。
-          // 编码预设（x264 的 10 档 preset）条目多，给更宽的浮层并开启搜索。
-          child: OptionMenuBar<Object>(
-            value: value,
-            menuWidth: 260,
-            searchable: entries.length > 7,
-            searchHint: isZh ? '搜索选项' : 'Search options',
-            emptyLabel: isZh ? '无匹配项' : 'No matches',
-            items: [for (final e in entries) OptionItem(e.value, e.label)],
-            onChanged: onChanged,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// 通用下拉框（用于 List 类型参数）
-class _DropdownField extends StatelessWidget {
-  final String label;
-  final dynamic value;
-  final List<dynamic> options;
-  final ValueChanged<dynamic> onChanged;
-
-  const _DropdownField({
-    super.key,
-    required this.label,
-    required this.value,
-    required this.options,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 220),
-          // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）
-          child: OptionMenuBar<dynamic>(
-            value: options.contains(value) ? value : options.firstOrNull,
-            items: [for (final v in options) OptionItem<dynamic>(v, '$v')],
-            onChanged: onChanged,
-          ),
-        ),
-      ],
-    );
+    return editor;
   }
 }

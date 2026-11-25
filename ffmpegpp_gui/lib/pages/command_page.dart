@@ -9,6 +9,7 @@ import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_card.dart';
+import '../widgets/adaptive_top_bar.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_glass_pill.dart';
 import '../widgets/mobile_top_bar.dart';
@@ -679,12 +680,31 @@ class _CommandPageState extends State<CommandPage> {
       backgroundColor: Colors.transparent,
       body: Column(
         children: [
-          GlassTopBar(
-            title: Row(
-              children: [
-                Icon(Icons.terminal_outlined, size: 20, color: scheme.primary),
-                const SizedBox(width: 8),
-                Text(s.navCommand),
+          AdaptiveTopBar(
+            expandedBuilder: (_) => GlassTopBar(
+              title: Row(
+                children: [
+                  Icon(
+                    Icons.terminal_outlined,
+                    size: 20,
+                    color: scheme.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(s.navCommand, overflow: TextOverflow.ellipsis),
+                  ),
+                ],
+              ),
+            ),
+            compactBuilder: (_) => MobilePillTopBar(
+              title: Text(s.navCommand),
+              actions: [
+                MobileGlassPillAction(
+                  icon: Icons.delete_outline,
+                  tooltip: s.cmdClearOutput,
+                  color: scheme.error,
+                  onTap: _clearOutput,
+                ),
               ],
             ),
           ),

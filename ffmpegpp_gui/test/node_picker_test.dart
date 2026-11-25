@@ -384,7 +384,7 @@ void main() {
         final canvas = tester.getRect(find.byType(InteractiveViewer));
         // Graph copies and undo/redo remap IDs; use the live public snapshot.
         final graph =
-            host.panelSnapshot(DetachedPanel.elements)['graph'] as Map;
+            host.panelSnapshot(DetachedPanel.ai)['graph'] as Map;
         final processorId = (graph['nodes'] as List)
             .map(
               (raw) =>

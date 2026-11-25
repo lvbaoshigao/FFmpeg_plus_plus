@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
+import '../widgets/adaptive_top_bar.dart';
 import '../widgets/app_card.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/mobile_top_bar.dart';
@@ -56,7 +57,13 @@ class AdsPage extends StatelessWidget {
       children: [
         Icon(Icons.campaign_outlined, size: 20, color: scheme.primary),
         const SizedBox(width: 8),
-        Text(s.isZh ? '广告' : 'Ads'),
+        Flexible(
+          child: Text(
+            s.isZh ? '广告' : 'Ads',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
       ],
     );
 
@@ -82,11 +89,12 @@ class AdsPage extends StatelessWidget {
                 addRepaintBoundaries: false,
                 padding: isMobilePlatform
                     ? MobileUi.subListPadding(
-                        top: ImmersiveTopBar.insetOf(context) + 10, bottom: 24)
+                        top: ImmersiveTopBar.insetOf(context) + 10,
+                        bottom: 24,
+                      )
                     : const EdgeInsets.fromLTRB(16, 10, 16, 24),
                 itemCount: kAds.length,
-                separatorBuilder: (_, _) =>
-                    const SizedBox(height: 10),
+                separatorBuilder: (_, _) => const SizedBox(height: 10),
                 itemBuilder: (ctx, i) => AppCard(
                   style: cardStyle,
                   radius: 14,
@@ -117,10 +125,7 @@ class AdsPage extends StatelessWidget {
                           kAds[i].url,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: scheme.primary,
-                          ),
+                          style: TextStyle(fontSize: 11, color: scheme.primary),
                         ),
                       ],
                     ],
@@ -136,7 +141,7 @@ class AdsPage extends StatelessWidget {
         child: Scaffold(
           backgroundColor: Colors.transparent,
           // 移动端：沉浸式浮动药丸顶栏（滚动条目从底下穿过）；
-          // 桌面端：保持 Column + GlassTopBar 不变。
+          // 桌面端保持 Column，顶栏按页面可用宽度切换长条 / 药丸。
           body: isMobilePlatform
               ? ImmersiveTopBar(
                   bar: MobileSubPageTopBar(
@@ -147,19 +152,25 @@ class AdsPage extends StatelessWidget {
                 )
               : Column(
                   children: [
-                    GlassTopBar(
-                      title: title,
-                      actions: [
-                        IconButton(
-                          tooltip: s.aboutClose,
-                          icon: Icon(
-                            Icons.close,
-                            size: 18,
-                            color: scheme.onSurfaceVariant,
+                    AdaptiveTopBar(
+                      compactBuilder: (context) => MobileSubPageTopBar(
+                        title: title,
+                        onBack: () => Navigator.of(context).maybePop(),
+                      ),
+                      expandedBuilder: (context) => GlassTopBar(
+                        title: title,
+                        actions: [
+                          IconButton(
+                            tooltip: s.aboutClose,
+                            icon: Icon(
+                              Icons.close,
+                              size: 18,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                            onPressed: () => Navigator.of(context).maybePop(),
                           ),
-                          onPressed: () => Navigator.of(context).maybePop(),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                     Expanded(child: content),
                   ],

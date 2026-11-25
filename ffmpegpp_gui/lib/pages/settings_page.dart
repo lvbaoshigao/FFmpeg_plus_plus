@@ -41,6 +41,7 @@ import '../widgets/app_alert_dialog.dart';
 import '../widgets/app_card.dart';
 import '../widgets/app_slider.dart';
 import '../widgets/font_picker.dart';
+import '../widgets/adaptive_top_bar.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/install_dialog.dart';
 import '../widgets/masonry_grid.dart';
@@ -52,6 +53,7 @@ import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
 import '../widgets/option_menu_bar.dart';
 import '../widgets/selection_highlight.dart';
+import '../widgets/theme_color_picker.dart';
 import '../widgets/toast.dart';
 import '../widgets/wallpaper_background.dart';
 // Linux CSD（自绘窗口修饰）：二级 / 三级全屏路由页统一套 WindowChrome，
@@ -1513,9 +1515,12 @@ class _SettingsPageState extends State<SettingsPage> {
           backgroundColor: Colors.transparent,
           body: Column(
             children: [
-              GlassTopBar(
-                title: Text(s.settingsTitle),
-                center: _searchField(scheme, s),
+              AdaptiveTopBar(
+                expandedBuilder: (_) => GlassTopBar(
+                  title: Text(s.settingsTitle),
+                  center: _searchField(scheme, s),
+                ),
+                compactBuilder: (_) => _buildMobileTopBar(s, scheme),
               ),
               Expanded(
                 // Keep the detail subtree in the same slot when resizing.
@@ -2042,7 +2047,7 @@ class _SettingsPageState extends State<SettingsPage> {
       // 主界面不折叠（用户要求「主界面不要搞...了」）。本页常驻操作只有「搜索」
       // 一个，本来也不会折叠，这里显式关掉以免以后加操作时行为与其它主界面不一致。
       collapseActions: false,
-      searching: _searchExpanded,
+      searching: _searchExpanded || _searchCtrl.text.isNotEmpty,
       // 搜索药丸：与主界面（项目页）共用同一实现，不再各写一份
       searchChild: MobileSearchPill(
         controller: _searchCtrl,
@@ -2514,36 +2519,58 @@ class _SettingsSubPageShell extends StatelessWidget {
       WindowChrome(
         child: Scaffold(
           backgroundColor: Colors.transparent,
-          // 沉浸式顶栏：列表铺满整个内容区、顶栏浮在上面。旧写法是
-          // Column([顶栏, Expanded(列表)])，列表到顶栏下沿就被截断，滚动时
-          // 条目被硬切在药丸下面；改 Stack 后条目会钻到药丸底下，透过玻璃显示。
-          body: ImmersiveTopBar(
-            bar: MobileSubPageTopBar(
-              title: Text(title),
-              onBack: () => Navigator.of(context).maybePop(),
-            ),
-            child: ListView(
-              // addRepaintBoundaries:false —— 见移动端主列表同款注释：
-              // 壁纸开窗 painter 必须每帧按当前变换重算，不能被子项缓存平移。
-              // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
-              // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
-              addRepaintBoundaries: false,
-              // Cards in this page already own the shared 12px inset via
-              // _glass/_AiSectionCard. Do not add another 12px here: that
-              // made every secondary-page card narrower than the provider
-              // card on the MCP/AI page.
-              //
-              // top 用 ImmersiveTopBar.insetOf：预留顶栏（含状态栏）高度，
-              // 首屏第一张卡正好落在药丸下沿，往下滑就钻进去。
-              padding: EdgeInsets.only(
-                top: ImmersiveTopBar.insetOf(context) + 4,
-                bottom: 48,
-              ),
-              children: [
-                Consumer<AppState>(
-                  builder: (ctx, state, _) => contentBuilder(ctx, state),
+          // Keep the list in the same slot when the bar changes shape.
+          body: AppTopBarLayout(
+            builder: (context, compact) => ImmersiveTopBar(
+              bar: compact
+                  ? MobileSubPageTopBar(
+                      title: Text(title),
+                      onBack: () => Navigator.of(context).maybePop(),
+                    )
+                  : GlassTopBar(
+                      title: Row(
+                        children: [
+                          BackButton(
+                            onPressed: () => Navigator.of(context).maybePop(),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+              child: ListView(
+                // addRepaintBoundaries:false —— 见移动端主列表同款注释：
+                // 壁纸开窗 painter 必须每帧按当前变换重算，不能被子项缓存平移。
+                // 左右间距与设置主界面卡片对齐（主界面 = ListView + 分区卡内边距 14）。
+                // 此前为 0：MCP/AI 等二级页卡片通顶通底，比主界面卡片明显更宽。
+                addRepaintBoundaries: false,
+                // Cards in this page already own the shared 12px inset via
+                // _glass/_AiSectionCard. Do not add another 12px here: that
+                // made every secondary-page card narrower than the provider
+                // card on the MCP/AI page.
+                //
+                // top 用 ImmersiveTopBar.insetOf：预留顶栏（含状态栏）高度，
+                // 首屏第一张卡正好落在药丸下沿，往下滑就钻进去。
+                padding: EdgeInsets.only(
+                  top:
+                      (compact
+                          ? ImmersiveTopBar.insetOf(context)
+                          : GlassTopBar.defaultExtent) +
+                      4,
+                  bottom: 48,
                 ),
-              ],
+                children: [
+                  Consumer<AppState>(
+                    builder: (ctx, state, _) => contentBuilder(ctx, state),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -3371,7 +3398,7 @@ List<Widget> _buildBorderItems(BuildContext ctx, AppState state) {
             ),
           ),
           const SizedBox(width: 8),
-          // 色块即按钮：点开复用主题色取色面板（只取单色，渐变开关被忽略），样式一致
+          // 色块即按钮：复用主题色取色面板，仅显示纯色控件。
           InkWell(
             borderRadius: BorderRadius.circular(8),
             onTap: () => _pickBorderColor(ctx, state),
@@ -3500,7 +3527,8 @@ final class _StyleValues {
   AppConfig applyTo(AppConfig config) => config
     ..cardStyle = cardStyle
     ..navStyle = navStyle
-    ..selectionIndicatorStyle = selectionIndicatorStyle ?? config.selectionIndicatorStyle
+    ..selectionIndicatorStyle =
+        selectionIndicatorStyle ?? config.selectionIndicatorStyle
     ..pillStyle = pillStyle
     ..menuStyle = menuStyle
     ..dropdownAppearance = dropdownAppearance
@@ -3841,21 +3869,17 @@ List<Widget> _glassDetailItems(BuildContext ctx, AppState state) {
   ];
 }
 
-/// 边框颜色选择：复用主题色的取色面板 [_CP]（只取第一个颜色）。
+/// 边框颜色选择：复用主题色面板，仅允许纯色。
 Future<void> _pickBorderColor(BuildContext ctx, AppState state) async {
   final isZh = state.config.language == 'zh';
-  final cp = _CP(initial: Color(state.config.borderColor), isZh: isZh);
-  final res = isMobilePlatform
-      ? await showModalBottomSheet<_GradResult>(
-          context: ctx,
-          isScrollControlled: true,
-          backgroundColor: Colors.transparent,
-          builder: (_) => SafeArea(top: false, child: cp),
-        )
-      : await showDialog<_GradResult>(
-          context: ctx,
-          builder: (_) => Center(child: SizedBox(width: 320, child: cp)),
-        );
+  final res = await showThemeColorPicker(
+    ctx,
+    initial: Color(state.config.borderColor),
+    isZh: isZh,
+    useBottomSheet: isMobilePlatform,
+    allowGradient: false,
+    title: isZh ? '边框颜色' : 'Border color',
+  );
   if (res == null) return;
   state.updateConfig((c) => c..borderColor = res.c1);
 }
@@ -4143,13 +4167,20 @@ Widget _fontWeightPicker(
       ? const ['细体', '常规', '中等', '半粗', '粗体']
       : const ['Light', 'Regular', 'Medium', 'SemiBold', 'Bold'];
   final family = cfg.fontFamily.isEmpty ? null : cfg.fontFamily;
+  final textScaler = MediaQuery.textScalerOf(ctx);
+  final pickerHeight = math.max(
+    72.0,
+    (textScaler.scale(18) * 1.25).ceilToDouble() +
+        (textScaler.scale(11) * 1.4).ceilToDouble() +
+        24,
+  );
   return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Text(s.qWeight, style: TextStyle(color: clr, fontSize: 13)),
       const SizedBox(height: 10),
       SizedBox(
-        height: 72,
+        height: pickerHeight,
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(
@@ -4164,7 +4195,7 @@ Widget _fontWeightPicker(
                     onPressed: () =>
                         state.updateConfig((c) => c..fontWeightIndex = i),
                     style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(100, 72),
+                      minimumSize: Size(100, pickerHeight),
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
                         vertical: 10,
@@ -4196,7 +4227,7 @@ Widget _fontWeightPicker(
                         const SizedBox(height: 4),
                         Text(
                           '${labels[i]} · ${AppConfig.fontWeightValues[i]}',
-                          style: const TextStyle(fontSize: 11),
+                          style: const TextStyle(fontSize: 11, height: 1.4),
                         ),
                       ],
                     ),
@@ -6477,9 +6508,12 @@ Future<void> pingAi(BuildContext ctx, AppState state, AppStrings s) async {
   final modelsUrl = baseUrl.endsWith('/v1')
       ? '$baseUrl/models'
       : '$baseUrl/v1/models';
-  final span = state.diagnosticTrace.begin('ai.ping', details: {
-    'protocol': cfg.aiProvider == 'anthropic' ? 'anthropic' : 'openai',
-  });
+  final span = state.diagnosticTrace.begin(
+    'ai.ping',
+    details: {
+      'protocol': cfg.aiProvider == 'anthropic' ? 'anthropic' : 'openai',
+    },
+  );
   state.addLog('[AI] Ping $modelsUrl ...', category: 'info');
   try {
     final uri = Uri.parse(modelsUrl);
@@ -6537,9 +6571,12 @@ Future<void> listAiModels(
     if (ctx.mounted) showToast(ctx, s.aiNotConfigured, type: ToastType.warning);
     return;
   }
-  final span = state.diagnosticTrace.begin('ai.models', details: {
-    'protocol': cfg.aiProvider == 'anthropic' ? 'anthropic' : 'openai',
-  });
+  final span = state.diagnosticTrace.begin(
+    'ai.models',
+    details: {
+      'protocol': cfg.aiProvider == 'anthropic' ? 'anthropic' : 'openai',
+    },
+  );
   state.addLog('[AI] 获取模型列表...', category: 'info');
   try {
     final headers = <String, String>{};
@@ -6559,7 +6596,10 @@ Future<void> listAiModels(
             (data['data'] as List?)?.map((m) => m['id'] as String).toList() ??
             [];
         models.sort();
-        span?.finish(success: true, details: {'httpStatus': resp.statusCode, 'itemCount': models.length});
+        span?.finish(
+          success: true,
+          details: {'httpStatus': resp.statusCode, 'itemCount': models.length},
+        );
         state.addLog(
           '[AI] Anthropic 获取到 ${models.length} 个模型',
           category: 'info',
@@ -6572,9 +6612,14 @@ Future<void> listAiModels(
           category: 'info',
         );
         final known = List.of(_kKnownAnthropicModels);
-        span?.finish(success: false, details: {
-          'httpStatus': resp.statusCode, 'fallback': true, 'itemCount': known.length,
-        });
+        span?.finish(
+          success: false,
+          details: {
+            'httpStatus': resp.statusCode,
+            'fallback': true,
+            'itemCount': known.length,
+          },
+        );
         onListed?.call(known);
         if (ctx.mounted) _showModelPicker(ctx, state, known, s, onPicked);
       }
@@ -6591,7 +6636,10 @@ Future<void> listAiModels(
       final models =
           (data['data'] as List?)?.map((m) => m['id'] as String).toList() ?? [];
       models.sort();
-      span?.finish(success: true, details: {'httpStatus': resp.statusCode, 'itemCount': models.length});
+      span?.finish(
+        success: true,
+        details: {'httpStatus': resp.statusCode, 'itemCount': models.length},
+      );
       state.addLog('[AI] 获取到 ${models.length} 个模型', category: 'info');
       onListed?.call(models);
       if (ctx.mounted) _showModelPicker(ctx, state, models, s, onPicked);
@@ -6618,10 +6666,16 @@ Future<void> listAiModels(
 ///
 /// 返回可读余额字符串；全部端点不可用时返回 null（由调用方提示「不支持」），
 /// 而不是抛错——避免把「供应商没这个接口」当成配置错误误导用户。
-Future<String?> fetchAiBalance(AiProfile profile, {DiagnosticTrace? trace}) async {
-  final span = trace?.begin('ai.balance', details: {
-    'protocol': profile.provider == 'anthropic' ? 'anthropic' : 'openai',
-  });
+Future<String?> fetchAiBalance(
+  AiProfile profile, {
+  DiagnosticTrace? trace,
+}) async {
+  final span = trace?.begin(
+    'ai.balance',
+    details: {
+      'protocol': profile.provider == 'anthropic' ? 'anthropic' : 'openai',
+    },
+  );
   try {
     final result = await _fetchAiBalance(profile, span);
     span?.finish(success: result != null);
@@ -6654,7 +6708,10 @@ Future<String?> _fetchAiBalance(AiProfile profile, DiagnosticSpan? span) async {
           headers: headers,
         )
         .timeout(timeout);
-    span?.record('ai.balance.endpoint', details: {'endpoint': 'credit_grants', 'httpStatus': resp.statusCode});
+    span?.record(
+      'ai.balance.endpoint',
+      details: {'endpoint': 'credit_grants', 'httpStatus': resp.statusCode},
+    );
     if (resp.statusCode == 200) {
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
       final total = (data['total_granted'] as num?)?.toDouble();
@@ -6671,7 +6728,13 @@ Future<String?> _fetchAiBalance(AiProfile profile, DiagnosticSpan? span) async {
       }
     }
   } catch (error) {
-    span?.record('ai.balance.endpoint', details: {'endpoint': 'credit_grants', 'failureType': error.runtimeType.toString()});
+    span?.record(
+      'ai.balance.endpoint',
+      details: {
+        'endpoint': 'credit_grants',
+        'failureType': error.runtimeType.toString(),
+      },
+    );
     // 端点不存在/网络问题 → 继续尝试下一个
   }
 
@@ -6680,7 +6743,10 @@ Future<String?> _fetchAiBalance(AiProfile profile, DiagnosticSpan? span) async {
     final resp = await http
         .get(Uri.parse('$base/user/info'), headers: headers)
         .timeout(timeout);
-    span?.record('ai.balance.endpoint', details: {'endpoint': 'user_info', 'httpStatus': resp.statusCode});
+    span?.record(
+      'ai.balance.endpoint',
+      details: {'endpoint': 'user_info', 'httpStatus': resp.statusCode},
+    );
     if (resp.statusCode == 200) {
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
       final d = data['data'];
@@ -6698,7 +6764,13 @@ Future<String?> _fetchAiBalance(AiProfile profile, DiagnosticSpan? span) async {
       }
     }
   } catch (error) {
-    span?.record('ai.balance.endpoint', details: {'endpoint': 'user_info', 'failureType': error.runtimeType.toString()});
+    span?.record(
+      'ai.balance.endpoint',
+      details: {
+        'endpoint': 'user_info',
+        'failureType': error.runtimeType.toString(),
+      },
+    );
     // 同上
   }
 
@@ -7057,7 +7129,8 @@ String _humanSize(int bytes) {
 Future<void> _checkForUpdate(BuildContext ctx, AppStrings s) async {
   showToast(ctx, s.checking, type: ToastType.info);
   final result = await updater.checkForUpdate(
-    preferLanzou: s.isZh, trace: ctx.read<AppState>().diagnosticTrace,
+    preferLanzou: s.isZh,
+    trace: ctx.read<AppState>().diagnosticTrace,
   );
   if (!ctx.mounted) return;
   if (result.error != null && !result.hasUpdate) {
@@ -7285,25 +7358,15 @@ Future<void> _downloadAndInstall(
 
 Future<void> _pickColor(BuildContext ctx, AppState state) async {
   final isZh = state.config.language == 'zh';
-  final cp = _CP(
+  final res = await showThemeColorPicker(
+    ctx,
     initial: Color(state.config.themeColor),
     initial2: state.config.themeColor2 >= 0
         ? Color(state.config.themeColor2)
         : null,
     isZh: isZh,
+    useBottomSheet: isMobilePlatform,
   );
-  // 移动端：底部弹层（全宽、自滚动），避免固定 320px 弹窗在窄屏上挤压出下划线/裁切伪影
-  final res = isMobilePlatform
-      ? await showModalBottomSheet<_GradResult>(
-          context: ctx,
-          isScrollControlled: true,
-          backgroundColor: Colors.transparent,
-          builder: (_) => SafeArea(top: false, child: cp),
-        )
-      : await showDialog<_GradResult>(
-          context: ctx,
-          builder: (_) => Center(child: SizedBox(width: 320, child: cp)),
-        );
   if (res == null) return;
   state.updateConfig(
     (c) => c
@@ -7906,406 +7969,6 @@ class _FfmpegCardState extends State<_FfmpegCard> {
 // ═══════════════════════════════════════════
 // 取色器
 // ═══════════════════════════════════════════
-
-/// 渐变主题色选择结果：c1=起色，c2 为 null 表示纯色主题
-class _GradResult {
-  final int c1;
-  final int? c2;
-  _GradResult(this.c1, this.c2);
-}
-
-/// 主题渐变色预设（起色, 止色, 名称）
-const _gradPresets = <(int, int, String)>[
-  (0xFF5E6AD2, 0xFF8B5CF6, '紫罗兰'),
-  (0xFF3B82F6, 0xFF06B6D4, '海洋'),
-  (0xFF10B981, 0xFF84CC16, '翡翠'),
-  (0xFFF59E0B, 0xFFEF4444, '熔岩'),
-  (0xFFEC4899, 0xFFF97316, '日落'),
-  (0xFF8B5CF6, 0xFFEC4899, '霓虹'),
-  (0xFF64748B, 0xFF0EA5E9, '钢蓝'),
-  (0xFF111827, 0xFF5E6AD2, '夜幕'),
-];
-
-class _CP extends StatefulWidget {
-  final Color initial;
-  final Color? initial2;
-  final bool isZh;
-  const _CP({required this.initial, required this.isZh, this.initial2});
-  @override
-  State<_CP> createState() => _CPState();
-}
-
-class _CPState extends State<_CP> {
-  late double _h1, _s1, _v1;
-  late double _h2, _s2, _v2;
-  // null = 纯色主题；非 null = 渐变主题
-  bool _gradEnabled;
-
-  _CPState() : _gradEnabled = false;
-
-  @override
-  void initState() {
-    super.initState();
-    final h1 = HSVColor.fromColor(widget.initial);
-    _h1 = h1.hue;
-    _s1 = h1.saturation;
-    _v1 = h1.value;
-    if (widget.initial2 != null) {
-      _gradEnabled = true;
-      final h2 = HSVColor.fromColor(widget.initial2!);
-      _h2 = h2.hue;
-      _s2 = h2.saturation;
-      _v2 = h2.value;
-    } else {
-      _gradEnabled = false;
-      final h2 = HSVColor.fromColor(widget.initial);
-      _h2 = h2.hue + 20;
-      _s2 = h2.saturation;
-      _v2 = h2.value;
-    }
-  }
-
-  Color get c1 => HSVColor.fromAHSV(1, _h1, _s1, _v1).toColor();
-  Color get c2 => HSVColor.fromAHSV(1, _h2, _s2, _v2).toColor();
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final labelStyle = SettingsTypography.description.copyWith(
-      color: scheme.onSurfaceVariant,
-    );
-    // 原先写死 Color(0xFF9AA0A6)：一个冷调灰，既不随主题（浅色/深色）变化，
-    // 也和同页其他次要文字用的 scheme.outline 不是同一个灰 → 同一层级两种灰。
-    final sectionHint = SettingsTypography.description.copyWith(
-      color: scheme.onSurfaceVariant,
-    );
-    return Material(
-      color: Theme.of(context).dialogTheme.backgroundColor,
-      shape: Theme.of(context).dialogTheme.shape,
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 560),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.palette_outlined,
-                      size: 18,
-                      color: scheme.primary,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        widget.isZh ? '主题颜色' : 'Theme Color',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color: scheme.onSurface,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: widget.isZh ? '关闭' : 'Close',
-                      onPressed: () => Navigator.pop(context),
-                      constraints: const BoxConstraints(
-                        minWidth: 44,
-                        minHeight: 44,
-                      ),
-                      icon: Icon(
-                        Icons.close,
-                        size: 18,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                // 预览：纯色或渐变
-                Container(
-                  height: 44,
-                  width: double.infinity,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: _gradEnabled ? null : c1,
-                    gradient: _gradEnabled
-                        ? LinearGradient(
-                            colors: [c1, c2],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          )
-                        : null,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: scheme.outlineVariant.withAlpha(80),
-                    ),
-                  ),
-                  child: Text(
-                    _gradEnabled
-                        ? (widget.isZh ? '渐变' : 'Gradient')
-                        : (widget.isZh ? '纯色' : 'Solid'),
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                // 是否使用渐变色（通俗开关）
-                Row(
-                  children: [
-                    Icon(Icons.auto_awesome, size: 16, color: scheme.primary),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        widget.isZh ? '使用渐变色' : 'Use gradient',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: scheme.onSurface,
-                        ),
-                      ),
-                    ),
-                    Switch(
-                      value: _gradEnabled,
-                      onChanged: (v) => setState(() => _gradEnabled = v),
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                // 常用色板（单色 / 渐变通用）
-                Text(widget.isZh ? '常用颜色' : 'Common colors', style: labelStyle),
-                const SizedBox(height: 8),
-                if (_gradEnabled)
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _gradPresets.map((g) {
-                      final selected =
-                          g.$1 == c1.toARGB32() && g.$2 == c2.toARGB32();
-                      return GestureDetector(
-                        onTap: () {
-                          final h1 = HSVColor.fromColor(Color(g.$1));
-                          final h2 = HSVColor.fromColor(Color(g.$2));
-                          setState(() {
-                            _h1 = h1.hue;
-                            _s1 = h1.saturation;
-                            _v1 = h1.value;
-                            _h2 = h2.hue;
-                            _s2 = h2.saturation;
-                            _v2 = h2.value;
-                            _gradEnabled = true;
-                          });
-                        },
-                        child: Container(
-                          width: 36,
-                          height: 36,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [Color(g.$1), Color(g.$2)],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: selected
-                                  ? scheme.primary
-                                  : scheme.outlineVariant.withAlpha(90),
-                              width: selected ? 3 : 1,
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  )
-                else
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      for (final preset in const [
-                        0xFF5E6AD2,
-                        0xFF3B82F6,
-                        0xFF06B6D4,
-                        0xFF10B981,
-                        0xFF84CC16,
-                        0xFFF59E0B,
-                        0xFFF97316,
-                        0xFFEF4444,
-                        0xFFEC4899,
-                        0xFF8B5CF6,
-                        0xFF64748B,
-                        0xFF000000,
-                        0xFFFFFFFF,
-                        0xFFF8FAFC,
-                      ])
-                        GestureDetector(
-                          onTap: () {
-                            final hsv = HSVColor.fromColor(Color(preset));
-                            setState(() {
-                              _h1 = hsv.hue;
-                              _s1 = hsv.saturation;
-                              _v1 = hsv.value;
-                            });
-                          },
-                          child: Container(
-                            width: 28,
-                            height: 28,
-                            decoration: BoxDecoration(
-                              color: Color(preset),
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: scheme.outlineVariant.withAlpha(120),
-                              ),
-                            ),
-                            child: preset == c1.toARGB32()
-                                ? const Icon(
-                                    Icons.check,
-                                    size: 13,
-                                    color: Colors.white,
-                                  )
-                                : null,
-                          ),
-                        ),
-                    ],
-                  ),
-                const SizedBox(height: 12),
-                // 自定义微调
-                Text(widget.isZh ? '自定义微调' : 'Fine-tune', style: labelStyle),
-                Text(
-                  widget.isZh
-                      ? '用色相 / 饱和度 / 明度精确调整颜色'
-                      : 'Adjust hue / saturation / value precisely',
-                  style: sectionHint,
-                ),
-                const SizedBox(height: 4),
-                _colorRow(c1, [
-                  _sl('H', _h1, 0, 360, (v) => setState(() => _h1 = v)),
-                  _sl('S', _s1, 0, 1, (v) => setState(() => _s1 = v)),
-                  _sl('V', _v1, 0, 1, (v) => setState(() => _v1 = v)),
-                ]),
-                if (_gradEnabled) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    widget.isZh
-                        ? '第二种颜色（渐变终点）'
-                        : 'Second color (end of gradient)',
-                    style: labelStyle,
-                  ),
-                  const SizedBox(height: 4),
-                  _colorRow(c2, [
-                    _sl('H', _h2, 0, 360, (v) => setState(() => _h2 = v)),
-                    _sl('S', _s2, 0, 1, (v) => setState(() => _s2 = v)),
-                    _sl('V', _v2, 0, 1, (v) => setState(() => _v2 = v)),
-                  ]),
-                ],
-                const SizedBox(height: 10),
-                Text(
-                  '#${_hex(c1)}${_gradEnabled ? ' → #${_hex(c2)}' : ''}',
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 11,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final cancel = AppDialogAction(
-                      role: AppDialogActionRole.cancel,
-                      child: TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: Text(widget.isZh ? '取消' : 'Cancel'),
-                      ),
-                    );
-                    final select = AppDialogAction(
-                      role: AppDialogActionRole.primary,
-                      child: FilledButton(
-                        onPressed: () => Navigator.pop(
-                          context,
-                          _GradResult(
-                            c1.toARGB32(),
-                            _gradEnabled ? c2.toARGB32() : null,
-                          ),
-                        ),
-                        child: Text(widget.isZh ? '选择' : 'Select'),
-                      ),
-                    );
-                    if (constraints.maxWidth < 220 ||
-                        MediaQuery.textScalerOf(context).scale(14) > 21) {
-                      return Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [cancel, const SizedBox(height: 8), select],
-                      );
-                    }
-                    return Row(
-                      children: [
-                        Expanded(child: cancel),
-                        const SizedBox(width: 8),
-                        Expanded(child: select),
-                      ],
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _hex(Color c) =>
-      c.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase();
-
-  Widget _colorRow(Color swatch, List<Widget> sliders) {
-    return Row(
-      children: [
-        Container(
-          width: 22,
-          height: 22,
-          decoration: BoxDecoration(
-            color: swatch,
-            shape: BoxShape.circle,
-            border: Border.all(color: const Color(0x33000000)),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(child: Column(children: sliders)),
-      ],
-    );
-  }
-
-  // 取色面板的 R/G/B 滑杆：同样走 AppSlider（胶囊 + 主题色填充 + 玻璃留空），
-  // 不要改回裸 Slider —— 裸 Slider 没有玻璃底那一层。
-  Widget _sl(
-    String l,
-    double v,
-    double min,
-    double max,
-    ValueChanged<double> cb,
-  ) => Row(
-    children: [
-      SizedBox(width: 12, child: Text(l, style: const TextStyle(fontSize: 10))),
-      Expanded(
-        child: AppSlider(
-          value: v,
-          min: min,
-          max: max,
-          compact: true,
-          onChanged: cb,
-        ),
-      ),
-    ],
-  );
-}
 
 class _PathField extends StatefulWidget {
   final String value;

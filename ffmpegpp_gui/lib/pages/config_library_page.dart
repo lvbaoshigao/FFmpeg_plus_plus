@@ -11,9 +11,11 @@ import '../models/models.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../services/fppx2_service.dart';
+import '../services/quick_config_pipeline.dart';
 import '../services/quick_config_storage.dart';
 import '../theme/app_semantic_colors.dart';
 import '../theme/app_strings.dart';
+import '../widgets/adaptive_top_bar.dart';
 import '../widgets/app_alert_dialog.dart';
 import '../widgets/app_card.dart';
 import '../widgets/fppx_password.dart';
@@ -41,30 +43,6 @@ const _kCompactMobileTabStyle = LiquidGlassTabBarStyle(
   bottomGap: 0,
   iconSize: 18,
 );
-
-/// 桌面端顶栏切换成「紧凑排布」的内容区宽度阈值。
-///
-/// 与项目页（lib/pages/project_page.dart 的 `compact` 判定）同一套思路：
-/// 「窗口被拖窄」时把整条玻璃顶栏换成「药丸标题栏 + 换行文字按钮」。
-///
-/// 取值依据（桌面窗口最小宽度 1100 见 main.dart 的 setMinimumSize）：
-/// * 侧栏展开 190 + 外边距 12 → 内容区最窄约 898，落在阈值以下 → 触发；
-/// * 侧栏收起 72 + 外边距 12 → 内容区最窄约 1016，略高于阈值；
-/// 所以「把窗口拖到最窄」一定会看到紧凑排布，而默认 1280 窗口
-/// （内容区约 1078 / 1196）仍是原来的宽排布，不改变日常观感。
-///
-/// 大字号下按文字缩放比例放大阈值：字号变大后同样的操作按钮与标题需要的
-/// 宽度更多，提前切换能避免宽排布里标题被挤成省略号。
-const double kCompactDesktopTopBarBreakpoint = 1020;
-
-/// 桌面端顶栏是否走紧凑排布：移动端恒定 false（它走自己的药丸顶栏浮层），
-/// 桌面端按内容区宽度 + 文字缩放判定。
-bool isCompactDesktopTopBar(BuildContext context, BoxConstraints constraints) {
-  if (isMobilePlatform) return false;
-  final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
-  return constraints.maxWidth <
-      kCompactDesktopTopBarBreakpoint * textScale.clamp(1.0, 1.4);
-}
 
 class _ConfigEntry {
   final String id;
@@ -941,14 +919,26 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       // 同 _exportConfig：v13 的 saveFile 必填 bytes 且返回 Uri，
       // 桌面/移动统一为「先写临时文件 → 读回字节 → saveFile 落盘」。
       tmpPath = await _tempExportPath('${cfg.name}.fppx');
-      final exportRes = await FppxService(state.backend).exportQuickItems(
-        tmpPath,
-        description: cfg.description,
-        items: items,
-        encrypted: opts.encrypted,
-        password: opts.password,
-        encryptAlgo: opts.algo,
-      );
+      final service = FppxService(state.backend);
+      // Serial nodes preserve repeats and ordering in the existing graph format.
+      final exportRes = cfg.nodes != null
+          ? await service.exportGraph(
+              buildGraphFromQuickConfig(cfg, isZh: zh).graph,
+              tmpPath,
+              description: cfg.description,
+              newFormat: true,
+              encrypted: opts.encrypted,
+              password: opts.password,
+              encryptAlgo: opts.algo,
+            )
+          : await service.exportQuickItems(
+              tmpPath,
+              description: cfg.description,
+              items: items,
+              encrypted: opts.encrypted,
+              password: opts.password,
+              encryptAlgo: opts.algo,
+            );
       if (!mounted) return;
       if (!exportRes.success) {
         _showImportErrors(
@@ -1028,126 +1018,6 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   }
 
   // ── 快捷配置 (Quick Config) ──
-
-  void _newQuickConfig() {
-    final scheme = Theme.of(context).colorScheme;
-    final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
-    final nameCtrl = TextEditingController(text: zh ? '新快捷配置' : 'Quick Config');
-
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        var selected = QuickFileType.video;
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) => AppAlertDialog(
-            scrollable: true,
-            icon: Icon(Icons.bolt_outlined, color: scheme.primary),
-            title: Text(zh ? '新建快捷配置' : 'New Quick Config'),
-            content: SizedBox(
-              width: 360,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: nameCtrl,
-                    autofocus: true,
-                    decoration: InputDecoration(
-                      labelText: zh ? '配置名称' : 'Config Name',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    style: TextStyle(fontSize: 14, color: scheme.onSurface),
-                    onSubmitted: (_) {
-                      Navigator.pop(ctx);
-                      _createQuickConfig(nameCtrl.text, selected, zh);
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  // 统一下拉样式：OptionMenuBar（圆角 14 浮层 + 200ms 缩放展开）
-                  OptionMenuBar<QuickFileType>(
-                    value: selected,
-                    label: zh ? '文件类型' : 'File Type',
-                    items: [
-                      for (final t in QuickFileType.values)
-                        OptionItem(t, t.label(zh)),
-                    ],
-                    onChanged: (v) => setDialogState(() => selected = v),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: Text(zh ? '取消' : 'Cancel'),
-              ),
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _createQuickConfig(
-                    nameCtrl.text,
-                    selected,
-                    zh,
-                    openEditor: true,
-                  );
-                },
-                child: Text(zh ? '创建并编辑' : 'Create & Edit'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _createQuickConfig(nameCtrl.text, selected, zh);
-                },
-                child: Text(zh ? '创建' : 'Create'),
-              ),
-            ],
-          ),
-        );
-      },
-    ).whenComplete(nameCtrl.dispose);
-  }
-
-  Future<void> _createQuickConfig(
-    String rawName,
-    QuickFileType type,
-    bool zh, {
-    bool openEditor = false,
-  }) async {
-    final name = rawName.trim().isEmpty
-        ? (zh ? '未命名快捷配置' : 'Quick Config')
-        : rawName.trim();
-    final now = DateTime.now();
-    final cfg = QuickConfig(
-      id: _uuid.v4(),
-      fileType: type,
-      name: name,
-      description: '',
-      createdAt: now,
-      updatedAt: now,
-      items: quickDefaultsFor(type),
-    );
-    try {
-      await QuickConfigStorage.save(cfg);
-    } catch (_) {
-      if (mounted) {
-        showToast(
-          context,
-          zh ? '快捷配置保存失败，请重试' : 'Could not save quick config. Please retry.',
-          type: ToastType.error,
-        );
-      }
-      return;
-    }
-    if (!mounted) return;
-    setState(() => _quickConfigs.insert(0, cfg));
-    showToast(
-      context,
-      zh ? '已创建快捷配置' : 'Quick config created',
-      type: ToastType.success,
-    );
-    if (openEditor && mounted) _openQuickEditor(cfg);
-  }
 
   void _openQuickEditor(QuickConfig cfg) {
     showDialog(
@@ -1294,17 +1164,13 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
             ),
             const SizedBox(height: 6),
             Text(
-              zh ? '点击顶栏「⚡」新建快捷配置' : 'Click the bolt icon to create one',
+              zh
+                  ? '在项目中选择文件，点击编辑即可配置串行处理流程'
+                  : 'Select a project file and edit its serial workflow',
               style: TextStyle(
                 color: scheme.outline.withAlpha(120),
                 fontSize: 12,
               ),
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: _newQuickConfig,
-              icon: const Icon(Icons.bolt, size: 18),
-              label: Text(zh ? '新建快捷配置' : 'New Quick Config'),
             ),
           ],
         ),
@@ -1369,7 +1235,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        '${cfg.items.length} ${zh ? '项' : 'items'}',
+                        '${cfg.nodes?.length ?? cfg.items.length} ${zh ? '项' : 'items'}',
                         style: TextStyle(fontSize: 11, color: scheme.outline),
                       ),
                     ],
@@ -1520,16 +1386,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                           },
                         ),
                 )
-              // 桌面端：宽窗口用整条玻璃顶栏（GlassTopBar），窗口缩窄后换成
-              // 「药丸标题栏 + 换行文字按钮」——与项目页 lib/pages/project_page.dart
-              // 的 compact 分支完全同构（同一套 MobilePillTopBar / Wrap /
-              // 玻璃主按钮），用户在任一页缩窗时看到的排布变化是一致的。
-              : LayoutBuilder(
-                  builder: (context, constraints) {
-                    final compact = isCompactDesktopTopBar(
-                      context,
-                      constraints,
-                    );
+              // 与项目页共用内容区宽度及字号断点。
+              : AppTopBarLayout(
+                  builder: (context, compact) {
                     return Column(
                       children: [
                         if (compact)
@@ -1607,7 +1466,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     );
   }
 
-  /// 紧凑态第二行的文字按钮：导入 / 新建快捷配置 / 新建配置。
+  /// 紧凑态第二行的文字按钮：导入 / 新建节点配置。
   /// 与项目页 `_buildMobileActions` 同一套 TextButton 规格（高 48、水平 12），
   /// 主 CTA 复用项目页「添加文件」那颗玻璃主按钮的外观。
   List<Widget> _buildCompactDesktopActions(ColorScheme scheme, bool zh) {
@@ -1622,13 +1481,6 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         icon: Icons.add,
         label: zh ? '新建配置' : 'New Config',
         onTap: _newConfig,
-      ),
-      TextButton.icon(
-        key: const ValueKey('configs_new_quick'),
-        onPressed: _newQuickConfig,
-        style: secondaryStyle,
-        icon: const Icon(Icons.bolt_outlined, size: 20),
-        label: Text(zh ? '新建快捷配置' : 'New Quick Config'),
       ),
       TextButton.icon(
         key: const ValueKey('configs_import_fppx'),
@@ -1649,29 +1501,33 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     required VoidCallback onTap,
   }) {
     const radius = 16.0;
-    final scheme = Theme.of(context).colorScheme;
-    final pillStyle = context.select<AppState, String>(
-      (s) => s.config.pillStyle,
-    );
-    return GlassPanel(
-      radius: radius,
-      style: pillStyle,
-      child: OutlinedButton.icon(
-        key: key,
-        onPressed: onTap,
-        style: OutlinedButton.styleFrom(
-          foregroundColor: scheme.onSurface,
-          backgroundColor: Colors.transparent,
-          side: BorderSide.none,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(radius)),
+    return Builder(
+      builder: (context) {
+        final scheme = Theme.of(context).colorScheme;
+        final pillStyle = context.select<AppState, String>(
+          (s) => s.config.pillStyle,
+        );
+        return GlassPanel(
+          radius: radius,
+          style: pillStyle,
+          child: OutlinedButton.icon(
+            key: key,
+            onPressed: onTap,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: scheme.onSurface,
+              backgroundColor: Colors.transparent,
+              side: BorderSide.none,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(Radius.circular(radius)),
+              ),
+              minimumSize: const Size(0, 44),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+            icon: Icon(icon, size: 20),
+            label: Text(label, textAlign: TextAlign.center),
           ),
-          minimumSize: const Size(0, 44),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        ),
-        icon: Icon(icon, size: 20),
-        label: Text(label, textAlign: TextAlign.center),
-      ),
+        );
+      },
     );
   }
 
@@ -1765,16 +1621,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         showDisk: false,
         onTap: _importFppx,
       ),
-      // 分组（仅移动端药丸顶栏）：导入（外部来源）| 新建（快捷配置 / 配置）。
+      // 分组（仅移动端药丸顶栏）：导入 | 新建节点配置。
       // 桌面端 GlassTopBar 共用这份列表，不插分隔符。
       if (isMobilePlatform) const MobileActionGroupBreak(),
-      MobileGlassPillAction(
-        icon: Icons.bolt_outlined,
-        tooltip: zh ? '新建快捷配置' : 'New Quick Config',
-        color: scheme.onSurface,
-        showDisk: false,
-        onTap: _newQuickConfig,
-      ),
       // 主 CTA「新建配置」：去掉圆盘后靠图标本身承担强调（主题色图标），
       // 与项目页"+"的层级一致，但不再出现一整颗实心圆。
       MobileGlassPillAction(
@@ -1799,9 +1648,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         overflow: TextOverflow.ellipsis,
       ),
       actions: _buildTopActions(scheme, zh),
-      // 配置库右上角只有 3 个固定操作（导入 .fppx / 新建快捷配置 / 新建配置），
+      // 配置库右上角有两个固定操作（导入 .fppx / 新建节点配置），
       // 数量固定且都属于高频入口 —— 用户反馈「主界面配置库右上角的药丸不要折叠」，
-      // 这里关掉「…」收纳，三个按钮直接 inline 展示（窄屏由 FittedBox 等比缩小兜底）。
+      // 这里关掉「…」收纳，按钮直接 inline 展示（窄屏由 FittedBox 等比缩小兜底）。
       collapseActions: false,
     );
   }

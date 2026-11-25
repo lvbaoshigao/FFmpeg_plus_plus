@@ -43,6 +43,7 @@ import '../theme/app_strings.dart';
 import '../theme/app_text_scale.dart';
 import '../theme/app_theme.dart';
 import '../theme/mobile_visual_theme.dart';
+import '../widgets/adaptive_top_bar.dart';
 import '../widgets/ai_workflow_card.dart';
 import '../widgets/animated_popup.dart';
 import '../widgets/app_alert_dialog.dart';
@@ -59,6 +60,8 @@ import '../widgets/gate_symbol_painter.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/liquid_glass_fallback.dart';
 import '../widgets/mobile_glass_pill.dart';
+import '../widgets/mobile_top_bar.dart';
+import '../widgets/mobile_ui.dart';
 // 节点图标/配色表：与独立面板窗口共用（见该文件顶部说明）
 import '../widgets/node_icons.dart';
 import '../widgets/option_menu_bar.dart';
@@ -3097,16 +3100,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       items: [
         ...top5.map(makeItem),
         const AnimatedMenuEntry<PipelineStepType>.divider(),
-        actionRow(
-          Icons.more_horiz,
-          s.isZh ? '全部元素...' : 'All elements...',
-          () {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) _showCanvasNodePicker(canvasPos);
-            });
-          },
-          color: scheme.outline,
-        ),
+        actionRow(Icons.more_horiz, s.isZh ? '全部元素...' : 'All elements...', () {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _showCanvasNodePicker(canvasPos);
+          });
+        }, color: scheme.outline),
         const AnimatedMenuEntry<PipelineStepType>.divider(),
         actionRow(
           Icons.select_all,
@@ -4124,52 +4122,85 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           },
           child: Scaffold(
             backgroundColor: Colors.transparent,
-            appBar: Platform.isWindows
-                ? AppBar(
-                    leading: IconButton(
-                      icon: const Icon(Icons.arrow_back),
-                      onPressed: () async {
-                        final nav = Navigator.of(context);
-                        if (await _onWillPop()) nav.pop();
-                      },
-                    ),
-                    title: Text(
-                      s.isZh
-                          ? '编辑: ${widget.video.filename}'
-                          : 'Edit: ${widget.video.filename}',
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    actions: [
-                      if (context.read<AppState>().config.aiEnabled) ...[
-                        withoutAppTextScale(context, _buildTopAiBar(scheme, s)),
-                        const SizedBox(width: 4),
-                      ],
-                      IconButton(
-                        icon: const Icon(Icons.file_upload_outlined, size: 20),
-                        tooltip: s.isZh ? '导出配置' : 'Export Config',
-                        onPressed: _nodes.isEmpty
-                            ? null
-                            : () => _exportConfig(s),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 12),
-                        // 保存按钮：仅软盘图标，不显示文字
-                        child: IconButton.filled(
-                          onPressed: _save,
-                          icon: const Icon(Icons.save_outlined, size: 18),
-                          tooltip: s.save,
-                          style: _saveButtonStyle(scheme),
-                        ),
-                      ),
-                    ],
-                  )
-                : null,
-            body: _buildBody(scheme, s),
+            body: Column(
+              children: [
+                if (Platform.isWindows && !isMobilePlatform)
+                  _buildWindowsTopBar(scheme, s),
+                Expanded(child: _buildBody(scheme, s)),
+              ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildWindowsTopBar(ColorScheme scheme, AppStrings s) {
+    final title = Text(
+      s.isZh
+          ? '编辑: ${widget.video.filename}'
+          : 'Edit: ${widget.video.filename}',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+    Future<void> back() async {
+      final nav = Navigator.of(context);
+      if (await _onWillPop()) nav.pop();
+    }
+
+    return AdaptiveTopBar(
+      expandedBuilder: (_) => GlassTopBar(
+        title: Row(
+          children: [
+            BackButton(onPressed: back),
+            Expanded(child: title),
+          ],
+        ),
+        actions: [
+          if (context.read<AppState>().config.aiEnabled)
+            withoutAppTextScale(context, _buildTopAiBar(scheme, s)),
+          IconButton(
+            icon: const Icon(Icons.file_upload_outlined, size: 20),
+            tooltip: s.isZh ? '导出配置' : 'Export Config',
+            onPressed: _nodes.isEmpty ? null : () => _exportConfig(s),
+          ),
+          IconButton.filled(
+            onPressed: _save,
+            icon: const Icon(Icons.save_outlined, size: 18),
+            tooltip: s.save,
+            style: _saveButtonStyle(scheme),
+          ),
+        ],
+      ),
+      compactBuilder: (_) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          MobileSubPageTopBar(
+            title: title,
+            onBack: back,
+            inlineActionLimit: 2,
+            actions: [
+              MobileGlassPillAction(
+                color: scheme.onSurface,
+                icon: Icons.file_upload_outlined,
+                tooltip: s.isZh ? '导出配置' : 'Export Config',
+                onTap: _nodes.isEmpty ? null : () => _exportConfig(s),
+              ),
+              MobileGlassPillAction(
+                color: scheme.onSurface,
+                icon: Icons.save_outlined,
+                tooltip: s.save,
+                onTap: _save,
+              ),
+            ],
+          ),
+          if (context.read<AppState>().config.aiEnabled)
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: withoutAppTextScale(context, _buildTopAiBar(scheme, s)),
+            ),
+        ],
       ),
     );
   }
@@ -4600,7 +4631,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                               8 +
                               math.max(
                                 0.0,
-                                _kMobileZoomBarHeight * (_mobileZoomBarScale() - 1.0),
+                                _kMobileZoomBarHeight *
+                                    (_mobileZoomBarScale() - 1.0),
                               ),
                           child: _buildMobileFileInfo(scheme, s),
                         ),
@@ -5860,275 +5892,317 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         // 移动端顶部工具栏/分隔线移除：改由浮动菜单栏承载（见 _buildBody 的
         // _buildMobileTopBar），避免新旧两套工具栏在画布顶部互相重叠。
         if (!isMobilePlatform) ...[
-          Row(
-            children: [
-              Expanded(
-                // Claim the bounded width supplied by the parent Row.
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-                  child: Row(
-                    children: [
-                      if (!Platform.isWindows && !isMobilePlatform) ...[
-                        InkWell(
-                          borderRadius: BorderRadius.circular(6),
-                          onTap: () async {
-                            final nav = Navigator.of(context);
-                            if (await _onWillPop()) nav.pop();
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.all(4),
-                            child: Icon(
-                              Icons.arrow_back,
-                              size: 18,
-                              color: scheme.onSurface,
-                            ),
+          AdaptiveTopBar(
+            compactBuilder: (_) => _buildCompactDesktopTopBar(scheme, s),
+            expandedBuilder: (_) => Row(
+              children: [
+                Expanded(
+                  // Claim the bounded width supplied by the parent Row.
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minWidth: constraints.maxWidth,
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                      ],
-                      if (!isMobilePlatform) ...[
-                        Icon(
-                          Icons.account_tree_outlined,
-                          size: 16,
-                          color: scheme.primary,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          s.isZh ? '节点编辑器' : 'Node Editor',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: scheme.onSurface,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          icon: Icon(
-                            Icons.undo,
-                            size: 16,
-                            color: _undoStack.isEmpty
-                                ? scheme.outlineVariant
-                                : scheme.onSurfaceVariant,
-                          ),
-                          tooltip: s.isZh ? '撤销' : 'Undo',
-                          constraints: const BoxConstraints(
-                            minWidth: 28,
-                            minHeight: 28,
-                          ),
-                          padding: EdgeInsets.zero,
-                          onPressed: _undoStack.isEmpty ? null : _undo,
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            Icons.redo,
-                            size: 16,
-                            color: _redoStack.isEmpty
-                                ? scheme.outlineVariant
-                                : scheme.onSurfaceVariant,
-                          ),
-                          tooltip: s.isZh ? '重做' : 'Redo',
-                          constraints: const BoxConstraints(
-                            minWidth: 28,
-                            minHeight: 28,
-                          ),
-                          padding: EdgeInsets.zero,
-                          onPressed: _redoStack.isEmpty ? null : _redo,
-                        ),
-                        const SizedBox(width: 6),
-                        // 探测模式按钮：悬停端口显示信号提示
-                        Tooltip(
-                          message: s.isZh
-                              ? '探测模式：悬停端口显示信号'
-                              : 'Probe: hover ports to inspect signals',
-                          waitDuration: const Duration(milliseconds: 300),
-                          child: IconButton(
-                            icon: Icon(
-                              Icons.search,
-                              size: 16,
-                              color: _probeMode
-                                  ? scheme.primary
-                                  : scheme.onSurfaceVariant,
-                            ),
-                            constraints: const BoxConstraints(
-                              minWidth: 28,
-                              minHeight: 28,
-                            ),
-                            padding: EdgeInsets.zero,
-                            style: IconButton.styleFrom(
-                              backgroundColor: _probeMode
-                                  ? scheme.primary.withAlpha(40)
-                                  : null,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                            ),
-                            onPressed: () =>
-                                setState(() => _probeMode = !_probeMode),
-                          ),
-                        ),
-                        // 隐藏逻辑线按钮：隐藏/显示控制连线+逻辑门+红色逻辑端口
-                        Tooltip(
-                          message: s.isZh
-                              ? '隐藏逻辑线（控制连线、逻辑门、逻辑端口）'
-                              : 'Hide logic (control wires, gates, logic ports)',
-                          waitDuration: const Duration(milliseconds: 300),
-                          child: IconButton(
-                            icon: Icon(
-                              Icons.route,
-                              size: 16,
-                              color: _hideLogic
-                                  ? scheme.error
-                                  : scheme.onSurfaceVariant,
-                            ),
-                            constraints: const BoxConstraints(
-                              minWidth: 28,
-                              minHeight: 28,
-                            ),
-                            padding: EdgeInsets.zero,
-                            style: IconButton.styleFrom(
-                              backgroundColor: _hideLogic
-                                  ? scheme.error.withAlpha(40)
-                                  : null,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                            ),
-                            onPressed: () =>
-                                setState(() => _hideLogic = !_hideLogic),
-                          ),
-                        ),
-                        // 面板被隐藏后，在工具栏以图标形式恢复（用户要求：隐藏后在菜单栏
-                        // 以图标展示，点击可恢复显示）。
-                        if (_panelHidden)
-                          Tooltip(
-                            message: s.isZh
-                                ? '显示元素 / 属性面板'
-                                : 'Show elements / properties',
-                            waitDuration: const Duration(milliseconds: 300),
-                            child: IconButton(
-                              icon: Icon(
-                                Icons.widgets_outlined,
-                                size: 16,
-                                color: scheme.primary,
-                              ),
-                              constraints: const BoxConstraints(
-                                minWidth: 28,
-                                minHeight: 28,
-                              ),
-                              padding: EdgeInsets.zero,
-                              onPressed: () => setState(() {
-                                _panelHidden = false;
-                                _panelDetached = false;
-                                _panelFloatPos = null;
-                              }),
-                            ),
-                          ),
-                        // 写入格式：新版节点配置导出 .fppx 时写哪一套（旧版 JSON / 新版模块化
-                        // 二进制）。以前这个选择只在「新建配置」时做一次、之后再也改不了，
-                        // 现在画布工具栏上常驻一枚可点的格式标识。
-                        Tooltip(
-                          message: s.isZh
-                              ? '写入格式：${_writeFormat == 'v2' ? '新版 (Beta)' : '旧版'}（点击切换）'
-                              : 'Write format: ${_writeFormat == 'v2' ? 'New (Beta)' : 'Legacy'} (click to switch)',
-                          waitDuration: const Duration(milliseconds: 300),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(6),
-                            onTap: () => setState(
-                              () => _writeFormat = _writeFormat == 'v2'
-                                  ? 'legacy'
-                                  : 'v2',
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 4,
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.save_as_outlined,
-                                    size: 14,
-                                    color: _writeFormat == 'v2'
-                                        ? scheme.primary
-                                        : scheme.onSurfaceVariant,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    _writeFormat == 'v2' ? 'v2' : 'legacy',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      color: _writeFormat == 'v2'
-                                          ? scheme.primary
-                                          : scheme.onSurfaceVariant,
+                          child: IntrinsicWidth(
+                            child: Row(
+                              children: [
+                                if (!Platform.isWindows &&
+                                    !isMobilePlatform) ...[
+                                  InkWell(
+                                    borderRadius: BorderRadius.circular(6),
+                                    onTap: () async {
+                                      final nav = Navigator.of(context);
+                                      if (await _onWillPop()) nav.pop();
+                                    },
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(4),
+                                      child: Icon(
+                                        Icons.arrow_back,
+                                        size: 18,
+                                        color: scheme.onSurface,
+                                      ),
                                     ),
                                   ),
+                                  const SizedBox(width: 6),
                                 ],
-                              ),
+                                if (!isMobilePlatform) ...[
+                                  Icon(
+                                    Icons.account_tree_outlined,
+                                    size: 16,
+                                    color: scheme.primary,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    s.isZh ? '节点编辑器' : 'Node Editor',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: scheme.onSurface,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  IconButton(
+                                    icon: Icon(
+                                      Icons.undo,
+                                      size: 16,
+                                      color: _undoStack.isEmpty
+                                          ? scheme.outlineVariant
+                                          : scheme.onSurfaceVariant,
+                                    ),
+                                    tooltip: s.isZh ? '撤销' : 'Undo',
+                                    constraints: const BoxConstraints(
+                                      minWidth: 28,
+                                      minHeight: 28,
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                    onPressed: _undoStack.isEmpty
+                                        ? null
+                                        : _undo,
+                                  ),
+                                  IconButton(
+                                    icon: Icon(
+                                      Icons.redo,
+                                      size: 16,
+                                      color: _redoStack.isEmpty
+                                          ? scheme.outlineVariant
+                                          : scheme.onSurfaceVariant,
+                                    ),
+                                    tooltip: s.isZh ? '重做' : 'Redo',
+                                    constraints: const BoxConstraints(
+                                      minWidth: 28,
+                                      minHeight: 28,
+                                    ),
+                                    padding: EdgeInsets.zero,
+                                    onPressed: _redoStack.isEmpty
+                                        ? null
+                                        : _redo,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  // 探测模式按钮：悬停端口显示信号提示
+                                  Tooltip(
+                                    message: s.isZh
+                                        ? '探测模式：悬停端口显示信号'
+                                        : 'Probe: hover ports to inspect signals',
+                                    waitDuration: const Duration(
+                                      milliseconds: 300,
+                                    ),
+                                    child: IconButton(
+                                      icon: Icon(
+                                        Icons.search,
+                                        size: 16,
+                                        color: _probeMode
+                                            ? scheme.primary
+                                            : scheme.onSurfaceVariant,
+                                      ),
+                                      constraints: const BoxConstraints(
+                                        minWidth: 28,
+                                        minHeight: 28,
+                                      ),
+                                      padding: EdgeInsets.zero,
+                                      style: IconButton.styleFrom(
+                                        backgroundColor: _probeMode
+                                            ? scheme.primary.withAlpha(40)
+                                            : null,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                        ),
+                                      ),
+                                      onPressed: () => setState(
+                                        () => _probeMode = !_probeMode,
+                                      ),
+                                    ),
+                                  ),
+                                  // 隐藏逻辑线按钮：隐藏/显示控制连线+逻辑门+红色逻辑端口
+                                  Tooltip(
+                                    message: s.isZh
+                                        ? '隐藏逻辑线（控制连线、逻辑门、逻辑端口）'
+                                        : 'Hide logic (control wires, gates, logic ports)',
+                                    waitDuration: const Duration(
+                                      milliseconds: 300,
+                                    ),
+                                    child: IconButton(
+                                      icon: Icon(
+                                        Icons.route,
+                                        size: 16,
+                                        color: _hideLogic
+                                            ? scheme.error
+                                            : scheme.onSurfaceVariant,
+                                      ),
+                                      constraints: const BoxConstraints(
+                                        minWidth: 28,
+                                        minHeight: 28,
+                                      ),
+                                      padding: EdgeInsets.zero,
+                                      style: IconButton.styleFrom(
+                                        backgroundColor: _hideLogic
+                                            ? scheme.error.withAlpha(40)
+                                            : null,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                        ),
+                                      ),
+                                      onPressed: () => setState(
+                                        () => _hideLogic = !_hideLogic,
+                                      ),
+                                    ),
+                                  ),
+                                  // 面板被隐藏后，在工具栏以图标形式恢复（用户要求：隐藏后在菜单栏
+                                  // 以图标展示，点击可恢复显示）。
+                                  if (_panelHidden)
+                                    Tooltip(
+                                      message: s.isZh
+                                          ? '显示元素 / 属性面板'
+                                          : 'Show elements / properties',
+                                      waitDuration: const Duration(
+                                        milliseconds: 300,
+                                      ),
+                                      child: IconButton(
+                                        icon: Icon(
+                                          Icons.widgets_outlined,
+                                          size: 16,
+                                          color: scheme.primary,
+                                        ),
+                                        constraints: const BoxConstraints(
+                                          minWidth: 28,
+                                          minHeight: 28,
+                                        ),
+                                        padding: EdgeInsets.zero,
+                                        onPressed: () => setState(() {
+                                          _panelHidden = false;
+                                          _panelDetached = false;
+                                          _panelFloatPos = null;
+                                        }),
+                                      ),
+                                    ),
+                                  // 写入格式：新版节点配置导出 .fppx 时写哪一套（旧版 JSON / 新版模块化
+                                  // 二进制）。以前这个选择只在「新建配置」时做一次、之后再也改不了，
+                                  // 现在画布工具栏上常驻一枚可点的格式标识。
+                                  Tooltip(
+                                    message: s.isZh
+                                        ? '写入格式：${_writeFormat == 'v2' ? '新版 (Beta)' : '旧版'}（点击切换）'
+                                        : 'Write format: ${_writeFormat == 'v2' ? 'New (Beta)' : 'Legacy'} (click to switch)',
+                                    waitDuration: const Duration(
+                                      milliseconds: 300,
+                                    ),
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(6),
+                                      onTap: () => setState(
+                                        () =>
+                                            _writeFormat = _writeFormat == 'v2'
+                                            ? 'legacy'
+                                            : 'v2',
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 4,
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.save_as_outlined,
+                                              size: 14,
+                                              color: _writeFormat == 'v2'
+                                                  ? scheme.primary
+                                                  : scheme.onSurfaceVariant,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              _writeFormat == 'v2'
+                                                  ? 'v2'
+                                                  : 'legacy',
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w600,
+                                                color: _writeFormat == 'v2'
+                                                    ? scheme.primary
+                                                    : scheme.onSurfaceVariant,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  if (!Platform.isWindows) ...[
+                                    IconButton(
+                                      icon: Icon(
+                                        Icons.file_download_outlined,
+                                        size: 18,
+                                        color: scheme.onSurface,
+                                      ),
+                                      tooltip: s.importConfig,
+                                      constraints: const BoxConstraints(
+                                        minWidth: 32,
+                                        minHeight: 32,
+                                      ),
+                                      padding: EdgeInsets.zero,
+                                      onPressed: () => _importConfig(s),
+                                    ),
+                                    IconButton(
+                                      icon: Icon(
+                                        Icons.file_upload_outlined,
+                                        size: 18,
+                                        color: scheme.onSurface,
+                                      ),
+                                      tooltip: s.isZh
+                                          ? '导出配置'
+                                          : 'Export Config',
+                                      constraints: const BoxConstraints(
+                                        minWidth: 32,
+                                        minHeight: 32,
+                                      ),
+                                      padding: EdgeInsets.zero,
+                                      onPressed: _nodes.isEmpty
+                                          ? null
+                                          : () => _exportConfig(s),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    // 保存按钮：仅软盘图标，不显示文字；配色与 Windows 顶栏同一份
+                                    IconButton.filled(
+                                      icon: const Icon(
+                                        Icons.save_outlined,
+                                        size: 18,
+                                      ),
+                                      tooltip: s.save,
+                                      constraints: const BoxConstraints(
+                                        minWidth: 32,
+                                        minHeight: 32,
+                                      ),
+                                      padding: EdgeInsets.zero,
+                                      style: _saveButtonStyle(scheme),
+                                      onPressed: _save,
+                                    ),
+                                  ],
+                                  if (Platform.isWindows)
+                                    Text(
+                                      s.isZh ? '右键添加节点' : 'Right-click to add',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: scheme.outline,
+                                      ),
+                                    ),
+                                ],
+                              ],
                             ),
                           ),
                         ),
-                        const Spacer(),
-                        if (!Platform.isWindows) ...[
-                          IconButton(
-                            icon: Icon(
-                              Icons.file_download_outlined,
-                              size: 18,
-                              color: scheme.onSurface,
-                            ),
-                            tooltip: s.importConfig,
-                            constraints: const BoxConstraints(
-                              minWidth: 32,
-                              minHeight: 32,
-                            ),
-                            padding: EdgeInsets.zero,
-                            onPressed: () => _importConfig(s),
-                          ),
-                          IconButton(
-                            icon: Icon(
-                              Icons.file_upload_outlined,
-                              size: 18,
-                              color: scheme.onSurface,
-                            ),
-                            tooltip: s.isZh ? '导出配置' : 'Export Config',
-                            constraints: const BoxConstraints(
-                              minWidth: 32,
-                              minHeight: 32,
-                            ),
-                            padding: EdgeInsets.zero,
-                            onPressed: _nodes.isEmpty
-                                ? null
-                                : () => _exportConfig(s),
-                          ),
-                          const SizedBox(width: 4),
-                          // 保存按钮：仅软盘图标，不显示文字；配色与 Windows 顶栏同一份
-                          IconButton.filled(
-                            icon: const Icon(Icons.save_outlined, size: 18),
-                            tooltip: s.save,
-                            constraints: const BoxConstraints(
-                              minWidth: 32,
-                              minHeight: 32,
-                            ),
-                            padding: EdgeInsets.zero,
-                            style: _saveButtonStyle(scheme),
-                            onPressed: _save,
-                          ),
-                        ],
-                        if (Platform.isWindows)
-                          Text(
-                            s.isZh ? '右键添加节点' : 'Right-click to add',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: scheme.outline,
-                            ),
-                          ),
-                      ],
-                    ],
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const Divider(height: 1, indent: 12, endIndent: 12),
         ],
@@ -10264,79 +10338,103 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   @override
   Map<String, dynamic> panelSnapshot(DetachedPanel panel) {
     final cfg = _appState.config;
-    final v = widget.video;
     final node = _selectedNode;
-    final resolvedExt = node == null ? null : _resolveUpstreamExtension(node);
+    final includeElements =
+        panel == DetachedPanel.props || panel == DetachedPanel.elements;
+    final includeProperties =
+        panel == DetachedPanel.props || panel == DetachedPanel.properties;
+    final includeEditorData = includeElements || includeProperties;
+    final isAi = panel == DetachedPanel.ai;
+    final resolvedExt = includeProperties && node != null
+        ? _resolveUpstreamExtension(node)
+        : null;
     return <String, dynamic>{
       'panel': panel.id,
       'config': cfg.toJson(),
-      // 配置 JSON 不含 Key（落盘安全），但独立 AI 窗口必须能发请求。
-      // 凭据只经本机通道传递，不写文件。
-      'aiCredentials': aiCredentialsOf(cfg),
+      if (isAi)
+        // 配置 JSON 不含 Key（落盘安全），但独立 AI 窗口必须能发请求。
+        // 凭据只经本机通道传递，不写文件。
+        'aiCredentials': aiCredentialsOf(cfg),
       'appDataDir': _detachedAppDataDir,
-      'appData': {
-        'videos': [
-          for (final video in _appState.videos)
-            {
-              'id': video.id,
-              'filename': video.filename,
-              'sizeMb': video.sizeMb,
-              'parsed': video.parsed,
-            },
-        ],
-        'containers': [
-          for (final container in _appState.containers) container.toJson(),
-        ],
-        'tasks': [for (final task in _appState.tasks) task.toJson()],
-      },
-      'graph': <String, dynamic>{
-        'nodes': [for (final n in _nodes) n.toJson()],
-        'connections': [for (final c in _connections) c.toJson()],
-      },
-      'toolbox': _buildToolboxDescriptors(),
-      // Include media tracks as well as display metadata for detached editors.
-      'video': <String, dynamic>{
-        'id': v.id,
-        'filepath': v.filepath,
-        'filename': v.filename,
-        'resolution': v.resolution,
-        'duration': v.duration,
-        'durationStr': v.durationStr,
-        'sizeMb': v.sizeMb,
-        'codec': v.codec,
-        'pixFmt': v.pixFmt,
-        'audioCodec': v.audioCodec,
-        'audioChannels': v.audioChannels,
-        'width': v.width,
-        'height': v.height,
-        'fps': v.fps,
-        'fileMediaType': v.fileMediaType.name,
-        'subtitles': [
-          for (final track in v.subtitles)
-            {
-              'index': track.index,
-              'codec': track.codec,
-              'language': track.language,
-              'title': track.title,
-              'forced': track.forced,
-              'default': track.isDefault,
-            },
-        ],
-      },
-      'props': <String, dynamic>{
-        'thumbPath': _thumbPath,
-        'outputName': resolvedExt == null
-            ? v.filename
-            : v.filename.replaceAll(RegExp(r'\.[^.]+$'), '.$resolvedExt'),
-        'sourceImagePath': node == null ? null : _resolveSourceImagePath(node),
-        'containerFileCount': widget.containerInfo?.fileCount ?? 0,
-        'containerName': widget.containerInfo?.name,
-        'isAudioNoCover': _isAudioNoCover,
-      },
-      'selection': node?.toJson(),
-      'ai': <String, dynamic>{
-        'session': _aiPanelApi?.exportMessages() ?? _aiSessionCache ?? const [],
-      },
+      'appData': panelAppDataSnapshot(
+        panel,
+        () => <String, dynamic>{
+          'videos': [
+            for (final video in _appState.videos)
+              {
+                'id': video.id,
+                'filename': video.filename,
+                'sizeMb': video.sizeMb,
+                'parsed': video.parsed,
+              },
+          ],
+          'containers': [
+            for (final container in _appState.containers) container.toJson(),
+          ],
+          'tasks': [for (final task in _appState.tasks) task.toJson()],
+        },
+      ),
+      if (isAi)
+        'graph': <String, dynamic>{
+          'nodes': [for (final n in _nodes) n.toJson()],
+          'connections': [for (final c in _connections) c.toJson()],
+        },
+      if (includeElements) 'toolbox': _buildToolboxDescriptors(),
+      if (includeEditorData)
+        // Include media tracks as well as display metadata for detached editors.
+        'video': <String, dynamic>{
+          'id': widget.video.id,
+          'filepath': widget.video.filepath,
+          'filename': widget.video.filename,
+          'resolution': widget.video.resolution,
+          'duration': widget.video.duration,
+          'durationStr': widget.video.durationStr,
+          'sizeMb': widget.video.sizeMb,
+          'codec': widget.video.codec,
+          'pixFmt': widget.video.pixFmt,
+          'audioCodec': widget.video.audioCodec,
+          'audioChannels': widget.video.audioChannels,
+          'width': widget.video.width,
+          'height': widget.video.height,
+          'fps': widget.video.fps,
+          'fileMediaType': widget.video.fileMediaType.name,
+          'subtitles': [
+            for (final track in widget.video.subtitles)
+              {
+                'index': track.index,
+                'codec': track.codec,
+                'language': track.language,
+                'title': track.title,
+                'forced': track.forced,
+                'default': track.isDefault,
+              },
+          ],
+        },
+      if (includeProperties || includeElements)
+        'props': <String, dynamic>{
+          if (includeProperties) ...{
+            'thumbPath': _thumbPath,
+            'outputName': resolvedExt == null
+                ? widget.video.filename
+                : widget.video.filename.replaceAll(
+                    RegExp(r'\.[^.]+$'),
+                    '.$resolvedExt',
+                  ),
+            'sourceImagePath': node == null
+                ? null
+                : _resolveSourceImagePath(node),
+            'containerFileCount': widget.containerInfo?.fileCount ?? 0,
+            'isAudioNoCover': _isAudioNoCover,
+          },
+          if (includeElements || includeProperties)
+            'containerName': widget.containerInfo?.name,
+        },
+      if (includeProperties) 'selection': node?.toJson(),
+      if (isAi)
+        'ai': <String, dynamic>{
+          'session':
+              _aiPanelApi?.exportMessages() ?? _aiSessionCache ?? const [],
+        },
     };
   }
 
@@ -11187,6 +11285,94 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     );
   }
 
+  Widget _buildCompactDesktopTopBar(ColorScheme scheme, AppStrings s) {
+    final actions = <Widget>[
+      MobileGlassPillAction(
+        color: _undoStack.isEmpty ? scheme.outlineVariant : scheme.onSurface,
+        icon: Icons.undo,
+        tooltip: s.isZh ? '撤销' : 'Undo',
+        onTap: _undoStack.isEmpty ? null : _undo,
+      ),
+      MobileGlassPillAction(
+        color: _redoStack.isEmpty ? scheme.outlineVariant : scheme.onSurface,
+        icon: Icons.redo,
+        tooltip: s.isZh ? '重做' : 'Redo',
+        onTap: _redoStack.isEmpty ? null : _redo,
+      ),
+      const MobileActionGroupBreak(),
+      MobileGlassPillAction(
+        icon: Icons.search,
+        tooltip: s.isZh
+            ? '探测模式：悬停端口显示信号'
+            : 'Probe: hover ports to inspect signals',
+        color: _probeMode ? scheme.primary : scheme.onSurface,
+        onTap: () => setState(() => _probeMode = !_probeMode),
+      ),
+      MobileGlassPillAction(
+        icon: Icons.route,
+        tooltip: s.isZh
+            ? '隐藏逻辑线（控制连线、逻辑门、逻辑端口）'
+            : 'Hide logic (control wires, gates, logic ports)',
+        color: _hideLogic ? scheme.error : scheme.onSurface,
+        onTap: () => setState(() => _hideLogic = !_hideLogic),
+      ),
+      if (_panelHidden)
+        MobileGlassPillAction(
+          color: scheme.onSurface,
+          icon: Icons.widgets_outlined,
+          tooltip: s.isZh ? '显示元素 / 属性面板' : 'Show elements / properties',
+          onTap: () => setState(() {
+            _panelHidden = false;
+            _panelDetached = false;
+            _panelFloatPos = null;
+          }),
+        ),
+      MobileGlassPillAction(
+        color: scheme.onSurface,
+        icon: Icons.save_as_outlined,
+        tooltip: s.isZh
+            ? '写入格式：${_writeFormat == 'v2' ? '新版 (Beta)' : '旧版'}（点击切换）'
+            : 'Write format: ${_writeFormat == 'v2' ? 'New (Beta)' : 'Legacy'} (click to switch)',
+        onTap: () => setState(
+          () => _writeFormat = _writeFormat == 'v2' ? 'legacy' : 'v2',
+        ),
+      ),
+      if (!Platform.isWindows) ...[
+        const MobileActionGroupBreak(),
+        MobileGlassPillAction(
+          color: scheme.onSurface,
+          icon: Icons.file_download_outlined,
+          tooltip: s.importConfig,
+          onTap: () => _importConfig(s),
+        ),
+        MobileGlassPillAction(
+          color: scheme.onSurface,
+          icon: Icons.file_upload_outlined,
+          tooltip: s.isZh ? '导出配置' : 'Export Config',
+          onTap: _nodes.isEmpty ? null : () => _exportConfig(s),
+        ),
+        MobileGlassPillAction(
+          color: scheme.onSurface,
+          icon: Icons.save_outlined,
+          tooltip: s.save,
+          onTap: _save,
+        ),
+      ],
+    ];
+    final title = Text(s.isZh ? '节点编辑器' : 'Node Editor');
+    if (Platform.isWindows) {
+      return MobilePillTopBar(title: title, actions: actions);
+    }
+    return MobileSubPageTopBar(
+      title: title,
+      actions: actions,
+      onBack: () async {
+        final nav = Navigator.of(context);
+        if (await _onWillPop()) nav.pop();
+      },
+    );
+  }
+
   // ── 移动端专用：顶部浮动菜单栏 ──
 
   double _mobileToolbarHeight() =>
@@ -11280,95 +11466,93 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         width: _kMobileBarBtnBox,
         height: _kMobileBarBtnBox,
         child: ScaleMenuButton<String>(
-                      icon: Icons.more_vert,
-                      tooltip: s.isZh ? '更多操作' : 'More actions',
-                      size: _kMobileBarBtnBox,
-                      iconSize: 18,
-                      menuWidth: 230,
-                      items: [
-                        OptionItem(
-                          'arrange',
-                          s.isZh ? '整理' : 'Arrange',
-                          icon: Icons.auto_fix_high,
-                        ),
-                        OptionItem(
-                          'source',
-                          s.isZh ? '定位源' : 'Source',
-                          icon: Icons.my_location,
-                        ),
-                        OptionItem(
-                          'export',
-                          s.isZh ? '导出配置' : 'Export Config',
-                          icon: Icons.file_upload_outlined,
-                        ),
-                        OptionItem(
-                          'import',
-                          s.importConfig,
-                          icon: Icons.file_download_outlined,
-                        ),
-                        OptionItem(
-                          'probe',
-                          s.isZh ? '探测模式' : 'Probe',
-                          icon: Icons.search,
-                          subtitle: _probeMode
-                              ? (s.isZh ? '已开启' : 'On')
-                              : (s.isZh ? '已关闭' : 'Off'),
-                        ),
-                        OptionItem(
-                          'hide',
-                          s.isZh ? '隐藏逻辑线' : 'Hide logic',
-                          icon: Icons.route,
-                          subtitle: _hideLogic
-                              ? (s.isZh ? '已隐藏' : 'Hidden')
-                              : (s.isZh ? '显示中' : 'Shown'),
-                        ),
-                        OptionItem(
-                          'format',
-                          s.isZh ? '写入格式' : 'Write format',
-                          icon: Icons.save_as_outlined,
-                          subtitle: _writeFormat == 'v2' ? 'v2' : 'legacy',
-                        ),
-                        OptionItem(
-                          'orientation',
-                          _isLandscape
-                              ? (s.isZh ? '切换到竖屏' : 'Switch to portrait')
-                              : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
-                          icon: Icons.screen_rotation,
-                        ),
-                      ],
-                      onSelected: (v) {
-                        switch (v) {
-                          case 'arrange':
-                            _autoLayout();
-                            break;
-                          case 'source':
-                            _goToSource(s);
-                            break;
-                          case 'export':
-                            if (_nodes.isNotEmpty) _exportConfig(s);
-                            break;
-                          case 'import':
-                            _importConfig(s);
-                            break;
-                          case 'probe':
-                            setState(() => _probeMode = !_probeMode);
-                            break;
-                          case 'hide':
-                            setState(() => _hideLogic = !_hideLogic);
-                            break;
-                          case 'format':
-                            setState(
-                              () => _writeFormat = _writeFormat == 'v2'
-                                  ? 'legacy'
-                                  : 'v2',
-                            );
-                            break;
-                          case 'orientation':
-                            _toggleOrientation();
-                            break;
-                        }
-                      },
-                    ),
+          icon: Icons.more_vert,
+          tooltip: s.isZh ? '更多操作' : 'More actions',
+          size: _kMobileBarBtnBox,
+          iconSize: 18,
+          menuWidth: 230,
+          items: [
+            OptionItem(
+              'arrange',
+              s.isZh ? '整理' : 'Arrange',
+              icon: Icons.auto_fix_high,
+            ),
+            OptionItem(
+              'source',
+              s.isZh ? '定位源' : 'Source',
+              icon: Icons.my_location,
+            ),
+            OptionItem(
+              'export',
+              s.isZh ? '导出配置' : 'Export Config',
+              icon: Icons.file_upload_outlined,
+            ),
+            OptionItem(
+              'import',
+              s.importConfig,
+              icon: Icons.file_download_outlined,
+            ),
+            OptionItem(
+              'probe',
+              s.isZh ? '探测模式' : 'Probe',
+              icon: Icons.search,
+              subtitle: _probeMode
+                  ? (s.isZh ? '已开启' : 'On')
+                  : (s.isZh ? '已关闭' : 'Off'),
+            ),
+            OptionItem(
+              'hide',
+              s.isZh ? '隐藏逻辑线' : 'Hide logic',
+              icon: Icons.route,
+              subtitle: _hideLogic
+                  ? (s.isZh ? '已隐藏' : 'Hidden')
+                  : (s.isZh ? '显示中' : 'Shown'),
+            ),
+            OptionItem(
+              'format',
+              s.isZh ? '写入格式' : 'Write format',
+              icon: Icons.save_as_outlined,
+              subtitle: _writeFormat == 'v2' ? 'v2' : 'legacy',
+            ),
+            OptionItem(
+              'orientation',
+              _isLandscape
+                  ? (s.isZh ? '切换到竖屏' : 'Switch to portrait')
+                  : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
+              icon: Icons.screen_rotation,
+            ),
+          ],
+          onSelected: (v) {
+            switch (v) {
+              case 'arrange':
+                _autoLayout();
+                break;
+              case 'source':
+                _goToSource(s);
+                break;
+              case 'export':
+                if (_nodes.isNotEmpty) _exportConfig(s);
+                break;
+              case 'import':
+                _importConfig(s);
+                break;
+              case 'probe':
+                setState(() => _probeMode = !_probeMode);
+                break;
+              case 'hide':
+                setState(() => _hideLogic = !_hideLogic);
+                break;
+              case 'format':
+                setState(
+                  () => _writeFormat = _writeFormat == 'v2' ? 'legacy' : 'v2',
+                );
+                break;
+              case 'orientation':
+                _toggleOrientation();
+                break;
+            }
+          },
+        ),
       ),
     ];
     return LayoutBuilder(
@@ -14282,12 +14466,17 @@ Available actions: __TOOLS__''';
         Future<void> execute() async {
           if (!mounted || owner?.stopRequested == true) return;
           const nodeTools = {
-            'modify_node', 'add_node', 'add_gate', 'set_gate_params',
-            'delete_node', 'rename_node',
+            'modify_node',
+            'add_node',
+            'add_gate',
+            'set_gate_params',
+            'delete_node',
+            'rename_node',
           };
           const connectionTools = {'connect_nodes', 'disconnect_nodes'};
           const graphTools = {'clear_all', 'undo', 'redo'};
-          if (nodeTools.contains(tool) || connectionTools.contains(tool) ||
+          if (nodeTools.contains(tool) ||
+              connectionTools.contains(tool) ||
               graphTools.contains(tool)) {
             graphOperations++;
             owner?.graphOperations++;
@@ -14296,6 +14485,7 @@ Available actions: __TOOLS__''';
           }
           await action();
         }
+
         if (confirm) {
           await _confirmThen(tool, tool, execute);
         } else {
@@ -14621,16 +14811,19 @@ Available actions: __TOOLS__''';
         ),
       );
     }
-    owner?.trace?.record('ai.tools.summary', details: {
-      'toolCalls': calls.length,
-      'results': results.length,
-      'blocked': blocked,
-      'failed': failed,
-      'graphOperations': graphOperations,
-      'nodeOperations': nodeOperations,
-      'connectionOperations': connectionOperations,
-      'stopped': owner.stopRequested,
-    });
+    owner?.trace?.record(
+      'ai.tools.summary',
+      details: {
+        'toolCalls': calls.length,
+        'results': results.length,
+        'blocked': blocked,
+        'failed': failed,
+        'graphOperations': graphOperations,
+        'nodeOperations': nodeOperations,
+        'connectionOperations': connectionOperations,
+        'stopped': owner.stopRequested,
+      },
+    );
     if (identical(_toolCallOwner, owner)) {
       _activeToolCallId = null;
       _toolCallOwner = null;
@@ -15038,31 +15231,31 @@ Available actions: __TOOLS__''';
     final anthropic = provider.toLowerCase() == 'anthropic';
     final sdkProvider = _sdkProvider(provider);
     final config = ai.AIConfig(
-        apiKey: apiKey,
-        model: model,
-        maxTokens: maxTokens,
-        temperature: temperature,
-        topP: topP,
-        systemPrompt: systemPrompt,
-        tools:
-            exposePipelineTools &&
-                _toolActions.any((tool) => !_disabledTools.contains(tool))
-            ? [_pipelineToolDefinition()]
-            : null,
-        baseUrl: _sdkBaseUrl(apiUrl, anthropic: anthropic),
-        // 这个超时是「整条请求」的看门狗，不是首字节超时：60s 会把长回答 /
-        // 推理模型直接掐断（用户反馈「连续对话经常截断」）。
-        //
-        // 5 分钟仍然不够：长回答 + 推理模型 + 工具轮之后继续生成，很容易跑过
-        // 5 分钟，用户看到的就是「什么都没点，它自己中断了」。放宽到 20 分钟，
-        // 真正卡死时仍能兜底退出；异常分支会保留已收到的内容并按类型说明原因
-        // （见 _aiFailureNote，不再一律写成「已中断」）。
-        timeout: const Duration(minutes: 20),
-        headers: {
-          if (anthropic) 'anthropic-version': '2023-06-01',
-          ...?customHeaders,
-        },
-      );
+      apiKey: apiKey,
+      model: model,
+      maxTokens: maxTokens,
+      temperature: temperature,
+      topP: topP,
+      systemPrompt: systemPrompt,
+      tools:
+          exposePipelineTools &&
+              _toolActions.any((tool) => !_disabledTools.contains(tool))
+          ? [_pipelineToolDefinition()]
+          : null,
+      baseUrl: _sdkBaseUrl(apiUrl, anthropic: anthropic),
+      // 这个超时是「整条请求」的看门狗，不是首字节超时：60s 会把长回答 /
+      // 推理模型直接掐断（用户反馈「连续对话经常截断」）。
+      //
+      // 5 分钟仍然不够：长回答 + 推理模型 + 工具轮之后继续生成，很容易跑过
+      // 5 分钟，用户看到的就是「什么都没点，它自己中断了」。放宽到 20 分钟，
+      // 真正卡死时仍能兜底退出；异常分支会保留已收到的内容并按类型说明原因
+      // （见 _aiFailureNote，不再一律写成「已中断」）。
+      timeout: const Duration(minutes: 20),
+      headers: {
+        if (anthropic) 'anthropic-version': '2023-06-01',
+        ...?customHeaders,
+      },
+    );
     return ai.FlutterAI(
       provider: sdkProvider,
       config: config,
@@ -15249,18 +15442,20 @@ Available actions: __TOOLS__''';
     // 分支也要把它记进会话统计。
     var totalInputTokens = 0;
     var totalOutputTokens = 0;
-    final request = _AiStreamRequest(appState.diagnosticTrace.begin(
-      'ai.request',
-      details: {
-        // SDK enum names are fixed protocol labels; provider/model names are not.
-        'protocol': _sdkProvider(effProvider).name,
-        'maxTokens': effectiveMaxTokens,
-        'contextWindow': contextWindow,
-        'temperature': effTemp,
-        'topP': ?effTopP,
-        'attachmentCount': _attachments.length,
-      },
-    ));
+    final request = _AiStreamRequest(
+      appState.diagnosticTrace.begin(
+        'ai.request',
+        details: {
+          // SDK enum names are fixed protocol labels; provider/model names are not.
+          'protocol': _sdkProvider(effProvider).name,
+          'maxTokens': effectiveMaxTokens,
+          'contextWindow': contextWindow,
+          'temperature': effTemp,
+          'topP': ?effTopP,
+          'attachmentCount': _attachments.length,
+        },
+      ),
+    );
     _activeRequest = request;
     setState(() {
       _messages.add((
@@ -15498,14 +15693,17 @@ Available actions: __TOOLS__''';
         final completeToolCalls = <ai.ToolCallContent>[];
         request.attempts++;
         request.streamRounds++;
-        request.trace?.record('ai.request.attempt', details: {
-          'attempt': request.attempts,
-          'kind': 'stream',
-          'round': request.streamRounds,
-          'messageCount': sdkClient!.context.getMessagesForRequest().length,
-          'attachmentCount': requestAttachmentCount,
-          'maxTokens': sdkClient.config.maxTokens,
-        });
+        request.trace?.record(
+          'ai.request.attempt',
+          details: {
+            'attempt': request.attempts,
+            'kind': 'stream',
+            'round': request.streamRounds,
+            'messageCount': sdkClient!.context.getMessagesForRequest().length,
+            'attachmentCount': requestAttachmentCount,
+            'maxTokens': sdkClient.config.maxTokens,
+          },
+        );
         final streamWatch = request.trace?.enabled == true
             ? (Stopwatch()..start())
             : null;
@@ -15517,18 +15715,21 @@ Available actions: __TOOLS__''';
         int? firstTokenMs;
         request.summarizeStream = () {
           streamWatch?.stop();
-          request.trace?.record('ai.stream.summary', details: {
-            'attempt': request.attempts,
-            'round': request.streamRounds,
-            'chunks': streamChunks,
-            'textChunks': textChunks,
-            'thinkingChunks': thinkingChunks,
-            'responseChars': streamChars,
-            'thinkingChars': streamThinkingChars,
-            'firstTokenMs': ?firstTokenMs,
-            'finishReason': streamFinishReason?.name ?? 'missing',
-            'stopped': request.stopRequested,
-          });
+          request.trace?.record(
+            'ai.stream.summary',
+            details: {
+              'attempt': request.attempts,
+              'round': request.streamRounds,
+              'chunks': streamChunks,
+              'textChunks': textChunks,
+              'thinkingChunks': thinkingChunks,
+              'responseChars': streamChars,
+              'thinkingChars': streamThinkingChars,
+              'firstTokenMs': ?firstTokenMs,
+              'finishReason': streamFinishReason?.name ?? 'missing',
+              'stopped': request.stopRequested,
+            },
+          );
         };
         late final StreamSubscription<ai.StreamChunk> subscription;
         subscription = sdkClient!
@@ -15624,10 +15825,13 @@ Available actions: __TOOLS__''';
         request.summarizeStream = null;
         if (request.stopRequested) break;
         if (streamError != null) {
-          request.trace?.record('ai.request.attempt_error', details: {
-            'attempt': request.attempts,
-            'failureType': streamError.runtimeType.toString(),
-          });
+          request.trace?.record(
+            'ai.request.attempt_error',
+            details: {
+              'attempt': request.attempts,
+              'failureType': streamError.runtimeType.toString(),
+            },
+          );
           Error.throwWithStackTrace(streamError!, StackTrace.current);
         }
 
@@ -15645,17 +15849,23 @@ Available actions: __TOOLS__''';
           // 成本上多一次生成，但正文用 mergeToolRoundText 定规则：
           // 非流式更短/内容分叉时保留已展示的流式文本，绝不回退丢字。
           request.attempts++;
-          request.trace?.record('ai.request.retry', details: {
-            'reason': 'tool_call_completion',
-            'attempt': request.attempts,
-          });
-          request.trace?.record('ai.request.attempt', details: {
-            'attempt': request.attempts,
-            'kind': 'tool_completion',
-            'messageCount': sdkClient.context.getMessagesForRequest().length,
-            'attachmentCount': requestAttachmentCount,
-            'maxTokens': sdkClient.config.maxTokens,
-          });
+          request.trace?.record(
+            'ai.request.retry',
+            details: {
+              'reason': 'tool_call_completion',
+              'attempt': request.attempts,
+            },
+          );
+          request.trace?.record(
+            'ai.request.attempt',
+            details: {
+              'attempt': request.attempts,
+              'kind': 'tool_completion',
+              'messageCount': sdkClient.context.getMessagesForRequest().length,
+              'attachmentCount': requestAttachmentCount,
+              'maxTokens': sdkClient.config.maxTokens,
+            },
+          );
           response = await Future.any<ai.AIResponse?>([
             sdkClient.chatWithContent(const [], addToContext: false),
             request.stopSignal.future.then<ai.AIResponse?>((_) => null),
@@ -15750,10 +15960,13 @@ Available actions: __TOOLS__''';
               requestedMaxTokens: effectiveMaxTokens,
             );
             if (continuationMaxTokens == 0) {
-              request.trace?.record('ai.request.continue_skipped', details: {
-                'reason': 'context_full',
-                'continuations': request.continuations,
-              });
+              request.trace?.record(
+                'ai.request.continue_skipped',
+                details: {
+                  'reason': 'context_full',
+                  'continuations': request.continuations,
+                },
+              );
               final notice = widget.strings.isZh
                   ? '（上下文窗口已满，回答可能不完整。）'
                   : '(The context window is full; this answer may be incomplete.)';
@@ -15761,12 +15974,16 @@ Available actions: __TOOLS__''';
               break;
             }
             request.continuations++;
-            request.trace?.record('ai.request.continue', details: {
-              'reason': finishReason == ai.FinishReason.maxTokens
-                  ? 'max_tokens' : 'truncated',
-              'continuation': request.continuations,
-              'maxTokens': continuationMaxTokens,
-            });
+            request.trace?.record(
+              'ai.request.continue',
+              details: {
+                'reason': finishReason == ai.FinishReason.maxTokens
+                    ? 'max_tokens'
+                    : 'truncated',
+                'continuation': request.continuations,
+                'maxTokens': continuationMaxTokens,
+              },
+            );
             requestAttachmentCount = attachments.length;
             // Rebuild a compact continuation context. The SDK's sliding window
             // counts the partial answer as input for the next round and could
@@ -16021,16 +16238,18 @@ Available actions: __TOOLS__''';
     if (recent.isEmpty) return;
     _titleGenerated = true;
     _titleRequestInFlight = true;
-    final request = _AiStreamRequest(appState.diagnosticTrace.begin(
-      'ai.title',
-      details: {
-        'protocol': _sdkProvider(provider).name,
-        'messageCount': 2,
-        'sourceMessageCount': recentMessages.length,
-        'maxTokens': 32,
-        'contextWindow': profile?.contextWindow ?? cfg.aiContextWindow,
-      },
-    ));
+    final request = _AiStreamRequest(
+      appState.diagnosticTrace.begin(
+        'ai.title',
+        details: {
+          'protocol': _sdkProvider(provider).name,
+          'messageCount': 2,
+          'sourceMessageCount': recentMessages.length,
+          'maxTokens': 32,
+          'contextWindow': profile?.contextWindow ?? cfg.aiContextWindow,
+        },
+      ),
+    );
     request.attempts = 1;
     _titleRequest = request;
     ai.FlutterAI? client;
@@ -16050,7 +16269,8 @@ Available actions: __TOOLS__''';
         exposePipelineTools: false,
       );
       final response = await Future.any<ai.AIResponse?>([
-        client.chat('Summarize this conversation:\n$recent')
+        client
+            .chat('Summarize this conversation:\n$recent')
             .timeout(const Duration(seconds: 15)),
         request.stopSignal.future.then<ai.AIResponse?>((_) => null),
       ]);
@@ -16063,10 +16283,7 @@ Available actions: __TOOLS__''';
     } catch (error) {
       titleError = error;
       if (mounted && !request.stopRequested) {
-        appState.addLog(
-          '[AI] Title generation failed.',
-          category: 'warn',
-        );
+        appState.addLog('[AI] Title generation failed.', category: 'warn');
       }
     } finally {
       request.finishTrace(
@@ -18316,9 +18533,10 @@ Available actions: __TOOLS__''';
     // 正文基准固定为移动端 13 / 桌面端 12（原先取 bodyMedium = 14，
     // 用户反馈「AI 输出的字太大」）；系统字号缩放仍由 MediaQuery 生效。
     final fs = isMobilePlatform ? 13.0 : 12.0;
-    final messageStyle = (Theme.of(context).textTheme.bodyMedium ??
-            const TextStyle())
-        .copyWith(fontSize: fs);
+    final messageStyle =
+        (Theme.of(context).textTheme.bodyMedium ?? const TextStyle()).copyWith(
+          fontSize: fs,
+        );
     const avatarR = 14.0;
     // 头像列宽（直径 + 与气泡的 8px 间隙），同组后续消息用它占位。
     final avatarSlot = mobile ? 0.0 : avatarR * 2 + 8;

@@ -24,6 +24,12 @@ add_definitions(-DAPPLICATION_ID="${APPLICATION_ID}")
 add_definitions(-DAPP_ICON_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/icons")
 
 # Add dependency libraries. Add any application-specific dependencies here.
+# Flutter's engine exports its bundled _Unwind_* symbols. Load the system
+# unwinder first so libstdc++ exceptions from native plugins reach their catch
+# handlers (e.g. LibsecretError when no Secret Service is available). Keep this
+# dependency even with --as-needed, and restore the linker's previous state.
+target_link_libraries(${BINARY_NAME} PRIVATE
+  "-Wl,--push-state,--no-as-needed" gcc_s "-Wl,--pop-state")
 target_link_libraries(${BINARY_NAME} PRIVATE flutter)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK)
 

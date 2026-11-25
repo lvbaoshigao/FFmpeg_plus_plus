@@ -200,8 +200,7 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
     // 此处正处在 rebuild 中，改字段即可，不需要（也不应该）再 setState。
     if (_expanded &&
         (widget.forceCollapsed ||
-            mobileActionGroups(oldWidget.actions).length !=
-                _groups.length ||
+            mobileActionGroups(oldWidget.actions).length != _groups.length ||
             _countOf(oldWidget.actions) != _actionCount)) {
       _collapse(fromUpdate: true);
     }
@@ -582,39 +581,42 @@ class MobileSubPageTopBar extends StatelessWidget {
         safe.right + MobileUi.barInsetH,
         MobileUi.barInsetBottom,
       ),
-      child: MobilePillBarLayout(
-        // 默认返回键占掉「两个」里的一个；需要把删除/搜索/保存都放右上角时可传 3。
-        inlineActionLimit: inlineActionLimit,
-        // 左：圆形玻璃返回按钮（44×44、radius 22 = 正圆）
-        leading: MobileGlassPill(
-          radius: MobileUi.pillRadius,
-          padding: EdgeInsets.zero,
-          child: MobileGlassPillAction(
-            icon: Icons.arrow_back,
-            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-            color: scheme.onSurface,
-            size: MobileUi.pillHeight,
-            iconSize: 22,
+      child: SizedBox(
+        height: height,
+        child: MobilePillBarLayout(
+          // 默认返回键占掉「两个」里的一个；需要把删除/搜索/保存都放右上角时可传 3。
+          inlineActionLimit: inlineActionLimit,
+          // 左：圆形玻璃返回按钮（44×44、radius 22 = 正圆）
+          leading: MobileGlassPill(
+            radius: MobileUi.pillRadius,
             padding: EdgeInsets.zero,
-            onTap: onBack ?? () => Navigator.of(context).maybePop(),
+            child: MobileGlassPillAction(
+              icon: Icons.arrow_back,
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+              color: scheme.onSurface,
+              size: MobileUi.pillHeight,
+              iconSize: 22,
+              padding: EdgeInsets.zero,
+              onTap: onBack ?? () => Navigator.of(context).maybePop(),
+            ),
           ),
+          // 中：标题药丸，左对齐并占据剩余宽度（与主界面一致）
+          titlePill: MobileGlassPill(
+            radius: height / 2,
+            height: height,
+            padding: const EdgeInsets.symmetric(
+              horizontal: MobileUi.titlePillPadH,
+            ),
+            child: DefaultTextStyle.merge(
+              style: MobileUi.titleStyle(context),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              child: title,
+            ),
+          ),
+          // 右：操作药丸（高度 44，与返回按钮、标题药丸对齐）
+          actions: actions,
         ),
-        // 中：标题药丸，左对齐并占据剩余宽度（与主界面一致）
-        titlePill: MobileGlassPill(
-          radius: height / 2,
-          height: height,
-          padding: const EdgeInsets.symmetric(
-            horizontal: MobileUi.titlePillPadH,
-          ),
-          child: DefaultTextStyle.merge(
-            style: MobileUi.titleStyle(context),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            child: title,
-          ),
-        ),
-        // 右：操作药丸（高度 44，与返回按钮、标题药丸对齐）
-        actions: actions,
       ),
     );
   }

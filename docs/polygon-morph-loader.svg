@@ -45,14 +45,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800"
      preserveAspectRatio="xMidYMid meet" role="img" aria-labelledby="pmTitle pmDesc">
   <title id="pmTitle">多边形变形加载动画</title>
-  <desc id="pmDesc">柔和单色的加载动画：圆角多边形从三角形逐级变形到八边形，八边形自转三圈后再逐级变回三角形。</desc>
+  <desc id="pmDesc">透明背景的单色加载动画：圆角多边形从三角形逐级变形到八边形，再连续逐级变回三角形，不停顿、不额外自转。</desc>
 
-  <!-- 背景。嵌进深色界面时删掉这一行，或把 fill 换成页面底色。 -->
-  <rect id="pmBG" x="0" y="0" width="800" height="800" fill="#F5F0E8"/>
+  <!-- 保持透明；嵌入时可用 CSS 自定义属性指定主题色，见形状的 style。 -->
 
   <!-- 形状本体：fill 与 stroke 同色，stroke-width = 2 × 圆角半径 -->
   <g id="pmStage" transform="translate(400 400)">
-    <path id="pmShape" fill="#7A675C" stroke="#7A675C" stroke-width="104"
+    <path id="pmShape" fill="currentColor" stroke="currentColor" style="color:var(--polygon-morph-color, #7A675C)" stroke-width="104"
           stroke-linejoin="round" stroke-linecap="round"
           d="M318.17 0L-159.09 275.52L-159.09 -275.52Z"/>
   </g>

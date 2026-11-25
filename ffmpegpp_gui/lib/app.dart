@@ -28,12 +28,12 @@ import 'theme/app_text_scale.dart';
 import 'theme/app_theme.dart';
 import 'theme/mobile_visual_theme.dart';
 import 'widgets/app_alert_dialog.dart';
-import 'widgets/app_slider.dart';
 import 'widgets/desktop_resize_scope.dart';
 import 'widgets/liquid_glass_mobile_nav.dart';
 import 'widgets/mobile_bottom_nav.dart';
 // 生效的菜单栏位置下发（底部 ↔ 左右竖排导轨时，主 Tab 各页的底部留白随之切换）
 import 'widgets/mobile_nav_scope.dart';
+import 'widgets/polygon_morph_loader.dart';
 import 'widgets/sidebar.dart';
 import 'widgets/task_float_layer.dart';
 import 'widgets/toast.dart';
@@ -428,7 +428,7 @@ class _ThemeKey {
   );
 }
 
-/// 启动加载画面：旋转光晕 + 品牌图标 + 进度提示。
+/// 启动加载画面：空心多边形加载动画与软件名称。
 /// 期间后台并行执行：后端启动、配置加载、字体/壁纸预加载（见 main.dart）。
 class _SplashScreen extends StatefulWidget {
   const _SplashScreen();
@@ -445,30 +445,10 @@ class _SplashScreenState extends State<_SplashScreen> {
         Theme.of(context).brightness,
       ),
       body: Center(
-        // 初始化界面：仅保留软件图标 + 软件名字 + 加载进度条
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 品牌图标
-            ClipRRect(
-              borderRadius: BorderRadius.circular(18),
-              child: Container(
-                width: 72,
-                height: 72,
-                color: scheme.surfaceContainerHighest,
-                child: Image.asset(
-                  'rele/icon.png',
-                  width: 72,
-                  height: 72,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => Icon(
-                    Icons.play_circle_fill,
-                    size: 60,
-                    color: scheme.primary,
-                  ),
-                ),
-              ),
-            ),
+            const PolygonMorphLoader.hollow(size: 160),
             const SizedBox(height: 20),
             Text(
               'FFmpeg++',
@@ -479,11 +459,6 @@ class _SplashScreenState extends State<_SplashScreen> {
                 letterSpacing: 0.5,
               ),
             ),
-            const SizedBox(height: 26),
-            // 进度条：不确定进度（真实进度由初始化状态驱动）
-            // 统一走 AppProgressBar —— 与全应用滑动条同一规格
-            //（胶囊高 kAppTrackHeight、两端半圆、主题色填充 + 玻璃留空）
-            const SizedBox(width: 140, child: AppProgressBar()),
           ],
         ),
       ),

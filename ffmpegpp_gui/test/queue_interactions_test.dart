@@ -1,5 +1,7 @@
 import 'package:ffmpegpp_gui/models/models.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
+import 'package:ffmpegpp_gui/widgets/app_slider.dart';
+import 'package:ffmpegpp_gui/widgets/polygon_morph_loader.dart';
 import 'package:ffmpegpp_gui/widgets/task_card.dart';
 import 'package:ffmpegpp_gui/widgets/task_float_layer.dart';
 import 'package:flutter/material.dart';
@@ -102,51 +104,52 @@ void main() {
       await tester.pump();
       expect(find.byKey(const ValueKey('task-hide-one')), findsNothing);
     });
-    testWidgets('should cap cards, prioritize active tasks, and open the queue', (
-      tester,
-    ) async {
-      final state = QueueState()
-        ..replace([
-          task('pending-1'),
-          task('pending-2'),
-          task('pending-3'),
-          task('running', status: TaskStatus.processing),
-          task('paused', status: TaskStatus.paused),
-        ]);
-      addTearDown(state.dispose);
-      await tester.pumpWidget(
-        harness(
-          state,
-          const Stack(children: [Positioned.fill(child: TaskFloatLayer())]),
-        ),
-      );
+    testWidgets(
+      'should cap cards, prioritize active tasks, and open the queue',
+      (tester) async {
+        final state = QueueState()
+          ..replace([
+            task('pending-1'),
+            task('pending-2'),
+            task('pending-3'),
+            task('running', status: TaskStatus.processing),
+            task('paused', status: TaskStatus.paused),
+          ]);
+        addTearDown(state.dispose);
+        await tester.pumpWidget(
+          harness(
+            state,
+            const Stack(children: [Positioned.fill(child: TaskFloatLayer())]),
+          ),
+        );
 
-      expect(
-        find.byKey(const ValueKey('task-float-position-running')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('task-float-position-paused')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('task-float-position-pending-1')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('task-float-position-pending-2')),
-        findsNothing,
-      );
-      expect(
-        find.byKey(const ValueKey('task-float-position-pending-3')),
-        findsNothing,
-      );
-      expect(find.byKey(const ValueKey('task-float-queue')), findsOneWidget);
-      expect(find.text('2'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('task-float-position-running')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('task-float-position-paused')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('task-float-position-pending-1')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('task-float-position-pending-2')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('task-float-position-pending-3')),
+          findsNothing,
+        );
+        expect(find.byKey(const ValueKey('task-float-queue')), findsOneWidget);
+        expect(find.text('2'), findsOneWidget);
 
-      await tester.tap(find.byKey(const ValueKey('task-float-queue')));
-      expect(state.selectedNav, 1);
-    });
+        await tester.tap(find.byKey(const ValueKey('task-float-queue')));
+        expect(state.selectedNav, 1);
+      },
+    );
 
     testWidgets('should bound minimized dock and preserve restore access', (
       tester,
@@ -162,22 +165,14 @@ void main() {
       );
 
       for (final id in [2, 3, 4, 5, 6]) {
-        await tester.tap(
-          find.byKey(ValueKey('task-minimize-dock-$id')),
-        );
+        await tester.tap(find.byKey(ValueKey('task-minimize-dock-$id')));
         await tester.pump();
       }
 
       for (final id in [2, 3, 4, 5]) {
-        expect(
-          find.byKey(ValueKey('task-dock-dock-$id')),
-          findsOneWidget,
-        );
+        expect(find.byKey(ValueKey('task-dock-dock-$id')), findsOneWidget);
       }
-      expect(
-        find.byKey(const ValueKey('task-dock-dock-6')),
-        findsNothing,
-      );
+      expect(find.byKey(const ValueKey('task-dock-dock-6')), findsNothing);
       expect(find.byKey(const ValueKey('task-float-queue')), findsOneWidget);
       expect(find.text('1'), findsOneWidget);
 
@@ -216,10 +211,11 @@ void main() {
       await tester.tap(find.text('Underlying'));
       expect(taps, 1);
       state.replace([
-        task(
-          'one',
-          status: TaskStatus.processing,
-        ).copyWith(progress: 67, elapsed: '00:12'),
+        task('one', status: TaskStatus.processing).copyWith(
+          progress: 67,
+          callProgresses: const [0.67],
+          elapsed: '00:12',
+        ),
       ]);
       await tester.pump();
       expect(find.text('67%'), findsOneWidget);
@@ -230,6 +226,56 @@ void main() {
       await tester.pump();
       expect(find.byKey(const ValueKey('task-hide-one')), findsOneWidget);
     });
+    testWidgets(
+      'unknown overlay progress switches to a measured overall bar and pauses statically',
+      (tester) async {
+        final unknown = task('one', status: TaskStatus.processing).copyWith(
+          progress: 50,
+          pipelineCalls: [
+            BackendCall(action: 'image_scale', params: {}),
+            BackendCall(action: 'image_convert', params: {}),
+          ],
+          currentCallIndex: 1,
+          callProgresses: const [1, 0],
+        );
+        final state = QueueState()..replace([unknown]);
+        addTearDown(state.dispose);
+        await tester.pumpWidget(
+          harness(
+            state,
+            const Stack(children: [Positioned.fill(child: TaskFloatLayer())]),
+          ),
+        );
+        expect(find.byType(PolygonMorphLoader), findsOneWidget);
+        expect(find.byType(AppProgressBar), findsNothing);
+        expect(find.text('50%'), findsNothing);
+
+        state.replace([
+          unknown.copyWith(progress: 40, callProgresses: const [1, 0.4]),
+        ]);
+        await tester.pump();
+        expect(find.byType(PolygonMorphLoader), findsNothing);
+        expect(
+          tester.widget<AppProgressBar>(find.byType(AppProgressBar)).value,
+          0.7,
+        );
+        expect(find.text('70%'), findsOneWidget);
+
+        state.replace([unknown.copyWith(status: TaskStatus.paused)]);
+        await tester.pump();
+        expect(find.byType(AppProgressBar), findsNothing);
+        expect(find.text('50%'), findsNothing);
+        expect(
+          tester
+              .widget<PolygonMorphLoader>(find.byType(PolygonMorphLoader))
+              .reduceMotion,
+          isTrue,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+
     testWidgets('should clamp dragging and resizing to layer bounds', (
       tester,
     ) async {
@@ -290,7 +336,10 @@ void main() {
       expect(find.byType(TaskDetails), findsOneWidget);
       expect(state.tasks.first.expanded, isFalse);
       state.replace([
-        task('one', status: TaskStatus.processing).copyWith(progress: 42),
+        task(
+          'one',
+          status: TaskStatus.processing,
+        ).copyWith(progress: 42, callProgresses: const [0.42]),
       ]);
       await tester.pump();
       expect(find.text('42%'), findsOneWidget);
@@ -332,15 +381,20 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('已暂停任务显示「继续」+「停止」，状态文案与图标不再是处理中', (
-      tester,
-    ) async {
-      final state = QueueState()..replace([
-        task('one', status: TaskStatus.paused).copyWith(progress: 55),
-      ]);
+    testWidgets('已暂停任务显示「继续」+「停止」，状态文案与图标不再是处理中', (tester) async {
+      final state = QueueState()
+        ..replace([
+          task(
+            'one',
+            status: TaskStatus.paused,
+          ).copyWith(progress: 55, callProgresses: const [0.55]),
+        ]);
       addTearDown(state.dispose);
       await tester.pumpWidget(
-        harness(state, TaskCard(task: state.tasks.first, detailsInSheet: false)),
+        harness(
+          state,
+          TaskCard(task: state.tasks.first, detailsInSheet: false),
+        ),
       );
       // 折叠卡的展开区也被 AnimatedCrossFade 预先构建，所以状态文案会在
       // 卡片头部 / 概览条 / 图例里各出现一次 —— 用 findsWidgets 断言存在性。
@@ -356,14 +410,14 @@ void main() {
       expect(find.text('继续'), findsOneWidget); // 真实状态未变（测试替身不改列表）
       await tester.pumpWidget(const SizedBox.shrink());
     });
-
   });
 
   group('TaskFloatLayer paused', () {
     testWidgets('已暂停任务不会从悬浮层消失，并可在此继续', (tester) async {
-      final state = QueueState()..replace([
-        task('one', status: TaskStatus.paused).copyWith(progress: 33),
-      ]);
+      final state = QueueState()
+        ..replace([
+          task('one', status: TaskStatus.paused).copyWith(progress: 33),
+        ]);
       addTearDown(state.dispose);
       await tester.pumpWidget(
         harness(
