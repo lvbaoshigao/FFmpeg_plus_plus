@@ -1,0 +1,47 @@
+{
+  "nodes": [
+    {
+      "id": "source",
+      "type": "start",
+      "params": {
+        "file_media_type": "video"
+      },
+      "x": 80,
+      "y": 160
+    },
+    {
+      "id": "clip",
+      "type": "clip",
+      "params": {
+        "start_time": 2.0,
+        "end_time": 8.0
+      },
+      "x": 380,
+      "y": 160
+    },
+    {
+      "id": "output",
+      "type": "output",
+      "params": {
+        "format": "keep",
+        "naming_mode": "suffix",
+        "naming_value": "_clip",
+        "output_dir": ""
+      },
+      "x": 700,
+      "y": 160
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "source",
+      "to": "clip"
+    },
+    {
+      "id": "c2",
+      "from": "clip",
+      "to": "output"
+    }
+  ]
+}

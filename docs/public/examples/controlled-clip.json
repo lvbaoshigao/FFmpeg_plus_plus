@@ -1,0 +1,76 @@
+{
+  "nodes": [
+    {
+      "id": "source",
+      "type": "start",
+      "params": {
+        "file_media_type": "video"
+      },
+      "x": 80,
+      "y": 160
+    },
+    {
+      "id": "clip",
+      "type": "clip",
+      "params": {
+        "start_time": 2.0,
+        "end_time": 8.0
+      },
+      "x": 380,
+      "y": 160
+    },
+    {
+      "id": "output",
+      "type": "output",
+      "params": {
+        "format": "keep",
+        "naming_mode": "suffix",
+        "naming_value": "_clip",
+        "output_dir": ""
+      },
+      "x": 700,
+      "y": 160
+    },
+    {
+      "id": "enabled",
+      "type": "start",
+      "params": {},
+      "x": 100,
+      "y": 400,
+      "gate": "const1"
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "source",
+      "to": "clip"
+    },
+    {
+      "id": "c2",
+      "from": "clip",
+      "to": "output"
+    },
+    {
+      "id": "c3",
+      "from": "enabled",
+      "to": "clip",
+      "kind": "control"
+    }
+  ],
+  "logicBlocks": [
+    {
+      "id": "group1",
+      "type": "group",
+      "name": "截取步骤",
+      "childNodeIds": [
+        "clip"
+      ],
+      "params": {},
+      "x": 330,
+      "y": 110,
+      "width": 290,
+      "height": 190
+    }
+  ]
+}

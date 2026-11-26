@@ -1,0 +1,48 @@
+{
+  "nodes": [
+    {
+      "id": "source",
+      "type": "start",
+      "params": {
+        "file_media_type": "audio"
+      },
+      "x": 80,
+      "y": 160
+    },
+    {
+      "id": "wave",
+      "type": "audioWaveform",
+      "params": {
+        "width": 1280,
+        "height": 720,
+        "output_format": "png"
+      },
+      "x": 380,
+      "y": 160
+    },
+    {
+      "id": "output",
+      "type": "output",
+      "params": {
+        "format": "keep",
+        "naming_mode": "suffix",
+        "naming_value": "_waveform",
+        "output_dir": ""
+      },
+      "x": 700,
+      "y": 160
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "source",
+      "to": "wave"
+    },
+    {
+      "id": "c2",
+      "from": "wave",
+      "to": "output"
+    }
+  ]
+}

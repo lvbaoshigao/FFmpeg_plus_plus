@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FFmpeg++ 教程节点图编写约定",
+  "description": "教程提供的结构提示，不是应用完整执行校验器。节点参数仍需按具体节点填写。",
+  "type": "object",
+  "required": [
+    "nodes",
+    "connections"
+  ],
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "connections": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/connection"
+      }
+    },
+    "logicBlocks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/block"
+      }
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "params",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "enum": [
+            "start",
+            "avProcess",
+            "subtitle",
+            "clip",
+            "frame",
+            "speed",
+            "imageConvert",
+            "audioConvert",
+            "audioQuality",
+            "audioSpeed",
+            "audioVolume",
+            "audioCompressor",
+            "audioMetadata",
+            "extractAudio",
+            "concatMedia",
+            "imageToVideo",
+            "imageCrop",
+            "imageRotate",
+            "imageScale",
+            "imageBrightness",
+            "imageNoise",
+            "imageSharpen",
+            "imageDenoise",
+            "imageChannelExtract",
+            "videoCrop",
+            "videoFilter",
+            "videoGeometry",
+            "videoOverlay",
+            "audioFade",
+            "imageAdjust",
+            "mediaConvert",
+            "mediaScale",
+            "mediaCrop",
+            "mediaRotate",
+            "mediaColor",
+            "mediaSharpen",
+            "mediaOverlay",
+            "output",
+            "imageCompress",
+            "audioNormalize",
+            "audioNoiseGate",
+            "videoFrameRate",
+            "metadataStrip",
+            "audioDenoise",
+            "audioSilenceTrim",
+            "videoDeinterlace",
+            "audioSpectrum",
+            "audioWaveform",
+            "audioReverse",
+            "videoReverse",
+            "audioEqualizer",
+            "videoFade"
+          ]
+        },
+        "params": {
+          "type": "object"
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "gate": {
+          "enum": [
+            "and",
+            "or",
+            "not",
+            "nand",
+            "nor",
+            "xor",
+            "xnor",
+            "const1",
+            "const0",
+            "timeTrigger",
+            "random",
+            "filenameMatch",
+            "extensionMatch"
+          ]
+        }
+      }
+    },
+    "connection": {
+      "type": "object",
+      "required": [
+        "id",
+        "from",
+        "to"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from": {
+          "type": "string",
+          "minLength": 1
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "data",
+            "control"
+          ],
+          "default": "data"
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "childNodeIds"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "enum": [
+            "loop",
+            "selectiveLoop",
+            "group",
+            "condition"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "childNodeIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "params": {
+          "type": "object"
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    }
+  }
+}
