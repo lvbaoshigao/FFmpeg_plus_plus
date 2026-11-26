@@ -129,6 +129,7 @@ class _QueuePageState extends State<QueuePage> with WidgetsBindingObserver {
         // tasks 已是零拷贝视图（见 AppState.tasks），但显式取一次更直白，
         // 也避免将来有人把 getter 改回 List.unmodifiable 时又退化成 4 次拷贝。
         final tasks = state.tasks;
+        if (tasks.isEmpty) _taskCardWidgets.clear();
         final s = AppStrings.of(state.config.language);
         return Scaffold(
           backgroundColor: Colors.transparent,

@@ -121,4 +121,15 @@ if(FFMPEGPP_BUILD_TESTS)
         target_compile_options(fppx_test PRIVATE -Wall)
     endif()
     add_test(NAME fppx_test COMMAND fppx_test)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(
+        NAME generate_fppx_fixtures
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/gen_fixtures.py
+    )
+    set_tests_properties(generate_fppx_fixtures PROPERTIES
+        FIXTURES_SETUP fppx_legacy_fixture
+    )
+    set_tests_properties(fppx_test PROPERTIES
+        FIXTURES_REQUIRED fppx_legacy_fixture
+    )
 endif()

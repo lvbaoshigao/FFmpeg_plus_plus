@@ -136,6 +136,22 @@ class AppState extends ChangeNotifier {
   // 结构性变化（增删/进入处理/终态）后防抖落盘；进度心跳不落盘。
   Timer? _taskPersistTimer;
   static const int _maxPersistedTasks = 200;
+  static int _boundedTaskConcurrency(int requested, {required bool mobile}) {
+    if (requested <= 0) return mobile ? 2 : 4;
+    return requested.clamp(1, 8).toInt();
+  }
+
+  @visibleForTesting
+  static int boundedTaskConcurrencyForTest(
+    int requested, {
+    required bool mobile,
+  }) => _boundedTaskConcurrency(requested, mobile: mobile);
+
+  int get _taskConcurrencyLimit => _boundedTaskConcurrency(
+    config.maxConcurrentTasks,
+    mobile: isMobilePlatform,
+  );
+
   final Set<String> _runningTaskIds = {};
   bool get processing => _runningTaskIds.isNotEmpty;
   String? _currentTaskId;
@@ -241,11 +257,14 @@ class AppState extends ChangeNotifier {
             final bucket = task.progress.clamp(0, 100) ~/ 10;
             if (_traceProgressBuckets[entry.key] != bucket) {
               _traceProgressBuckets[entry.key] = bucket;
-              span?.record('task.progress', details: {
-                'percent': task.progress,
-                'stepIndex': task.currentCallIndex + 1,
-                'frame': task.frame,
-              });
+              span?.record(
+                'task.progress',
+                details: {
+                  'percent': task.progress,
+                  'stepIndex': task.currentCallIndex + 1,
+                  'frame': task.frame,
+                },
+              );
             }
           }
         }
@@ -427,12 +446,15 @@ class AppState extends ChangeNotifier {
     try {
       await configService.load();
       diagnosticTrace.setEnabled(config.veryVerboseLogs);
-      span = diagnosticTrace.begin('app.initialize', details: {
-        'platform': Platform.operatingSystem,
-        'probeThreads': config.probeThreads,
-        'concurrency': config.maxConcurrentTasks,
-        'mcpEnabled': config.mcpEnabled,
-      });
+      span = diagnosticTrace.begin(
+        'app.initialize',
+        details: {
+          'platform': Platform.operatingSystem,
+          'probeThreads': config.probeThreads,
+          'concurrency': config.maxConcurrentTasks,
+          'mcpEnabled': config.mcpEnabled,
+        },
+      );
       final ready = await _initInternal(serverScript);
       span?.finish(success: ready);
     } catch (e, st) {
@@ -743,7 +765,10 @@ class AppState extends ChangeNotifier {
   }
 
   void selectNav(int i) {
-    diagnosticTrace.record('ui.navigate', details: {'fromIndex': _selectedNav, 'toIndex': i});
+    diagnosticTrace.record(
+      'ui.navigate',
+      details: {'fromIndex': _selectedNav, 'toIndex': i},
+    );
     _selectedNav = i;
     notifyListeners();
   }
@@ -762,44 +787,55 @@ class AppState extends ChangeNotifier {
     );
   }
 
+  bool _trimTerminalTaskHistory() {
+    if (_tasks.length <= _maxPersistedTasks) return false;
+    final terminal = _tasks
+        .where(
+          (t) =>
+              t.status == TaskStatus.completed ||
+              t.status == TaskStatus.failed ||
+              t.status == TaskStatus.cancelled,
+        )
+        .toList();
+    final active = _tasks
+        .where(
+          (t) =>
+              t.status != TaskStatus.completed &&
+              t.status != TaskStatus.failed &&
+              t.status != TaskStatus.cancelled,
+        )
+        .toList();
+    final terminalBudget = (_maxPersistedTasks - active.length).clamp(
+      0,
+      terminal.length,
+    );
+    final keepIds = {
+      ...active.map((t) => t.id),
+      ...terminal.skip(terminal.length - terminalBudget).map((t) => t.id),
+    };
+    final removed = _tasks.where((t) => !keepIds.contains(t.id)).toList();
+    if (removed.isEmpty) return false;
+    _tasks.removeWhere((t) => !keepIds.contains(t.id));
+    for (final task in removed) {
+      _cleanupTempImportFile(task.inputPath);
+    }
+    return true;
+  }
+
+  @visibleForTesting
+  void trimTerminalTaskHistoryForTest() {
+    if (_trimTerminalTaskHistory()) _tasksNotify();
+  }
+
   /// 立即把当前任务队列写入磁盘（退出前 / 防抖触发）。
   Future<void> _persistTasksNow() async {
     _taskPersistTimer?.cancel();
     _taskPersistTimer = null;
     try {
-      // 超出上限时优先丢弃最早的终态任务，保留 pending 与最新结果
-      List<TaskInfo> list = _tasks;
-      if (_tasks.length > _maxPersistedTasks) {
-        final terminal = _tasks
-            .where(
-              (t) =>
-                  t.status == TaskStatus.completed ||
-                  t.status == TaskStatus.failed ||
-                  t.status == TaskStatus.cancelled,
-            )
-            .toList();
-        // 暂停中的任务仍是「活动任务」：它占着运行槽位、ffmpeg 进程还活着，
-        // 落盘时不能被当成可丢弃的终态记录裁掉。
-        final active = _tasks
-            .where(
-              (t) =>
-                  t.status == TaskStatus.pending ||
-                  t.status == TaskStatus.processing ||
-                  t.status == TaskStatus.paused,
-            )
-            .toList();
-        final terminalBudget = (_maxPersistedTasks - active.length).clamp(
-          0,
-          terminal.length,
-        );
-        final keptTerminal = terminal.sublist(terminal.length - terminalBudget);
-        final keepIds = {
-          ...active.map((t) => t.id),
-          ...keptTerminal.map((t) => t.id),
-        };
-        list = _tasks.where((t) => keepIds.contains(t.id)).toList();
-      }
-      await configService.saveTaskHistory(list.map((t) => t.toJson()).toList());
+      if (_trimTerminalTaskHistory()) _tasksNotify();
+      await configService.saveTaskHistory(
+        _tasks.map((t) => t.toJson()).toList(),
+      );
     } catch (_) {}
   }
 
@@ -863,10 +899,13 @@ class AppState extends ChangeNotifier {
   Future<int> _purgeImportCaches({
     Duration? thumbOlderThan = const Duration(days: 3),
   }) async {
-    final span = diagnosticTrace.begin('storage.cache_purge', details: {
-      'manual': thumbOlderThan == null,
-      'maxAgeDays': thumbOlderThan?.inDays,
-    });
+    final span = diagnosticTrace.begin(
+      'storage.cache_purge',
+      details: {
+        'manual': thumbOlderThan == null,
+        'maxAgeDays': thumbOlderThan?.inDays,
+      },
+    );
     var freed = 0;
     var deleted = 0;
     var retained = 0;
@@ -874,11 +913,13 @@ class AppState extends ChangeNotifier {
     void recordFailure(Object error) {
       failures++;
       if (failures <= 3) {
-        span?.record('storage.cache_purge.failure', details: {
-          'failureType': error.runtimeType.toString(),
-        });
+        span?.record(
+          'storage.cache_purge.failure',
+          details: {'failureType': error.runtimeType.toString()},
+        );
       }
     }
+
     try {
       final referenced = <String>{
         for (final v in _videos) v.filepath,
@@ -918,9 +959,13 @@ class AppState extends ChangeNotifier {
               await ent.delete();
               freed += len;
               deleted++;
-            } catch (error) { recordFailure(error); }
+            } catch (error) {
+              recordFailure(error);
+            }
           }
-        } catch (error) { recordFailure(error); }
+        } catch (error) {
+          recordFailure(error);
+        }
       }
 
       final cacheDir = Directory.systemTemp.path;
@@ -957,14 +1002,21 @@ class AppState extends ChangeNotifier {
           '${docsDir.path}${Platform.pathSeparator}ffmpegpp_imports',
           (n) => true,
         );
-      } catch (error) { recordFailure(error); }
-    } catch (error) { recordFailure(error); }
-    span?.finish(success: failures == 0, details: {
-      'byteCount': freed,
-      'deletedCount': deleted,
-      'retainedCount': retained,
-      'failureCount': failures,
-    });
+      } catch (error) {
+        recordFailure(error);
+      }
+    } catch (error) {
+      recordFailure(error);
+    }
+    span?.finish(
+      success: failures == 0,
+      details: {
+        'byteCount': freed,
+        'deletedCount': deleted,
+        'retainedCount': retained,
+        'failureCount': failures,
+      },
+    );
     return freed;
   }
 
@@ -983,10 +1035,13 @@ class AppState extends ChangeNotifier {
       _purgeImportCaches(thumbOlderThan: null);
 
   Future<void> addVideos(List<String> filepaths) async {
-    final span = diagnosticTrace.begin('media_import', details: {
-      'itemCount': filepaths.length,
-      'probeThreads': config.probeThreads,
-    });
+    final span = diagnosticTrace.begin(
+      'media_import',
+      details: {
+        'itemCount': filepaths.length,
+        'probeThreads': config.probeThreads,
+      },
+    );
     _probeCount++;
     notifyListeners();
     addLog('添加 ${filepaths.length} 个文件', category: 'info');
@@ -1001,14 +1056,23 @@ class AppState extends ChangeNotifier {
       }
       notifyListeners();
       await _probeAll(entries);
-      final failed = entries.where((entry) => _probeErrors.containsKey(entry.filepath)).length;
-      span?.finish(success: failed == 0, details: {
-        'itemCount': entries.length,
-        'failedCount': failed,
-        'succeededCount': entries.length - failed,
-      });
+      final failed = entries
+          .where((entry) => _probeErrors.containsKey(entry.filepath))
+          .length;
+      span?.finish(
+        success: failed == 0,
+        details: {
+          'itemCount': entries.length,
+          'failedCount': failed,
+          'succeededCount': entries.length - failed,
+        },
+      );
     } catch (error) {
-      span?.finish(success: false, error: error, details: {'itemCount': entries.length});
+      span?.finish(
+        success: false,
+        error: error,
+        details: {'itemCount': entries.length},
+      );
       rethrow;
     } finally {
       _probeCount--;
@@ -1074,7 +1138,10 @@ class AppState extends ChangeNotifier {
     addLog('探测: ${vf.filename}', category: 'info');
     try {
       final resp = await backend.probe(vf.filepath);
-      span?.record('media.probe.response', details: {'responseFields': resp.length});
+      span?.record(
+        'media.probe.response',
+        details: {'responseFields': resp.length},
+      );
       if (resp['success'] == true) {
         final info = resp['data'] as Map<String, dynamic>;
         final idx = _videos.indexWhere((v) => v.id == vf.id);
@@ -1109,11 +1176,14 @@ class AppState extends ChangeNotifier {
           addLog('  字幕: ${info['subtitle_count']} 轨道', category: 'ffmpeg');
         }
         if (info['is_hdr'] == true) addLog('  HDR: 是', category: 'ffmpeg');
-        span?.finish(success: true, details: {
-          'applied': idx >= 0,
-          'hdr': info['is_hdr'] == true,
-          'hasSubtitles': info['has_subtitles'] == true,
-        });
+        span?.finish(
+          success: true,
+          details: {
+            'applied': idx >= 0,
+            'hdr': info['is_hdr'] == true,
+            'hasSubtitles': info['has_subtitles'] == true,
+          },
+        );
       } else {
         span?.finish(success: false, details: {'reason': 'backend_failure'});
         _probeErrors[vf.filepath] = resp['error'] as String? ?? 'Unknown';
@@ -1233,10 +1303,13 @@ class AppState extends ChangeNotifier {
 
   Future<void> addContainer(String name, List<String> filepaths) async {
     if (filepaths.isEmpty) return;
-    final span = diagnosticTrace.begin('media.container_import', details: {
-      'itemCount': filepaths.length,
-      'probeThreads': config.probeThreads,
-    });
+    final span = diagnosticTrace.begin(
+      'media.container_import',
+      details: {
+        'itemCount': filepaths.length,
+        'probeThreads': config.probeThreads,
+      },
+    );
     _probeCount++;
     notifyListeners();
     final entries = <VideoFile>[]; // [FIX H-4] 声明在 try 外，finally 后仍可记日志
@@ -1262,10 +1335,13 @@ class AppState extends ChangeNotifier {
       );
       notifyListeners();
       await _probeAll(entries);
-      final failed = entries.where((entry) => _probeErrors.containsKey(entry.filepath)).length;
-      span?.finish(success: failed == 0, details: {
-        'itemCount': entries.length, 'failedCount': failed,
-      });
+      final failed = entries
+          .where((entry) => _probeErrors.containsKey(entry.filepath))
+          .length;
+      span?.finish(
+        success: failed == 0,
+        details: {'itemCount': entries.length, 'failedCount': failed},
+      );
     } catch (error) {
       span?.finish(success: false, error: error);
       rethrow;
@@ -1347,7 +1423,10 @@ class AppState extends ChangeNotifier {
     String containerId,
     List<String> filepaths,
   ) async {
-    final span = diagnosticTrace.begin('media.container_append', details: {'itemCount': filepaths.length});
+    final span = diagnosticTrace.begin(
+      'media.container_append',
+      details: {'itemCount': filepaths.length},
+    );
     try {
       await _addFilesToContainerInternal(containerId, filepaths);
       final failed = filepaths.where(_probeErrors.containsKey).length;
@@ -1359,7 +1438,8 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _addFilesToContainerInternal(
-    String containerId, List<String> filepaths,
+    String containerId,
+    List<String> filepaths,
   ) async {
     final idx = _containers.indexWhere((c) => c.id == containerId);
     if (idx < 0 || filepaths.isEmpty) return;
@@ -1733,17 +1813,23 @@ class AppState extends ChangeNotifier {
   void addGraphTasksForTest(VideoFile video) => _addTasksFromGraph(video);
 
   void _addTasksFromGraph(VideoFile video) {
-    final span = diagnosticTrace.begin('pipeline.plan', details: {
-      'nodeCount': video.pipelineGraph.nodes.length,
-      'connectionCount': video.pipelineGraph.connections.length,
-    });
+    final span = diagnosticTrace.begin(
+      'pipeline.plan',
+      details: {
+        'nodeCount': video.pipelineGraph.nodes.length,
+        'connectionCount': video.pipelineGraph.connections.length,
+      },
+    );
     final before = _tasks.length;
     try {
       _buildTasksFromGraph(video, span);
-      span?.finish(success: _tasks.length > before, details: {
-        'createdCount': _tasks.length - before,
-        'queueDepth': _tasks.length,
-      });
+      span?.finish(
+        success: _tasks.length > before,
+        details: {
+          'createdCount': _tasks.length - before,
+          'queueDepth': _tasks.length,
+        },
+      );
     } catch (error) {
       span?.finish(success: false, error: error);
       rethrow;
@@ -1781,12 +1867,15 @@ class AppState extends ChangeNotifier {
       );
       // buildBackendCalls 返回 null 表示执行计划构建失败（如遇到未知/不支持的
       // 节点类型），此时必须终止而不是继续入队一条断裂的链路（H-2）。
-      span?.record('pipeline.plan.built', details: {
-        'planIndex': i + 1,
-        'stepCount': calls?.length ?? 0,
-        'warningCount': plan.warnings.length,
-        'valid': calls != null,
-      });
+      span?.record(
+        'pipeline.plan.built',
+        details: {
+          'planIndex': i + 1,
+          'stepCount': calls?.length ?? 0,
+          'warningCount': plan.warnings.length,
+          'valid': calls != null,
+        },
+      );
       if (calls == null) {
         // plan.warnings 里可能是「条件不满足 → 按设置中止」这类明确原因，
         // 不再统一显示成「可能包含不支持的节点类型」
@@ -1918,9 +2007,7 @@ class AppState extends ChangeNotifier {
   }
 
   void processSingleTask(String tid) {
-    final limit = config.maxConcurrentTasks == 0
-        ? 999
-        : config.maxConcurrentTasks;
+    final limit = _taskConcurrencyLimit;
     if (_runningTaskIds.length >= limit) return;
     final i = _tasks.indexWhere((t) => t.id == tid);
     if (i < 0 || _tasks[i].status != TaskStatus.pending) return;
@@ -1934,15 +2021,22 @@ class AppState extends ChangeNotifier {
   }
 
   void processAllTasks() {
-    diagnosticTrace.record('queue.start', details: {
-      'queueDepth': _tasks.length,
-      'concurrency': config.maxConcurrentTasks,
-      'activeCount': _runningTaskIds.length,
-    });
+    diagnosticTrace.record(
+      'queue.start',
+      details: {
+        'queueDepth': _tasks.length,
+        'concurrency': config.maxConcurrentTasks,
+        'activeCount': _runningTaskIds.length,
+      },
+    );
     _cancelRequested = false;
     // Repeated starts simply fill available slots.
     processNextTask();
   }
+
+  /// 仅测试用：立即执行任务历史持久化与终态记录裁剪。
+  @visibleForTesting
+  Future<void> persistTasksNowForTest() => _persistTasksNow();
 
   /// 仅测试用：直接注入任务实例（模拟 pending/failed/流水线任务进队列页）。
   @visibleForTesting
@@ -1962,14 +2056,15 @@ class AppState extends ChangeNotifier {
   /// generation is retained for source compatibility and intentionally ignored.
   Future<void> processNextTask({int? generation}) async {
     if (_cancelRequested || _disposed) return;
-    diagnosticTrace.record('queue.schedule', details: {
-      'queueDepth': _tasks.length,
-      'activeCount': _runningTaskIds.length,
-      'concurrency': config.maxConcurrentTasks,
-    });
-    final limit = config.maxConcurrentTasks == 0
-        ? 999
-        : config.maxConcurrentTasks;
+    diagnosticTrace.record(
+      'queue.schedule',
+      details: {
+        'queueDepth': _tasks.length,
+        'activeCount': _runningTaskIds.length,
+        'concurrency': config.maxConcurrentTasks,
+      },
+    );
+    final limit = _taskConcurrencyLimit;
     while (!_cancelRequested && !_disposed && _runningTaskIds.length < limit) {
       final pi = _tasks.indexWhere(
         (t) =>
@@ -1999,7 +2094,9 @@ class AppState extends ChangeNotifier {
       details: {
         'kind': task.pipelineCalls?.isNotEmpty == true
             ? 'pipeline'
-            : task.command?.isNotEmpty == true ? 'custom' : 'transcode',
+            : task.command?.isNotEmpty == true
+            ? 'custom'
+            : 'transcode',
         'stepCount': task.pipelineCalls?.length ?? 0,
         'activeCount': _runningTaskIds.length,
       },
@@ -2326,13 +2423,33 @@ class AppState extends ChangeNotifier {
   // Imported graphs can contain arbitrary actions; expose only dispatch labels.
   static String _tracePipelineAction(String action) {
     const known = {
-      'transcode', 'subtitle', 'extract_frame', 'extract_frames_range',
-      'extract_frames_all', 'audio_spectrum', 'audio_waveform', 'video_reverse',
-      'video_fade', 'image_convert', 'image_compress', 'metadata_strip',
-      'image_crop', 'image_rotate', 'image_scale', 'image_brightness',
-      'image_noise', 'image_sharpen', 'image_denoise', 'image_channel_extract',
-      'image_adjust', 'video_crop', 'extract_audio', 'audio_metadata',
-      'concat', 'image_sequence', '_file_copy',
+      'transcode',
+      'subtitle',
+      'extract_frame',
+      'extract_frames_range',
+      'extract_frames_all',
+      'audio_spectrum',
+      'audio_waveform',
+      'video_reverse',
+      'video_fade',
+      'image_convert',
+      'image_compress',
+      'metadata_strip',
+      'image_crop',
+      'image_rotate',
+      'image_scale',
+      'image_brightness',
+      'image_noise',
+      'image_sharpen',
+      'image_denoise',
+      'image_channel_extract',
+      'image_adjust',
+      'video_crop',
+      'extract_audio',
+      'audio_metadata',
+      'concat',
+      'image_sequence',
+      '_file_copy',
     };
     return known.contains(action) ? action : 'other';
   }
@@ -2550,12 +2667,15 @@ class AppState extends ChangeNotifier {
         call.params['_owned_output'] = true;
       }
     }
-    _taskTraces[run]?.record('pipeline.expanded', details: {
-      'sourceSteps': realCalls.length,
-      'expandedSteps': expandedCalls.length,
-      'cleanupCount': cleanupCalls.length,
-      'privateWorkspace': workspace != null,
-    });
+    _taskTraces[run]?.record(
+      'pipeline.expanded',
+      details: {
+        'sourceSteps': realCalls.length,
+        'expandedSteps': expandedCalls.length,
+        'cleanupCount': cleanupCalls.length,
+        'privateWorkspace': workspace != null,
+      },
+    );
     addLog('节点图任务: ${expandedCalls.length} 步', category: 'info');
 
     // 初始化每步进度追踪
@@ -2643,18 +2763,26 @@ class AppState extends ChangeNotifier {
       // resp 带初值，保证「重试耗尽后 break 出来」也能安全读取。
       Map<String, dynamic> resp = const <String, dynamic>{};
       final stepTrace = _taskTraces[run]?.enabled == true
-          ? diagnosticTrace.begin('pipeline.step', details: {
-              'taskOpId': _taskTraces[run]!.id,
-              'stepIndex': ci + 1,
-              'stepCount': expandedCalls.length,
-              'action': _tracePipelineAction(call.action),
-              'retries': call.retries,
-              'errorPolicy': call.errorPolicy == 'continue' ? 'continue' : 'stop',
-            })
+          ? diagnosticTrace.begin(
+              'pipeline.step',
+              details: {
+                'taskOpId': _taskTraces[run]!.id,
+                'stepIndex': ci + 1,
+                'stepCount': expandedCalls.length,
+                'action': _tracePipelineAction(call.action),
+                'retries': call.retries,
+                'errorPolicy': call.errorPolicy == 'continue'
+                    ? 'continue'
+                    : 'stop',
+              },
+            )
           : null;
       try {
         for (var attempt = 0; ; attempt++) {
-          stepTrace?.record('pipeline.step.attempt', details: {'attempt': attempt + 1});
+          stepTrace?.record(
+            'pipeline.step.attempt',
+            details: {'attempt': attempt + 1},
+          );
           final p = call.params;
           run.throwIfCancelled();
           switch (call.action) {
@@ -2806,10 +2934,13 @@ class AppState extends ChangeNotifier {
           run.throwIfCancelled();
           // 成功即结束；否则还有重试次数就再跑一遍（参数未变，重跑是安全的）
           if (resp['success'] == true || attempt >= call.retries) break;
-          stepTrace?.record('pipeline.step.retry', details: {
-            'attempt': attempt + 1,
-            'remainingRetries': call.retries - attempt,
-          });
+          stepTrace?.record(
+            'pipeline.step.retry',
+            details: {
+              'attempt': attempt + 1,
+              'remainingRetries': call.retries - attempt,
+            },
+          );
           addLog(
             '步骤 ${ci + 1} 重试 ${attempt + 1}/${call.retries}: ${call.action}',
             category: 'warning',
@@ -2840,7 +2971,10 @@ class AppState extends ChangeNotifier {
         // 末步永远不允许跳过 —— 跳过「写最终产物」那一步等于任务没有产物。
         final isLastStep = ci == expandedCalls.length - 1;
         if (call.errorPolicy == 'continue' && !isLastStep) {
-          _taskTraces[run]?.record('pipeline.step.skip', details: {'stepIndex': ci + 1});
+          _taskTraces[run]?.record(
+            'pipeline.step.skip',
+            details: {'stepIndex': ci + 1},
+          );
           addLog(
             '步骤 ${ci + 1} 失败，已按「跳过继续」策略忽略: ${resp['error']}',
             category: 'warning',
@@ -4302,14 +4436,16 @@ class AppState extends ChangeNotifier {
   }
 
   Future<bool> _setTaskPausedState(String taskId, bool pause) async {
-    final span = diagnosticTrace.begin(pause ? 'task.pause' : 'task.resume', details: {
-      'taskOpId': _taskTraces[_taskRuns[taskId]]?.id,
-    });
+    final span = diagnosticTrace.begin(
+      pause ? 'task.pause' : 'task.resume',
+      details: {'taskOpId': _taskTraces[_taskRuns[taskId]]?.id},
+    );
     try {
       final changed = await _applyTaskPausedState(taskId, pause);
-      span?.finish(success: changed, details: {
-        'reason': changed ? 'applied' : 'not_signalled_or_stale',
-      });
+      span?.finish(
+        success: changed,
+        details: {'reason': changed ? 'applied' : 'not_signalled_or_stale'},
+      );
       return changed;
     } catch (error) {
       span?.finish(success: false, error: error);
@@ -4382,10 +4518,13 @@ class AppState extends ChangeNotifier {
   }
 
   void cancelProcessing() {
-    diagnosticTrace.record('queue.cancel', details: {
-      'activeCount': _runningTaskIds.length,
-      'queueDepth': _tasks.length,
-    });
+    diagnosticTrace.record(
+      'queue.cancel',
+      details: {
+        'activeCount': _runningTaskIds.length,
+        'queueDepth': _tasks.length,
+      },
+    );
     // 设置取消标记，阻止 processNextTask 继续拉取队列里剩余的 pending 任务；
     // 否则正在跑的 .then 回调回来后看到还有 pending 任务就会立刻重启队列，
     // 「停止所有」就失效了。
@@ -4431,7 +4570,10 @@ class AppState extends ChangeNotifier {
     if (!_isLiveStatus(st) && st != TaskStatus.pending) return;
     // [FIX H-3] 先置状态（copyWith cancelled），再写取消标记：避免「置 processing」与
     // 「写 cancelledTaskIds」之间的竞态窗口丢失取消意图。
-    _taskTraces[_taskRuns[taskId]]?.record('task.cancel', details: {'previousStatus': st.name});
+    _taskTraces[_taskRuns[taskId]]?.record(
+      'task.cancel',
+      details: {'previousStatus': st.name},
+    );
     _tasks[i] = _tasks[i].copyWith(status: TaskStatus.cancelled);
     _taskRuns[taskId]?.cancel();
     _cancelledTaskIds.add(taskId);
@@ -4536,19 +4678,25 @@ class AppState extends ChangeNotifier {
       }
       diagnosticTrace.setEnabled(updated.veryVerboseLogs);
       if (!wasEnabled && diagnosticTrace.enabled) {
-        diagnosticTrace.record('diagnostics.enabled', details: {
-          'platform': Platform.operatingSystem,
-          'probeThreads': updated.probeThreads,
-          'concurrency': updated.maxConcurrentTasks,
-          'saveLogs': updated.saveLogs,
-          'queueDepth': _tasks.length,
-        });
+        diagnosticTrace.record(
+          'diagnostics.enabled',
+          details: {
+            'platform': Platform.operatingSystem,
+            'probeThreads': updated.probeThreads,
+            'concurrency': updated.maxConcurrentTasks,
+            'saveLogs': updated.saveLogs,
+            'queueDepth': _tasks.length,
+          },
+        );
       } else {
-        diagnosticTrace.record('settings.updated', details: {
-          'probeThreads': updated.probeThreads,
-          'concurrency': updated.maxConcurrentTasks,
-          'saveLogs': updated.saveLogs,
-        });
+        diagnosticTrace.record(
+          'settings.updated',
+          details: {
+            'probeThreads': updated.probeThreads,
+            'concurrency': updated.maxConcurrentTasks,
+            'saveLogs': updated.saveLogs,
+          },
+        );
       }
       return updated;
     });
@@ -4561,13 +4709,19 @@ class AppState extends ChangeNotifier {
       updateConfig((current) => current..veryVerboseLogs = enabled);
 
   Future<Map<String, dynamic>> recheckEnv() async {
-    final span = diagnosticTrace.begin('environment.check', details: {
-      'customFfmpeg': config.ffmpegPath.isNotEmpty,
-      'customFfprobe': config.ffprobePath.isNotEmpty,
-    });
+    final span = diagnosticTrace.begin(
+      'environment.check',
+      details: {
+        'customFfmpeg': config.ffmpegPath.isNotEmpty,
+        'customFfprobe': config.ffprobePath.isNotEmpty,
+      },
+    );
     try {
       final result = await _recheckEnvInternal();
-      span?.finish(success: _envOk, details: {'backendRunning': pythonProcess.isRunning});
+      span?.finish(
+        success: _envOk,
+        details: {'backendRunning': pythonProcess.isRunning},
+      );
       return result;
     } catch (error) {
       span?.finish(success: false, error: error);
@@ -4632,9 +4786,10 @@ class AppState extends ChangeNotifier {
 
   Future<bool> startMcpServer() async {
     if (_mcpServer != null) return true;
-    final span = diagnosticTrace.begin('mcp.server.start', details: {
-      'port': config.mcpPort,
-    });
+    final span = diagnosticTrace.begin(
+      'mcp.server.start',
+      details: {'port': config.mcpPort},
+    );
     try {
       final port = config.mcpPort;
       // 监听地址：默认仅回环（本机安全），用户可在设置中改为 0.0.0.0 暴露到局域网
@@ -4647,10 +4802,10 @@ class AppState extends ChangeNotifier {
       // 暴露到局域网时必须校验 Bearer token，否则任何人都可枚举本机文件系统
       _mcpToken = isLoopback ? null : _generateMcpToken();
       _mcpServer = await HttpServer.bind(addr, port);
-      span?.finish(success: true, details: {
-        'loopback': isLoopback,
-        'requiresAuth': _mcpToken != null,
-      });
+      span?.finish(
+        success: true,
+        details: {'loopback': isLoopback, 'requiresAuth': _mcpToken != null},
+      );
       mcpError = null;
       if (isLoopback) {
         addLog('[MCP] 服务已启动 (仅本机)，端口: $port', category: 'info');
@@ -4664,11 +4819,14 @@ class AppState extends ChangeNotifier {
       server.listen(
         (req) {
           if (_activeMcpRequests >= _maxConcurrentMcpRequests) {
-            diagnosticTrace.record('mcp.request.rejected', details: {
-              'reason': 'busy',
-              'activeCount': _activeMcpRequests,
-              'httpStatus': HttpStatus.serviceUnavailable,
-            });
+            diagnosticTrace.record(
+              'mcp.request.rejected',
+              details: {
+                'reason': 'busy',
+                'activeCount': _activeMcpRequests,
+                'httpStatus': HttpStatus.serviceUnavailable,
+              },
+            );
             req.response
               ..statusCode = HttpStatus.serviceUnavailable
               ..headers.contentType = ContentType.json
@@ -4740,24 +4898,34 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _handleMcpRequest(HttpRequest req) async {
-    final span = diagnosticTrace.begin('mcp.request', details: {
-      'method': const {'POST', 'GET', 'DELETE', 'OPTIONS'}.contains(req.method) ? req.method : 'other',
-      'activeCount': _activeMcpRequests,
-      'contentLength': req.contentLength,
-      'requiresAuth': _mcpToken != null,
-    });
+    final span = diagnosticTrace.begin(
+      'mcp.request',
+      details: {
+        'method':
+            const {'POST', 'GET', 'DELETE', 'OPTIONS'}.contains(req.method)
+            ? req.method
+            : 'other',
+        'activeCount': _activeMcpRequests,
+        'contentLength': req.contentLength,
+        'requiresAuth': _mcpToken != null,
+      },
+    );
     try {
       await _handleMcpRequestBody(req, span);
-      span?.finish(success: req.response.statusCode < 400, details: {
-        'httpStatus': req.response.statusCode,
-      });
+      span?.finish(
+        success: req.response.statusCode < 400,
+        details: {'httpStatus': req.response.statusCode},
+      );
     } catch (error) {
       span?.finish(success: false, error: error);
       rethrow;
     }
   }
 
-  Future<void> _handleMcpRequestBody(HttpRequest req, DiagnosticSpan? span) async {
+  Future<void> _handleMcpRequestBody(
+    HttpRequest req,
+    DiagnosticSpan? span,
+  ) async {
     addLog('[MCP] ${req.method} ${req.uri.path}', category: 'info');
     if (req.method != 'POST') {
       req.response
@@ -4835,11 +5003,14 @@ class AppState extends ChangeNotifier {
       }
       final body = utf8.decode(all.takeBytes(), allowMalformed: true);
       final decoded = jsonDecode(body);
-      span?.record('mcp.request.decoded', details: {
-        'bodyChars': body.length,
-        'batch': decoded is List,
-        'itemCount': decoded is List ? decoded.length : 1,
-      });
+      span?.record(
+        'mcp.request.decoded',
+        details: {
+          'bodyChars': body.length,
+          'batch': decoded is List,
+          'itemCount': decoded is List ? decoded.length : 1,
+        },
+      );
 
       // JSON-RPC 2.0 批量请求（MCP 规范允许）：数组中的每个请求各产生一条响应，
       // 通知（无 id）不产生响应；全部是通知时按规范返回 202 空体。
@@ -4919,14 +5090,20 @@ class AppState extends ChangeNotifier {
   ) async {
     final method = json['method'];
     const methods = {
-      'initialize': 'initialize', 'ping': 'ping',
-      'tools/list': 'tools_list', 'tools/call': 'tools_call',
-      'resources/list': 'resources_list', 'resources/read': 'resources_read',
+      'initialize': 'initialize',
+      'ping': 'ping',
+      'tools/list': 'tools_list',
+      'tools/call': 'tools_call',
+      'resources/list': 'resources_list',
+      'resources/read': 'resources_read',
     };
-    final span = diagnosticTrace.begin('mcp.rpc', details: {
-      'method': methods[method] ?? 'other',
-      'notification': json['id'] == null,
-    });
+    final span = diagnosticTrace.begin(
+      'mcp.rpc',
+      details: {
+        'method': methods[method] ?? 'other',
+        'notification': json['id'] == null,
+      },
+    );
     try {
       final result = await _dispatchMcpJsonRpcItem(json);
       final rpcError = result?['error'];
@@ -4935,7 +5112,8 @@ class AppState extends ChangeNotifier {
         success: rpcError == null && (data is! Map || data['isError'] != true),
         details: {
           'responded': result != null,
-          if (rpcError is Map && rpcError['code'] is int) 'rpcCode': rpcError['code'],
+          if (rpcError is Map && rpcError['code'] is int)
+            'rpcCode': rpcError['code'],
         },
       );
       return result;
@@ -5403,16 +5581,24 @@ class AppState extends ChangeNotifier {
     Map<String, dynamic> args,
   ) async {
     final span = diagnosticTrace.enabled
-        ? diagnosticTrace.begin('mcp.tool', details: {
-            'tool': _mcpToolsRawCache.any((tool) => tool['name'] == name) ? name : 'other',
-            'argumentCount': args.length,
-            'allowWrite': config.mcpAllowWrite,
-            'allowFs': config.mcpAllowFsAccess,
-          })
+        ? diagnosticTrace.begin(
+            'mcp.tool',
+            details: {
+              'tool': _mcpToolsRawCache.any((tool) => tool['name'] == name)
+                  ? name
+                  : 'other',
+              'argumentCount': args.length,
+              'allowWrite': config.mcpAllowWrite,
+              'allowFs': config.mcpAllowFsAccess,
+            },
+          )
         : null;
     try {
       final result = await _dispatchMcpTool(name, args);
-      span?.finish(success: !result.$2, details: {'responseChars': result.$1.length});
+      span?.finish(
+        success: !result.$2,
+        details: {'responseChars': result.$1.length},
+      );
       return result;
     } catch (error) {
       span?.finish(success: false, error: error);
@@ -5421,7 +5607,8 @@ class AppState extends ChangeNotifier {
   }
 
   Future<(String, bool)> _dispatchMcpTool(
-    String name, Map<String, dynamic> args,
+    String name,
+    Map<String, dynamic> args,
   ) async {
     // 写操作需在设置里开启 MCP 写入权限（默认只读，防止未经授权的修改）
     const writeTools = {
@@ -5854,9 +6041,10 @@ class AppState extends ChangeNotifier {
   }
 
   void logAiGraphApplied(int nodeCount, int connectionCount) {
-    diagnosticTrace.record('ai.graph.applied', details: {
-      'nodeCount': nodeCount, 'connectionCount': connectionCount,
-    });
+    diagnosticTrace.record(
+      'ai.graph.applied',
+      details: {'nodeCount': nodeCount, 'connectionCount': connectionCount},
+    );
     addLog(
       '[AI] 已应用节点图: $nodeCount 个节点, $connectionCount 条连接',
       category: 'info',
@@ -5889,10 +6077,13 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     if (_disposed) return;
-    diagnosticTrace.record('app.dispose', details: {
-      'activeCount': _runningTaskIds.length,
-      'logCount': _logEntries.length,
-    });
+    diagnosticTrace.record(
+      'app.dispose',
+      details: {
+        'activeCount': _runningTaskIds.length,
+        'logCount': _logEntries.length,
+      },
+    );
     for (final run in _taskRuns.values) {
       run.cancel();
     }

@@ -105,6 +105,10 @@ class AppStrings {
   String get bgReplace => lang == 'zh' ? '更换图片' : 'Replace image';
   String get bgEmptyHint =>
       lang == 'zh' ? '未设置背景，使用主题底色' : 'No background — theme color in use';
+  String get bgAnimationTooLarge =>
+      lang == 'zh'
+          ? '动画壁纸超过安全缩放上限，请先缩小图像尺寸后再导入。'
+          : 'Animated wallpaper exceeds the safe resize limit. Reduce its dimensions first.';
   String get canvasBgLabel => lang == 'zh' ? '画布背景' : 'Canvas Background';
   String get glassBlur => lang == 'zh' ? '模糊' : 'Blur';
   // ── 主题设置（模式 / 主题色 / 背景 / 样式） ──

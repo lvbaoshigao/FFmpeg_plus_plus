@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -31,6 +30,7 @@ import '../services/progress_feature_availability.dart';
 import '../services/refresh_rate.dart';
 import '../services/shell_open.dart';
 import '../services/update_service.dart' as updater;
+import '../services/wallpaper_image_optimizer.dart';
 // 控件高度档位令牌：MCP 卡的输入框/按钮、AI 配置详情页的按钮统一按档位取高度，
 // 不再用 `SizedBox(height: 30)` 压高度（会与主题 v12 内边距打架）
 import '../theme/app_semantic_colors.dart';
@@ -68,6 +68,7 @@ import 'log_page.dart';
 import 'settings_search.dart';
 
 final _s = Platform.pathSeparator;
+const _maxWallpaperSourceBytes = 32 * 1024 * 1024;
 
 /// 应用文档目录（Android 持久化，避免 systemTemp 被系统清空）
 String _androidAppDir() => _cachedAppDir;
@@ -136,57 +137,26 @@ Future<String?> _copyBackgroundOptimized(
   try {
     final srcFile = File(srcPath);
     if (!srcFile.existsSync()) return null;
-    final bytes = await srcFile.readAsBytes();
-
-    // 用 dart:ui 解码原图，获取实际尺寸
-    final codec = await ui.instantiateImageCodec(bytes);
-    final frame = await codec.getNextFrame();
-    final image = frame.image;
-    final srcW = image.width;
-    final srcH = image.height;
-    codec.dispose();
-
-    // 原图小于等于屏幕分辨率：无需缩放，直接走普通复制
-    if (srcW <= maxW && srcH <= maxH) {
-      image.dispose();
+    if (await srcFile.length() > _maxWallpaperSourceBytes) {
       return await _copyToAppDir(srcPath, 'background');
     }
+    final bytes = await srcFile.readAsBytes();
 
-    // 等比缩放到屏幕分辨率内（长边对齐），scale 单一化确保两个方向缩放一致、绝不拉伸
-    final scale = math.min(maxW / srcW, maxH / srcH);
-    final targetW = math.max(1, (srcW * scale).round());
-    final targetH = math.max(1, (srcH * scale).round());
-
-    // 缩放 + 编码（高质量重采样避免下采样变糊；PNG 无损）
-    final recorder = ui.PictureRecorder();
-    final canvas = ui.Canvas(recorder);
-    canvas.scale(scale, scale);
-    canvas.drawImage(
-      image,
-      ui.Offset.zero,
-      ui.Paint()..filterQuality = ui.FilterQuality.high,
+    final optimized = await WallpaperImageOptimizer.optimize(
+      bytes,
+      maxWidth: maxW,
+      maxHeight: maxH,
     );
-    final picture = recorder.endRecording();
-    final resized = await picture.toImage(targetW, targetH);
-    picture.dispose();
-    image.dispose();
-
-    final byteData = await resized.toByteData(format: ui.ImageByteFormat.png);
-    resized.dispose();
-    if (byteData == null) return await _copyToAppDir(srcPath, 'background');
-
-    // 保存为 .png（与原文件名区分，避免覆盖源图）
-    final targetDir = Directory('${_userDataDir()}$_s${'background'}');
-    if (!targetDir.existsSync()) targetDir.createSync(recursive: true);
-    final baseName = srcPath
-        .split(RegExp(r'[\\/]'))
-        .last
-        .replaceAll(RegExp(r'\.[^.]+$'), '');
-    final destPath = '${targetDir.path}$_s${baseName}_opt.png';
-    await File(
-      destPath,
-    ).writeAsBytes(byteData.buffer.asUint8List(), flush: true);
-    return destPath;
+    if (optimized == null || identical(optimized, bytes)) {
+      return await _copyToAppDir(srcPath, 'background');
+    }
+    final baseName = srcFile.uri.pathSegments.last.replaceAll(
+      RegExp(r'\.[^.]+$'),
+      '',
+    );
+    return await _saveRawBackground(optimized, '${baseName}_opt.png');
+  } on WallpaperImageTooLargeToResizeException {
+    rethrow;
   } catch (_) {
     // 解码/缩放失败（如超大图内存不足）：回退普通复制
     return await _copyToAppDir(srcPath, 'background');
@@ -201,56 +171,47 @@ Future<String?> _saveBackgroundBytes(
   int maxW,
   int maxH,
 ) async {
-  ui.ImmutableBuffer? buffer;
-  ui.ImageDescriptor? descriptor;
-  ui.Codec? codec;
-  ui.Image? decoded;
-  try {
-    // [FIX M5] 先只解析**编码流头部**拿尺寸，再按目标尺寸解码。
-    //
-    // 原实现直接 `instantiateImageCodec(bytes)`（无 targetWidth/Height）——
-    // 一张 4000×3000 的照片在这一步就已经是 48MB RGBA；Android 上很容易直接
-    // 触发本函数末尾那个 catch（注释里写的「如超大图内存不足」正是它）。
-    //
-    // 换成就地缩解码后，峰值由「源图尺寸」变成「屏幕尺寸」，降一个数量级。
-    // 画质上没有退步：主壳**显示**壁纸走的就是 ResizeImage → 同一条
-    // instantiateImageCodec(targetWidth/Height) 路径，存下来的是"显示时本来
-    // 就会解码成的尺寸"；而它正是本函数存在的意义（把大图压到屏幕分辨率）。
-    buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
-    descriptor = await ui.ImageDescriptor.encoded(buffer);
-    final srcW = descriptor.width;
-    final srcH = descriptor.height;
-
-    // 原图小于等于屏幕分辨率：直接保存原始字节
-    if (srcW <= maxW && srcH <= maxH) {
-      return await _saveRawBackground(bytes, fileName);
-    }
-
-    // 等比缩放到屏幕分辨率内（长边对齐），scale 单一化确保两个方向缩放一致、绝不拉伸
-    final scale = math.min(maxW / srcW, maxH / srcH);
-    final targetW = math.max(1, (srcW * scale).round());
-    final targetH = math.max(1, (srcH * scale).round());
-
-    codec = await descriptor.instantiateCodec(
-      targetWidth: targetW,
-      targetHeight: targetH,
-    );
-    final frame = await codec.getNextFrame();
-    decoded = frame.image;
-
-    final byteData = await decoded.toByteData(format: ui.ImageByteFormat.png);
-    if (byteData == null) return await _saveRawBackground(bytes, fileName);
-    return await _saveRawBackground(
-      byteData.buffer.asUint8List(),
-      '${fileName}_opt',
-    );
-  } catch (_) {
+  final optimized = await WallpaperImageOptimizer.optimize(
+    bytes,
+    maxWidth: maxW,
+    maxHeight: maxH,
+  );
+  if (optimized == null || identical(optimized, bytes)) {
     return await _saveRawBackground(bytes, fileName);
-  } finally {
-    decoded?.dispose();
-    codec?.dispose();
-    descriptor?.dispose();
-    buffer?.dispose();
+  }
+  final baseName = fileName.replaceAll(RegExp(r'\.[^.]+$'), '');
+  return await _saveRawBackground(optimized, '${baseName}_opt.png');
+}
+
+Future<String?> _saveBackgroundStream(
+  Stream<List<int>> source,
+  String fileName,
+) async {
+  File? destination;
+  IOSink? sink;
+  try {
+    final targetDir = Directory('${_userDataDir()}$_s${'background'}');
+    if (!targetDir.existsSync()) targetDir.createSync(recursive: true);
+    final safeName = fileName.replaceAll(RegExp(r'[^\\w.\\-]'), '_');
+    final boundedName = safeName.length > 100
+        ? safeName.substring(safeName.length - 100)
+        : safeName;
+    destination = File(
+      '${targetDir.path}$_s${DateTime.now().microsecondsSinceEpoch}_$boundedName',
+    );
+    sink = destination.openWrite();
+    await sink.addStream(source);
+    await sink.flush();
+    await sink.close();
+    return destination.path;
+  } catch (_) {
+    try {
+      await sink?.close();
+    } catch (_) {}
+    try {
+      await destination?.delete();
+    } catch (_) {}
+    return null;
   }
 }
 
@@ -259,7 +220,10 @@ Future<String?> _saveRawBackground(Uint8List bytes, String name) async {
   try {
     final targetDir = Directory('${_userDataDir()}$_s${'background'}');
     if (!targetDir.existsSync()) targetDir.createSync(recursive: true);
-    final safeName = name.replaceAll(RegExp(r'[^\w.\-]'), '_');
+    final safeName = WallpaperImageOptimizer.contentAddressedFileName(
+      name,
+      bytes,
+    );
     final destPath = '${targetDir.path}$_s$safeName';
     if (!File(destPath).existsSync() || !_sameBytes(destPath, bytes)) {
       await File(destPath).writeAsBytes(bytes, flush: true);
@@ -4465,8 +4429,15 @@ Widget _styleRow(
   );
 }
 
-/// 选择并应用新背景图：先同步取屏幕物理分辨率（大图自动缩放），
-/// Android 11+ content:// URI 用内存字节落盘。
+void _showWallpaperTooLarge(BuildContext ctx, AppState state) {
+  if (!ctx.mounted) return;
+  showToast(
+    ctx,
+    AppStrings.of(state.config.language).bgAnimationTooLarge,
+    type: ToastType.warning,
+  );
+}
+
 Future<void> _pickBackground(BuildContext ctx, AppState state) async {
   final view = View.of(ctx);
   final dpr = view.devicePixelRatio;
@@ -4481,21 +4452,36 @@ Future<void> _pickBackground(BuildContext ctx, AppState state) async {
   // v13 起 path 由 uri.scheme 推导：只有 file:// 才给真实路径，
   // content:// 这类 SAF URI 天然为 null，不必再比较字符串前缀。
   final path = file.path;
-  if (path == null) {
-    // Android 11+ content:// URI 无法用 File 读取 → 用内存字节落盘
-    final saved = await _saveBackgroundBytes(
-      await file.readAsBytes(),
-      file.name,
-      maxW,
-      maxH,
-    );
-    if (saved != null) {
-      state.updateConfig((c) => c..backgroundImage = saved);
+  try {
+    if (path == null) {
+      // SAF 大文件直接流式落盘，避免 picker.readAsBytes 建立整文件副本。
+      final sourceBytes = await file.length();
+      if (sourceBytes == null || sourceBytes > _maxWallpaperSourceBytes) {
+        final saved = await _saveBackgroundStream(
+          file.readAsByteStream(),
+          file.name,
+        );
+        if (saved != null) {
+          state.updateConfig((c) => c..backgroundImage = saved);
+        }
+      } else {
+        final saved = await _saveBackgroundBytes(
+          await file.readAsBytes(),
+          file.name,
+          maxW,
+          maxH,
+        );
+        if (saved != null) {
+          state.updateConfig((c) => c..backgroundImage = saved);
+        }
+      }
+    } else {
+      // 大图自动压缩到屏幕分辨率，避免体积过大导致卡死
+      final copied = await _copyBackgroundOptimized(path, maxW, maxH);
+      state.updateConfig((c) => c..backgroundImage = copied ?? path);
     }
-  } else {
-    // 大图自动压缩到屏幕分辨率，避免体积过大导致卡死
-    final copied = await _copyBackgroundOptimized(path, maxW, maxH);
-    state.updateConfig((c) => c..backgroundImage = copied ?? path);
+  } on WallpaperImageTooLargeToResizeException {
+    if (ctx.mounted) _showWallpaperTooLarge(ctx, state);
   }
 }
 
@@ -5200,7 +5186,12 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
                   triggerHeight: 34,
                   items: [
                     for (var i = 1; i <= 8; i++) OptionItem(i, '$i'),
-                    OptionItem(0, s.isZh ? '不限制' : 'Unlimited'),
+                    OptionItem(
+                      0,
+                      s.isZh
+                          ? '自动（最多${isMobilePlatform ? 2 : 4}）'
+                          : 'Auto (max ${isMobilePlatform ? 2 : 4})',
+                    ),
                   ],
                   onChanged: (v) =>
                       state.updateConfig((c) => c..maxConcurrentTasks = v),
@@ -5211,7 +5202,9 @@ Widget _buildTasks(BuildContext ctx, AppState state) {
         ),
         const SizedBox(height: 4),
         Text(
-          s.isZh ? '控制队列中同时处理的任务数量' : 'Controls how many tasks run in parallel',
+          s.isZh
+              ? '自动模式按设备限制并发；手动档位最多可设为 8 个任务'
+              : 'Auto mode caps concurrency by platform; manual mode allows up to 8 tasks',
           style: SettingsTypography.description.copyWith(
             color: scheme.onSurfaceVariant,
           ),
