@@ -1131,6 +1131,40 @@ class _AppRangeSliderState extends State<AppRangeSlider>
 // 进度条
 // ═══════════════════════════════════════════
 
+/// Circular loading indicator that remains still when motion is disabled.
+/// The static arc keeps indeterminate semantics rather than reporting 75%.
+class AppCircularProgressIndicator extends StatelessWidget {
+  const AppCircularProgressIndicator({
+    super.key,
+    this.strokeWidth = 4.0,
+    this.color,
+    this.semanticsLabel,
+  });
+
+  final double strokeWidth;
+  final Color? color;
+  final String? semanticsLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final disabled = MediaQuery.disableAnimationsOf(context);
+    final indicator = CircularProgressIndicator(
+      value: disabled ? 0.75 : null,
+      strokeWidth: strokeWidth,
+      color: color,
+      semanticsLabel: semanticsLabel,
+    );
+    return disabled
+        ? Semantics(
+            role: ui.SemanticsRole.loadingSpinner,
+            label: semanticsLabel,
+            excludeSemantics: true,
+            child: indicator,
+          )
+        : indicator;
+  }
+}
+
 /// 统一进度条，与滑块共用胶囊轨道和 [_drawComet] 高光。
 class AppProgressBar extends StatelessWidget {
   const AppProgressBar({
@@ -1191,6 +1225,10 @@ class AppProgressBar extends StatelessWidget {
     return Semantics(
       label: semanticsLabel,
       value: v == null ? null : '${(v.clamp(0.0, 1.0) * 100).round()}%',
+      role: v == null && reduceMotion
+          ? ui.SemanticsRole.loadingSpinner
+          : ui.SemanticsRole.none,
+      excludeSemantics: v == null && reduceMotion,
       child: SizedBox(
         height: height,
         width: double.infinity,
@@ -1204,6 +1242,15 @@ class AppProgressBar extends StatelessWidget {
                 animate: !reduceMotion,
                 textDirection: textDirection,
                 showComet: cometOn,
+              )
+            else if (reduceMotion)
+              CustomPaint(
+                painter: _AppProgressBarPainter(
+                  valueColor: barColor,
+                  value: v.clamp(0.0, 1.0),
+                  textDirection: textDirection,
+                  showComet: false,
+                ),
               )
             else
               TweenAnimationBuilder<double>(

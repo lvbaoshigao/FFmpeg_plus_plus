@@ -10,6 +10,7 @@ import '../../providers/app_state.dart';
 import '../../services/frame_preview.dart';
 import '../../theme/app_semantic_colors.dart';
 import '../app_alert_dialog.dart';
+import '../app_slider.dart';
 
 class VideoCropStepEditor extends StatefulWidget {
   final Map<String, dynamic> params;
@@ -237,6 +238,9 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
     try {
       final regions = await showDialog<List<Rect>>(
         context: context,
+        animationStyle: MediaQuery.disableAnimationsOf(context)
+            ? AnimationStyle.noAnimation
+            : null,
         barrierDismissible: false,
         builder: (ctx) => dialog,
       );
@@ -308,7 +312,7 @@ class _VideoCropStepEditorState extends State<VideoCropStepEditor> {
           ElevatedButton(
             onPressed: _extracting ? null : _extractFrame,
             child: _extracting
-                ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: cs.onPrimary))
+                ? SizedBox(width: 16, height: 16, child: AppCircularProgressIndicator(strokeWidth: 2, color: cs.onPrimary))
                 : Text(zh ? '提取' : 'Extract', style: const TextStyle(fontSize: 12)),
           ),
         ]),

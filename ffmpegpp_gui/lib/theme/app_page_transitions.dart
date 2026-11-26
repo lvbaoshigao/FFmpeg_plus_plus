@@ -169,20 +169,39 @@ class _PredictiveBackCard extends StatelessWidget {
 class AppPageRoute<T> extends MaterialPageRoute<T> {
   AppPageRoute({required super.builder}) : super(allowSnapshotting: false);
 
-  @override
-  Duration get transitionDuration => const Duration(milliseconds: 280);
+  bool get _disableAnimations {
+    final context = navigator?.context;
+    return context != null && MediaQuery.disableAnimationsOf(context);
+  }
 
   @override
-  Duration get reverseTransitionDuration => const Duration(milliseconds: 240);
+  Duration get transitionDuration =>
+      _disableAnimations ? Duration.zero : const Duration(milliseconds: 280);
 
   @override
-  Widget buildTransitions(BuildContext context, Animation<double> animation,
-      Animation<double> secondaryAnimation, Widget child) {
-    final configured = Theme.of(context).pageTransitionsTheme.builders[TargetPlatform.android];
+  Duration get reverseTransitionDuration =>
+      _disableAnimations ? Duration.zero : const Duration(milliseconds: 240);
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final configured = Theme.of(
+      context,
+    ).pageTransitionsTheme.builders[TargetPlatform.android];
     final transitions = configured is AppPageTransitionsBuilder
         ? configured
         : const AppPageTransitionsBuilder();
-    return transitions.buildTransitions(this, context, animation, secondaryAnimation, child);
+    return transitions.buildTransitions(
+      this,
+      context,
+      animation,
+      secondaryAnimation,
+      child,
+    );
   }
 }
 
@@ -250,8 +269,11 @@ class _AppPageEnterTransition extends StatelessWidget {
   final Widget child;
 
   @override
-  Widget build(BuildContext context) =>
-      AppSlideInTransition(animation: animation, fraction: fraction, child: child);
+  Widget build(BuildContext context) => AppSlideInTransition(
+    animation: animation,
+    fraction: fraction,
+    child: child,
+  );
 }
 
 /// 旧页视差（0 → 1 = 从 0 左移到 `-fraction × 屏宽`）。不淡出。
@@ -295,7 +317,8 @@ class _PredictiveBackDetector extends StatefulWidget {
   final Widget Function(_BackGesture? gesture) builder;
 
   @override
-  State<_PredictiveBackDetector> createState() => _PredictiveBackDetectorState();
+  State<_PredictiveBackDetector> createState() =>
+      _PredictiveBackDetectorState();
 }
 
 class _PredictiveBackDetectorState extends State<_PredictiveBackDetector>
@@ -331,7 +354,11 @@ class _PredictiveBackDetectorState extends State<_PredictiveBackDetector>
         status != AnimationStatus.completed) {
       return;
     }
-    _commitAnimation?.removeStatusListener(_stopCommittedGesture);
+    // A zero-duration pop can finish synchronously inside Navigator.pop. Its
+    // status listener and the caller's fallback must release ownership once.
+    final animation = _commitAnimation;
+    if (animation == null) return;
+    animation.removeStatusListener(_stopCommittedGesture);
     _commitAnimation = null;
     _navigator?.didStopUserGesture();
   }
@@ -430,6 +457,8 @@ class _PredictiveBackDetectorState extends State<_PredictiveBackDetector>
 
   @override
   Widget build(BuildContext context) => widget.builder(
-    _active ? _BackGesture(direction: _direction, commitFrom: _commitFrom) : null,
+    _active
+        ? _BackGesture(direction: _direction, commitFrom: _commitFrom)
+        : null,
   );
 }

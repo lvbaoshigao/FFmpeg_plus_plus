@@ -1,4 +1,5 @@
 import 'package:ffmpegpp_gui/app.dart' show smoothRoute;
+import 'package:ffmpegpp_gui/theme/app_motion.dart';
 import 'package:ffmpegpp_gui/theme/app_page_transitions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -28,14 +29,16 @@ Future<void> _gesture(
   );
 }
 
-Future<(GlobalKey<NavigatorState>, PageRoute<void>)> _mount(WidgetTester tester, {bool smooth = false, bool predictive = true, bool reduced = false, bool canPop = true}) async {
+Future<(GlobalKey<NavigatorState>, PageRoute<void>)> _mount(WidgetTester tester, {bool smooth = false, bool predictive = true, bool reduced = false, bool appReduced = false, bool canPop = true}) async {
   final navigator = GlobalKey<NavigatorState>();
   await tester.pumpWidget(MaterialApp(
     navigatorKey: navigator,
     theme: ThemeData(platform: TargetPlatform.android, pageTransitionsTheme: PageTransitionsTheme(builders: {
       TargetPlatform.android: AppPageTransitionsBuilder(predictiveBack: predictive),
     })),
-    builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: reduced), child: child!),
+    builder: (context, child) => appReduced
+        ? AppMotion(disabled: true, child: child!)
+        : MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: reduced), child: child!),
     home: const SizedBox.expand(key: _back),
   ));
   final page = PopScope(canPop: canPop, child: const SizedBox.expand(key: _front));
@@ -207,6 +210,28 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(_front), findsNothing);
       expect(navigator.currentState!.userGestureInProgress, isFalse);
+    });
+
+    testWidgets('$label app motion policy preserves predictive cancel and commit', (tester) async {
+      final (navigator, route) = await _mount(tester, smooth: smooth, appReduced: true);
+      expect(route.transitionDuration, Duration.zero);
+      await _gesture(tester, 'startBackGesture');
+      await _gesture(tester, 'updateBackGestureProgress', progress: .4);
+      await tester.pump();
+      expect(route.animation!.value, closeTo(.6, 1e-6));
+      expect(_x(tester, _front), 0);
+      expect(_x(tester, _back), 0);
+      await _gesture(tester, 'cancelBackGesture');
+      await tester.pumpAndSettle();
+      expect(route.isCurrent, isTrue);
+      expect(navigator.currentState!.userGestureInProgress, isFalse);
+      await _gesture(tester, 'startBackGesture');
+      await _gesture(tester, 'updateBackGestureProgress', progress: .4);
+      await _gesture(tester, 'commitBackGesture');
+      await tester.pumpAndSettle();
+      expect(find.byKey(_front), findsNothing);
+      expect(navigator.currentState!.userGestureInProgress, isFalse);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('$label route removal during cancellation releases gesture ownership', (tester) async {

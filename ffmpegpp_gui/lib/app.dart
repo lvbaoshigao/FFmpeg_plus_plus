@@ -18,7 +18,9 @@ import 'platform/app_platform.dart';
 import 'providers/app_state.dart';
 import 'services/android_platform.dart';
 import 'services/image_memory_budget.dart';
+import 'services/static_file_image.dart';
 import 'services/update_service.dart' as updater;
+import 'theme/app_motion.dart';
 import 'theme/app_neutral_surface.dart';
 import 'theme/app_page_transitions.dart';
 import 'theme/app_press_feedback.dart';
@@ -55,15 +57,16 @@ ImageProvider<Object> wallpaperImageProvider(
   String path,
   double logicalWidth,
   double logicalHeight,
-  double devicePixelRatio,
-) {
+  double devicePixelRatio, {
+  bool disableAnimations = false,
+}) {
   final target = ImageMemoryBudget.wallpaperSize(
     logicalWidth,
     logicalHeight,
     devicePixelRatio,
   );
   return ResizeImage(
-    FileImage(File(path)),
+    disableAnimations ? StaticFileImage(File(path)) : FileImage(File(path)),
     width: target.width,
     height: target.height,
     policy: ResizeImagePolicy.fit,
@@ -236,6 +239,8 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
         fontSize: s.config.fontSize,
         fontWeight: s.config.fontWeightValue,
         darkMode: s.darkMode,
+        disableAnimations:
+            s.config.disableAnimations || (!s.initialized && !s.configLoaded),
         initialized: s.initialized,
         useDynamicColor: isAndroidPlatform && s.config.useDynamicColor,
         predictiveBack: isAndroidPlatform && s.config.predictiveBack,
@@ -262,6 +267,9 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
         return MaterialApp(
           key: const ValueKey('app'),
           title: 'FFmpeg++',
+          themeAnimationDuration: k.disableAnimations
+              ? Duration.zero
+              : kThemeAnimationDuration,
           debugShowCheckedModeBanner: false,
           // 本地化支持：让 showDatePicker/showTimePicker 等系统组件跟随语言
           locale: Locale(k.lang == 'zh' ? 'zh' : 'en'),
@@ -347,8 +355,11 @@ class _FfmpegppAppState extends State<FfmpegppApp> with WidgetsBindingObserver {
                   appScale: appScale,
                   child: MediaQuery(
                     data: mq.copyWith(textScaler: TextScaler.linear(scale)),
-                    child: AppPressTheme(
-                      child: ColoredBox(color: baseSurface, child: child!),
+                    child: AppMotion(
+                      disabled: k.disableAnimations,
+                      child: AppPressTheme(
+                        child: ColoredBox(color: baseSurface, child: child!),
+                      ),
                     ),
                   ),
                 ),
@@ -371,6 +382,7 @@ class _ThemeKey {
   final double fontSize;
   final int fontWeight;
   final bool darkMode;
+  final bool disableAnimations;
   final bool initialized;
   final bool useDynamicColor;
   final bool predictiveBack;
@@ -385,6 +397,7 @@ class _ThemeKey {
     required this.fontSize,
     required this.fontWeight,
     required this.darkMode,
+    required this.disableAnimations,
     required this.initialized,
     required this.useDynamicColor,
     required this.predictiveBack,
@@ -403,6 +416,7 @@ class _ThemeKey {
       other.fontSize == fontSize &&
       other.fontWeight == fontWeight &&
       other.darkMode == darkMode &&
+      other.disableAnimations == disableAnimations &&
       other.initialized == initialized &&
       other.useDynamicColor == useDynamicColor &&
       other.predictiveBack == predictiveBack &&
@@ -419,6 +433,7 @@ class _ThemeKey {
     fontSize,
     fontWeight,
     darkMode,
+    disableAnimations,
     initialized,
     useDynamicColor,
     predictiveBack,
@@ -678,6 +693,9 @@ class _AppShellState extends State<AppShell>
       final scheme = Theme.of(context).colorScheme;
       showDialog(
         context: context,
+        animationStyle: MediaQuery.disableAnimationsOf(context)
+            ? AnimationStyle.noAnimation
+            : null,
         builder: (_) => AppAlertDialog(
           icon: Icon(Icons.check_circle, color: scheme.sem.success, size: 32),
           title: Text(
@@ -991,6 +1009,9 @@ class _AppShellState extends State<AppShell>
     final zh = s.isZh;
     showDialog<bool>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) {
         final scheme = Theme.of(ctx).colorScheme;
         return AppAlertDialog(

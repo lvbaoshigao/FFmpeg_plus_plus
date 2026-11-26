@@ -160,29 +160,52 @@ class AiChatHistory {
     }
   }
 
-  /// 列出全部历史会话（按保存时间倒序）。
-  static Future<List<Map<String, dynamic>>> listSessions() async {
+  /// 列出轻量会话摘要（按文件名中的保存时间倒序），不保留 messages。
+  /// 旧历史无需迁移：逐块扫描顶层元数据，跳过消息正文，避免整文件解码峰值。
+  static Future<List<Map<String, dynamic>>> listSessions({
+    Directory? directory,
+    bool Function()? isCancelled,
+  }) async {
     try {
-      final dir = Directory(await _historyDir());
+      final dir = directory ?? Directory(await _historyDir());
       if (!await dir.exists()) return [];
       // 异步遍历，避免历史目录较大时阻塞 UI
       final files = <File>[];
       await for (final e in dir.list()) {
+        if (isCancelled?.call() ?? false) return [];
         if (e is File && e.path.endsWith('.json')) files.add(e);
       }
       files.sort((a, b) => b.path.compareTo(a.path));
       final result = <Map<String, dynamic>>[];
       for (final f in files) {
+        if (isCancelled?.call() ?? false) return [];
         try {
-          final json =
-              jsonDecode(await f.readAsString()) as Map<String, dynamic>;
-          json['_file'] = f.path;
-          result.add(json);
+          final parser = _SessionSummaryParser();
+          await for (final chunk in f.openRead().transform(utf8.decoder)) {
+            if (isCancelled?.call() ?? false) return [];
+            parser.add(chunk);
+          }
+          final summary = parser.finish();
+          summary['_file'] = f.path;
+          result.add(summary);
         } catch (_) {}
       }
-      return result;
+      return (isCancelled?.call() ?? false) ? [] : result;
     } catch (_) {
       return [];
+    }
+  }
+
+  /// 仅在选择 / 重命名时读取完整会话；列表摘要不能用于回写 messages。
+  static Future<Map<String, dynamic>?> loadSession(String filePath) async {
+    try {
+      final data =
+          jsonDecode(await File(filePath).readAsString())
+              as Map<String, dynamic>;
+      data['_file'] = filePath;
+      return data;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -210,5 +233,129 @@ class AiChatHistory {
         }
       }
     } catch (_) {}
+  }
+}
+
+/// Projects top-level scalar metadata without buffering nested message values.
+/// String/escape and container state survive chunk boundaries, including old
+/// files whose messages precede the title/model. Only the projection is decoded.
+class _SessionSummaryParser {
+  // Bound damaged/hand-edited keys and metadata independently of body size.
+  static const _maxFieldChars = 8 * 1024;
+  static const _keys = {
+    'title', 'provider', 'model', 'saved_at', 'total_in', 'total_out',
+  };
+  final _summary = <String, dynamic>{};
+  final _containers = <int>[];
+  final _field = StringBuffer();
+  bool _started = false;
+  bool _complete = false;
+  bool _inString = false;
+  bool _escaped = false;
+  bool _readingKey = true;
+  bool _keepValue = false;
+  bool _hasValue = false;
+  bool _afterComma = false;
+
+  static bool _isSpace(int c) => c == 32 || c == 9 || c == 10 || c == 13;
+
+  void add(String chunk) {
+    for (var i = 0; i < chunk.length; i++) {
+      final c = chunk.codeUnitAt(i);
+      if (!_started) {
+        if (_isSpace(c)) continue;
+        if (c != 123) throw const FormatException('Expected history object');
+        _started = true;
+        _containers.add(125);
+        continue;
+      }
+      if (_complete) {
+        if (!_isSpace(c)) throw const FormatException('Trailing history data');
+        continue;
+      }
+      if (!_inString && _containers.length == 1) {
+        if (c == 44 || c == 125) {
+          _finishField(allowEmpty: c == 125 && !_afterComma);
+          if (c == 125) {
+            _containers.removeLast();
+            _complete = true;
+          } else {
+            _afterComma = true;
+          }
+          continue;
+        }
+        if (c == 58 && _readingKey) {
+          final key = jsonDecode(_field.toString());
+          if (key is! String) throw const FormatException('Invalid history key');
+          _readingKey = false;
+          _keepValue = _keys.contains(key);
+          if (_keepValue) {
+            _field.writeCharCode(c);
+          } else {
+            _field.clear();
+          }
+          continue;
+        }
+        // Metadata is scalar. Do not accidentally retain an unexpected large
+        // object/array under a known metadata key either.
+        if (!_readingKey && (c == 123 || c == 91)) {
+          _keepValue = false;
+          _field.clear();
+        }
+      }
+      if (!_readingKey && !_isSpace(c)) _hasValue = true;
+      if (_readingKey || _keepValue) {
+        if (_field.length >= _maxFieldChars) {
+          throw const FormatException('History metadata exceeds limit');
+        }
+        _field.writeCharCode(c);
+      }
+      if (_inString) {
+        if (_escaped) {
+          _escaped = false;
+        } else if (c == 92) {
+          _escaped = true;
+        } else if (c == 34) {
+          _inString = false;
+        }
+      } else if (c == 34) {
+        _inString = true;
+      } else if (c == 123 || c == 91) {
+        _containers.add(c == 123 ? 125 : 93);
+      } else if (c == 125 || c == 93) {
+        if (_containers.isEmpty || _containers.removeLast() != c) {
+          throw const FormatException('Mismatched history container');
+        }
+      }
+    }
+  }
+
+  void _finishField({required bool allowEmpty}) {
+    if (_readingKey) {
+      if (!allowEmpty || _field.toString().trim().isNotEmpty) {
+        throw const FormatException('Incomplete history field');
+      }
+    } else {
+      if (!_hasValue) throw const FormatException('Missing history value');
+      if (_keepValue) {
+        final value = jsonDecode('{${_field.toString()}}')
+            as Map<String, dynamic>;
+        for (final entry in value.entries) {
+          final numeric = entry.key == 'total_in' || entry.key == 'total_out';
+          if (numeric ? entry.value is num : entry.value is String) {
+            _summary[entry.key] = entry.value;
+          }
+        }
+      }
+    }
+    _field.clear();
+    _readingKey = true;
+    _keepValue = false;
+    _hasValue = false;
+  }
+
+  Map<String, dynamic> finish() {
+    if (!_complete) throw const FormatException('Incomplete history object');
+    return _summary;
   }
 }

@@ -503,7 +503,9 @@ class _SettingsPageState extends State<SettingsPage> {
       if (ctx == null) return;
       Scrollable.ensureVisible(
         ctx,
-        duration: const Duration(milliseconds: 260),
+        duration: MediaQuery.disableAnimationsOf(ctx)
+            ? Duration.zero
+            : const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
         alignment: 0.15,
       );
@@ -618,7 +620,9 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _highlightWrap(String cardId, Widget child) {
     final on = _highlightCardId == cardId;
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 260),
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 260),
       curve: Curves.easeOut,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
@@ -796,6 +800,13 @@ class _SettingsPageState extends State<SettingsPage> {
             '彗星拖尾',
             '粒子',
             '动效',
+            '动画',
+            '关闭所有动画效果',
+            '关闭动画',
+            'Disable all animations',
+            'animation',
+            'motion',
+            'reduce motion',
             '特效',
             'particle',
             'comet',
@@ -2763,6 +2774,7 @@ Widget _iosButton({
 
 /// 主题色圆点
 Widget _dot(
+  BuildContext context,
   ColorScheme sc,
   bool sel,
   Color c,
@@ -2781,7 +2793,9 @@ Widget _dot(
         dimension: 48,
         child: Center(
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 150),
             width: 28,
             height: 28,
             decoration: BoxDecoration(
@@ -3088,6 +3102,7 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
                           width: 44,
                           child: Center(
                             child: _dot(
+                              ctx,
                               scheme,
                               cfg.themeColor == p.$2 && cfg.themeColor2 < 0,
                               Color(p.$2),
@@ -3418,6 +3433,20 @@ List<Widget> _buildEffectItems(BuildContext ctx, AppState state) {
   final clr = scheme.onSurface;
   final zh = cfg.language == 'zh';
   return [
+    SwitchListTile(
+      key: const ValueKey('settings_disable_animations'),
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(zh ? '关闭所有动画效果' : 'Disable all animations'),
+      subtitle: Text(
+        zh
+            ? '立即关闭界面转场、菜单动效、加载动画和动态壁纸；保留各项特效设置'
+            : 'Immediately disable transitions, menu effects, loading animations '
+                  'and animated wallpapers; keep individual effect preferences',
+      ),
+      value: cfg.disableAnimations,
+      onChanged: (v) => state.updateConfig((c) => c..disableAnimations = v),
+    ),
     SwitchListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
@@ -4666,6 +4695,7 @@ class _ThemeBackgroundSectionState extends State<_ThemeBackgroundSection> {
                   MediaQuery.sizeOf(context).width,
                   MediaQuery.sizeOf(context).height,
                   MediaQuery.devicePixelRatioOf(context),
+                  disableAnimations: MediaQuery.disableAnimationsOf(context),
                 ),
                 fit: BoxFit.cover,
                 // 文件被外部删除 / 解码失败时回落到占位框
@@ -5914,6 +5944,9 @@ Future<void> _setVeryVerboseLogs(
   final zh = strings.isZh;
   final confirmed = await showDialog<bool>(
     context: context,
+    animationStyle: MediaQuery.disableAnimationsOf(context)
+        ? AnimationStyle.noAnimation
+        : null,
     builder: (dialogContext) => AppAlertDialog(
       title: Text(zh ? '开启非常详细的日志？' : 'Enable very verbose logs?'),
       content: Text(
@@ -6014,6 +6047,9 @@ Future<void> _resetNodeUsage(
 ) async {
   final confirmed = await showDialog<bool>(
     context: context,
+    animationStyle: MediaQuery.disableAnimationsOf(context)
+        ? AnimationStyle.noAnimation
+        : null,
     builder: (dialogContext) => AppAlertDialog(
       scrollable: true,
       icon: const Icon(Icons.restart_alt),
@@ -6787,6 +6823,9 @@ void _showModelPicker(
   }
   showDialog(
     context: ctx,
+    animationStyle: MediaQuery.disableAnimationsOf(ctx)
+        ? AnimationStyle.noAnimation
+        : null,
     builder: (dCtx) {
       final scheme = Theme.of(dCtx).colorScheme;
       return AppAlertDialog(
@@ -6930,6 +6969,9 @@ Future<void> _clearCache(
 ) async {
   final scope = await showDialog<_CacheScope>(
     context: ctx,
+    animationStyle: MediaQuery.disableAnimationsOf(ctx)
+        ? AnimationStyle.noAnimation
+        : null,
     builder: (dCtx) => AppAlertDialog(
       scrollable: true,
       icon: Icon(Icons.cleaning_services_outlined, color: scheme.primary),
@@ -7155,6 +7197,9 @@ void _showUpdateDialog(
       result.downloadUrl != null;
   showDialog(
     context: ctx,
+    animationStyle: MediaQuery.disableAnimationsOf(ctx)
+        ? AnimationStyle.noAnimation
+        : null,
     builder: (dCtx) => AppAlertDialog(
       scrollable: true,
       icon: Icon(Icons.system_update, color: scheme.primary, size: 32),
@@ -7281,6 +7326,9 @@ Future<void> _downloadAndInstall(
   var dialogOpen = true;
   showDialog(
     context: ctx,
+    animationStyle: MediaQuery.disableAnimationsOf(ctx)
+        ? AnimationStyle.noAnimation
+        : null,
     barrierDismissible: false,
     builder: (_) => PopScope(
       canPop: false,
@@ -7371,6 +7419,9 @@ Future<void> _pickColor(BuildContext ctx, AppState state) async {
 void _showSponsor(BuildContext ctx, ColorScheme scheme, AppStrings s) {
   showDialog(
     context: ctx,
+    animationStyle: MediaQuery.disableAnimationsOf(ctx)
+        ? AnimationStyle.noAnimation
+        : null,
     builder: (dCtx) => AppAlertDialog(
       title: Text(
         s.aboutSponsor,
@@ -7465,6 +7516,9 @@ Widget _qrImage(
 void _showFullImage(BuildContext ctx, String asset, ColorScheme scheme) {
   showDialog(
     context: ctx,
+    animationStyle: MediaQuery.disableAnimationsOf(ctx)
+        ? AnimationStyle.noAnimation
+        : null,
     builder: (dCtx) => Dialog(
       backgroundColor: Colors.transparent,
       child: GestureDetector(
@@ -7670,6 +7724,9 @@ class _FfmpegCardState extends State<_FfmpegCard> {
   Future<void> _confirmDelete(bool isZh) async {
     final confirmed = await showDialog<bool>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) {
         final s = Theme.of(ctx).colorScheme;
         return AppAlertDialog(
@@ -7866,7 +7923,7 @@ class _FfmpegCardState extends State<_FfmpegCard> {
     if (_checking) {
       return _glass(context, widget.state, s.ffmpegSettings, [
         const SizedBox(height: 12),
-        const Center(child: CircularProgressIndicator()),
+        const Center(child: AppCircularProgressIndicator()),
         const SizedBox(height: 8),
         Center(
           child: Text(

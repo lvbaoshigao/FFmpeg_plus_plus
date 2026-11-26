@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/fppx2_service.dart';
 import '../widgets/toast.dart';
 import 'app_alert_dialog.dart';
+import 'app_slider.dart';
 
 /// 「输入口令」对话框 —— 导入加密 .fppx 时使用。
 ///
@@ -145,7 +146,7 @@ class _FppxPasswordDialogState extends State<FppxPasswordDialog> {
                 ? const SizedBox(
                     width: 14,
                     height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: AppCircularProgressIndicator(strokeWidth: 2),
                   )
                 : Text(zh ? '解密并打开' : 'Unlock'),
           ),
@@ -176,6 +177,9 @@ Future<FppxImportResult?> importFppxWithPassword(
   FppxImportResult? unlocked;
   final used = await showDialog<String>(
     context: context,
+    animationStyle: MediaQuery.disableAnimationsOf(context)
+        ? AnimationStyle.noAnimation
+        : null,
     // 不用点遮罩关闭：必须显式选择「取消」或「解密并打开」
     barrierDismissible: false,
     builder: (_) => FppxPasswordDialog(

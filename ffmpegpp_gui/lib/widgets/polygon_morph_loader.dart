@@ -66,7 +66,7 @@ class _PolygonMorphLoaderState extends State<PolygonMorphLoader>
 
   void _syncAnimation() {
     final reduce =
-        widget.reduceMotion ?? MediaQuery.disableAnimationsOf(context);
+        MediaQuery.disableAnimationsOf(context) || (widget.reduceMotion ?? false);
     if (reduce) {
       _controller.stop();
       _controller.value = 0;

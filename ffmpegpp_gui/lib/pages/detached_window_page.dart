@@ -13,11 +13,13 @@ import '../models/models.dart';
 import '../models/node_picker_options.dart';
 import '../providers/app_state.dart';
 import '../services/multi_window.dart';
+import '../theme/app_motion.dart';
 import '../theme/app_press_feedback.dart';
 import '../theme/app_strings.dart';
 import '../theme/app_text_scale.dart';
 import '../theme/app_theme.dart';
 // 独立窗口里的条件门滑块同样走统一实现（玻璃轨道 + 彗星拖尾）
+import '../widgets/app_date_time_picker.dart';
 import '../widgets/app_dropdown.dart';
 import '../widgets/app_slider.dart';
 import '../widgets/desktop_resize_scope.dart';
@@ -498,6 +500,9 @@ class _DetachedPanelAppState extends State<DetachedPanelApp>
     return MaterialApp(
       key: const ValueKey('detached-panel'),
       title: 'FFmpeg++',
+      themeAnimationDuration: cfg.disableAnimations
+          ? Duration.zero
+          : kThemeAnimationDuration,
       debugShowCheckedModeBanner: false,
       locale: Locale(_store.isZh ? 'zh' : 'en'),
       supportedLocales: const [Locale('zh'), Locale('en')],
@@ -543,7 +548,10 @@ class _DetachedPanelAppState extends State<DetachedPanelApp>
                 data: mq.copyWith(textScaler: TextScaler.linear(scale)),
                 child: ChangeNotifierProvider<AppState>.value(
                   value: _store.app,
-                  child: AppPressTheme(child: child!),
+                  child: AppMotion(
+                    disabled: cfg.disableAnimations,
+                    child: AppPressTheme(child: child!),
+                  ),
                 ),
               ),
             ),
@@ -588,7 +596,7 @@ class _Connecting extends StatelessWidget {
         child: SizedBox(
           width: 22,
           height: 22,
-          child: CircularProgressIndicator(strokeWidth: 2),
+          child: AppCircularProgressIndicator(strokeWidth: 2),
         ),
       ),
     );
@@ -2150,7 +2158,7 @@ Widget _buildDetachedTimeTrigger(
                       const SizedBox(height: 2),
                       GestureDetector(
                         onTap: () async {
-                          final picked = await showDatePicker(
+                          final picked = await showAppDatePicker(
                             context: ctx,
                             initialDate: _parseDate(dateStr) ?? now,
                             firstDate: DateTime(now.year - 1),
@@ -2234,7 +2242,7 @@ Widget _buildDetachedTimeTrigger(
                       const SizedBox(height: 2),
                       GestureDetector(
                         onTap: () async {
-                          final t = await showTimePicker(
+                          final t = await showAppTimePicker(
                             context: ctx,
                             initialTime: startTime,
                             initialEntryMode: TimePickerEntryMode.input,
@@ -2344,7 +2352,7 @@ Widget _buildDetachedTimeTrigger(
                           children: [
                             GestureDetector(
                               onTap: () async {
-                                final t = await showTimePicker(
+                                final t = await showAppTimePicker(
                                   context: ctx,
                                   initialTime: endTime!,
                                   initialEntryMode: TimePickerEntryMode.input,

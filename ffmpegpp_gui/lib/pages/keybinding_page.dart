@@ -7,6 +7,9 @@ import '../widgets/app_alert_dialog.dart';
 Future<void> showKeybindingDialog(BuildContext context, {required bool isZh}) {
   return showDialog(
     context: context,
+    animationStyle: MediaQuery.disableAnimationsOf(context)
+        ? AnimationStyle.noAnimation
+        : null,
     builder: (_) => _KeybindingDialog(isZh: isZh),
   );
 }
@@ -87,6 +90,9 @@ class _KeybindingDialogState extends State<_KeybindingDialog> {
 
     final result = await showDialog<List<String>>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (_) => _KeyCaptureDialog(
         isZh: isZh,
         currentKeys: current,

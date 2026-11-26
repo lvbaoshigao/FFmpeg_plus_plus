@@ -122,6 +122,9 @@ Future<void> showApplySavedConfig(
     }
     final selected = await showDialog<SavedConfigChoice>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) => AppAlertDialog(
         title: Text(zh ? '应用配置库' : 'Apply saved configuration'),
         content: SizedBox(

@@ -35,6 +35,9 @@ Future<ThemeColorSelection?> showThemeColorPicker(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
+      sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       backgroundColor: Colors.transparent,
       constraints: const BoxConstraints(maxWidth: 620),
       builder: (context) => Padding(
@@ -47,6 +50,9 @@ Future<ThemeColorSelection?> showThemeColorPicker(
   }
   return showDialog<ThemeColorSelection>(
     context: context,
+    animationStyle: MediaQuery.disableAnimationsOf(context)
+        ? AnimationStyle.noAnimation
+        : null,
     builder: (_) => AppModalSurface(
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       constraints: const BoxConstraints(maxWidth: 620),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app_card.dart';
+import 'app_slider.dart';
 
 /// Keeps final output visible independently of expandable generation details.
 class AiWorkflowCard extends StatefulWidget {
@@ -53,7 +54,7 @@ class _AiWorkflowCardState extends State<AiWorkflowCard> {
                     if (widget.active)
                       const SizedBox.square(
                         dimension: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: AppCircularProgressIndicator(strokeWidth: 2),
                       )
                     else
                       const Icon(Icons.account_tree_outlined, size: 18),

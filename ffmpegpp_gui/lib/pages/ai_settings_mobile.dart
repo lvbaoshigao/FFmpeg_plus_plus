@@ -13,7 +13,9 @@ import '../theme/app_strings.dart';
 import '../theme/settings_typography.dart';
 import '../widgets/adaptive_top_bar.dart';
 import '../widgets/app_alert_dialog.dart';
+import '../widgets/app_animated_size.dart';
 import '../widgets/app_card.dart';
+import '../widgets/app_slider.dart';
 import '../widgets/brand_logo.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/liquid_glass_mobile_nav.dart';
@@ -1058,7 +1060,6 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
     final s = AppStrings.of(cfg.language);
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final reduceMotion = MediaQuery.disableAnimationsOf(context);
     // 本页是 Navigator.push 进来的，外层没有 Consumer 包裹：显式订阅
     // 「底部动作按钮位置」，否则在设置里改完左右手偏好后，底部搜索药丸
     // 仍停在旧的一侧（要退出重进才生效）。
@@ -1090,10 +1091,8 @@ class _MobileAiSettingsViewState extends State<_MobileAiSettingsView> {
     // 这样也不必把整段 children 再缩进一层。
     final List<Widget> content = <Widget>[
       // 服务卡：进入搜索态后收起，把纵向空间让给结果（搜索态没有标题区）。
-      AnimatedSize(
-        duration: reduceMotion
-            ? Duration.zero
-            : const Duration(milliseconds: 220),
+      AppAnimatedSize(
+        duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
         alignment: Alignment.topCenter,
         child: searchingMode
@@ -1761,7 +1760,9 @@ class _AiFilterPill extends StatelessWidget {
           borderRadius: BorderRadius.circular(999),
           onTap: onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 160),
             curve: Curves.easeOut,
             height: AppControlSize.comfortable.height,
             padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -2164,7 +2165,9 @@ class _AiToggleChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(9),
         onTap: onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 160),
           curve: Curves.easeOut,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
           decoration: BoxDecoration(
@@ -2345,7 +2348,7 @@ class _AiSearchLoadingState extends State<_AiSearchLoading>
                         SizedBox(
                           width: 50,
                           height: 50,
-                          child: CircularProgressIndicator(
+                          child: AppCircularProgressIndicator(
                             strokeWidth: 1.5,
                             color: scheme.primary.withAlpha(170),
                           ),
@@ -3276,6 +3279,9 @@ class _MobileAiProviderDetailPageState
     final scheme = Theme.of(context).colorScheme;
     showDialog<void>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (dCtx) => AppAlertDialog(
         title: Text(
           s.aiDeleteProviderConfirm,
@@ -4182,6 +4188,9 @@ class _MobileAiProviderDetailPageState
     final AppState state = context.read<AppState>();
     final AiModelEntry? result = await showModalBottomSheet<AiModelEntry>(
       context: context,
+      sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
@@ -4222,6 +4231,9 @@ class _MobileAiProviderDetailPageState
     final scheme = Theme.of(context).colorScheme;
     final bool? ok = await showDialog<bool>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (dCtx) => AppAlertDialog(
         title: Text(
           s.isZh ? '删除模型？' : 'Delete model?',
@@ -4396,6 +4408,9 @@ class _MobileAiProviderDetailPageState
     final scheme = Theme.of(context).colorScheme;
     final bool? ok = await showDialog<bool>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (dCtx) => AppAlertDialog(
         title: Text(
           s.isZh ? '清空模型列表？' : 'Clear all models?',
@@ -4591,6 +4606,9 @@ class _MobileAiProviderDetailPageState
     final scheme = Theme.of(context).colorScheme;
     return showDialog<String>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (dCtx) => AppAlertDialog(
         title: Text(
           title,
@@ -5240,7 +5258,7 @@ class MobileAiAdvancedPage extends StatelessWidget {
                               state.updateConfig((c) => c..aiAutoTitle = v),
                         ),
                         // 展开/收起带动画，避免提示词输入框「瞬间出现」的割裂感
-                        AnimatedSize(
+                        AppAnimatedSize(
                           duration: const Duration(milliseconds: 200),
                           curve: Curves.easeOutCubic,
                           alignment: Alignment.topCenter,

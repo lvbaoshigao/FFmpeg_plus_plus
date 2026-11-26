@@ -83,7 +83,7 @@ class _WallpaperViewport extends StatefulWidget {
 }
 
 class _WallpaperViewportState extends State<_WallpaperViewport> {
-  ({String path, Size size, double dpr})? _decodeTarget;
+  ({String path, Size size, double dpr, bool disableAnimations})? _decodeTarget;
   ImageProvider<Object>? _provider;
   late bool _pathExists = _fileExists(widget.path);
 
@@ -102,17 +102,36 @@ class _WallpaperViewportState extends State<_WallpaperViewport> {
   Widget build(BuildContext context) {
     final path = widget.path;
     final screen = MediaQuery.sizeOf(context);
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
     final hasWallpaper = path.isNotEmpty && _pathExists;
     final resizing = DesktopResizeScope.isResizingOf(context);
     if (!hasWallpaper) {
       _provider = null;
       _decodeTarget = null;
-    } else if (!resizing || path != _decodeTarget?.path) {
-      final size = screen;
-      final dpr = MediaQuery.devicePixelRatioOf(context);
-      final target = (path: path, size: size, dpr: dpr);
+    } else if (!resizing ||
+        path != _decodeTarget?.path ||
+        disableAnimations != _decodeTarget?.disableAnimations) {
+      // Motion changes take effect during resizing too, retaining the frozen
+      // decode size until the viewport settles.
+      final frozen = resizing && path == _decodeTarget?.path
+          ? _decodeTarget
+          : null;
+      final size = frozen?.size ?? screen;
+      final dpr = frozen?.dpr ?? MediaQuery.devicePixelRatioOf(context);
+      final target = (
+        path: path,
+        size: size,
+        dpr: dpr,
+        disableAnimations: disableAnimations,
+      );
       if (!size.isEmpty && target != _decodeTarget) {
-        _provider = wallpaperImageProvider(path, size.width, size.height, dpr);
+        _provider = wallpaperImageProvider(
+          path,
+          size.width,
+          size.height,
+          dpr,
+          disableAnimations: disableAnimations,
+        );
         _decodeTarget = target;
       } else if (size.isEmpty && path != _decodeTarget?.path) {
         _provider = null;

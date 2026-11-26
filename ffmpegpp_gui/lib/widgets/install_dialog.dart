@@ -22,6 +22,9 @@ class FfmpegInstallDialog extends StatefulWidget {
   static Future<bool?> show(BuildContext context) {
     return showDialog<bool>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       barrierDismissible: false,
       builder: (_) => const FfmpegInstallDialog(),
     );

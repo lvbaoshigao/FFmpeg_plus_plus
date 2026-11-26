@@ -47,7 +47,9 @@ import '../widgets/adaptive_top_bar.dart';
 import '../widgets/ai_workflow_card.dart';
 import '../widgets/animated_popup.dart';
 import '../widgets/app_alert_dialog.dart';
+import '../widgets/app_animated_size.dart';
 import '../widgets/app_card.dart';
+import '../widgets/app_date_time_picker.dart';
 import '../widgets/app_dropdown.dart';
 // 统一滑块：条件门「命中概率」也走 AppSlider，否则这一条没有玻璃轨道与
 // 彗星拖尾，与属性面板里其它滑块外观不一致（见 app_slider.dart 文件头）。
@@ -1821,6 +1823,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       final s = AppStrings.of(context.read<AppState>().config.language);
       showDialog(
         context: context,
+        animationStyle: MediaQuery.disableAnimationsOf(context)
+            ? AnimationStyle.noAnimation
+            : null,
         builder: (ctx) => AppAlertDialog(
           title: Row(
             children: [
@@ -1898,6 +1903,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       final zh = s.isZh;
       showDialog(
         context: context,
+        animationStyle: MediaQuery.disableAnimationsOf(context)
+            ? AnimationStyle.noAnimation
+            : null,
         builder: (ctx) => AppAlertDialog(
           title: Row(
             children: [
@@ -1967,6 +1975,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 不会重建它，所以格式变化仍要通过 onFormatChanged 同步回页面。
     final opts = await showDialog<_ExportDialogResult>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) => _ExportConfigDialog(
         initialFormat: _writeFormat,
         nodeCount: _nodes.length,
@@ -2008,6 +2019,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       unawaited(File(tmpPath).delete().then((_) {}, onError: (Object _) {}));
       showDialog(
         context: context,
+        animationStyle: MediaQuery.disableAnimationsOf(context)
+            ? AnimationStyle.noAnimation
+            : null,
         builder: (ctx) => AppAlertDialog(
           title: Row(
             children: [
@@ -2149,6 +2163,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             : (imported.error ?? '');
         showDialog(
           context: context,
+          animationStyle: MediaQuery.disableAnimationsOf(context)
+              ? AnimationStyle.noAnimation
+              : null,
           builder: (ctx) => AppAlertDialog(
             title: Text(
               zh ? '配置加载失败' : 'Load Failed',
@@ -2182,6 +2199,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         final ids = imported.unknownTypeIds.join(', ');
         final goOn = await showDialog<bool>(
           context: context,
+          animationStyle: MediaQuery.disableAnimationsOf(context)
+              ? AnimationStyle.noAnimation
+              : null,
           builder: (ctx) => AppAlertDialog(
             title: Row(
               children: [
@@ -2329,6 +2349,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final s = AppStrings.of(context.read<AppState>().config.language);
     final result = await showDialog<bool>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) => AppAlertDialog(
         // 不写 shape：继承主题 dialogTheme（圆角 22 + 0.6 描边）。
         // 原先写死 BorderRadius.circular(16)，两个问题叠在一起：
@@ -2884,6 +2907,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final scheme = Theme.of(context).colorScheme;
     return showDialog<int>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) => AppAlertDialog(
         title: Text(
           s.isZh ? '设置循环次数' : 'Set Loop Count',
@@ -3145,6 +3171,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     try {
       await showDialog<void>(
         context: context,
+        animationStyle: MediaQuery.disableAnimationsOf(context)
+            ? AnimationStyle.noAnimation
+            : null,
         builder: (dialogContext) => Consumer<AppState>(
           builder: (dialogContext, state, _) => StatefulBuilder(
             builder: (dialogContext, updateDialog) {
@@ -4295,7 +4324,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             }),
             borderRadius: BorderRadius.circular(pill.radius),
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 220),
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 220),
               curve: Curves.easeOutCubic,
               height: pill.height,
               padding: EdgeInsets.symmetric(horizontal: pill.padH),
@@ -4308,7 +4339,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 200),
                     child: SizedBox(
                       key: ValueKey(_aiDrawerOpen ? 'open' : 'closed'),
                       width: pill.iconSize + 2,
@@ -4323,7 +4356,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                     ),
                   ),
                   // 会话标题（有则显示，AnimatedSize 展开/折叠）
-                  AnimatedSize(
+                  AppAnimatedSize(
                     duration: const Duration(milliseconds: 220),
                     curve: Curves.easeOutCubic,
                     alignment: Alignment.centerLeft,
@@ -4501,6 +4534,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     );
     final result = await showDialog<String>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (dCtx) => AppAlertDialog(
         title: Text(
           s.isZh ? '自定义模型' : 'Custom Model',
@@ -4588,13 +4624,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                           left: 0,
                           right: 0,
                           child: AnimatedSlide(
-                            duration: const Duration(milliseconds: 240),
+                            duration: MediaQuery.disableAnimationsOf(context)
+                                ? Duration.zero
+                                : const Duration(milliseconds: 240),
                             curve: Curves.easeOutCubic,
                             offset: _mobileTopBarVisible
                                 ? Offset.zero
                                 : const Offset(0, -1.4),
                             child: AnimatedOpacity(
-                              duration: const Duration(milliseconds: 180),
+                              duration: MediaQuery.disableAnimationsOf(context)
+                                  ? Duration.zero
+                                  : const Duration(milliseconds: 180),
                               opacity: _mobileTopBarVisible ? 1.0 : 0.0,
                               child: IgnorePointer(
                                 ignoring: !_mobileTopBarVisible,
@@ -6319,7 +6359,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                           // 视口高度扣除了底部工具条，输入框也不会被底栏裁掉。
                           // 桌面端无软键盘 viewInsets，无需额外避让。
                           AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
+                            duration: MediaQuery.disableAnimationsOf(context)
+                                ? Duration.zero
+                                : const Duration(milliseconds: 200),
                             curve: Curves.easeOutCubic,
                             // 拖出为浮动小窗 / 外置到系统窗口时抽屉让位
                             // （同一面板不能同时出现两份）
@@ -6600,7 +6642,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                                   },
                                   behavior: HitTestBehavior.opaque,
                                   child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 160),
+                                    duration:
+                                        MediaQuery.disableAnimationsOf(context)
+                                        ? Duration.zero
+                                        : const Duration(milliseconds: 160),
                                     curve: Curves.easeOutCubic,
                                     width: 20,
                                     height: 56,
@@ -7353,7 +7398,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         const SizedBox(height: 2),
                         GestureDetector(
                           onTap: () async {
-                            final picked = await showDatePicker(
+                            final picked = await showAppDatePicker(
                               context: ctx,
                               initialDate: _parseDate(dateStr) ?? now,
                               firstDate: DateTime(now.year - 1),
@@ -7437,7 +7482,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         const SizedBox(height: 2),
                         GestureDetector(
                           onTap: () async {
-                            final t = await showTimePicker(
+                            final t = await showAppTimePicker(
                               context: ctx,
                               initialTime: startTime,
                               initialEntryMode: TimePickerEntryMode.input,
@@ -7547,7 +7592,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                             children: [
                               GestureDetector(
                                 onTap: () async {
-                                  final t = await showTimePicker(
+                                  final t = await showAppTimePicker(
                                     context: ctx,
                                     initialTime: endTime!,
                                     initialEntryMode: TimePickerEntryMode.input,
@@ -9086,7 +9131,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
             if (trailing != null) ...[trailing, const SizedBox(width: 6)],
             AnimatedRotation(
               turns: expanded ? 0.0 : 0.5,
-              duration: const Duration(milliseconds: 200),
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 200),
               child: Icon(Icons.expand_less, size: 16, color: scheme.outline),
             ),
           ],
@@ -9546,7 +9593,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   }) {
     final alpha = (opacity.clamp(0.0, 1.0) * 255).round();
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 150),
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
@@ -9653,7 +9702,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         );
       }
       return AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
         decoration: BoxDecoration(
           color: isSelected
@@ -9829,7 +9880,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final o = opacity.clamp(0.0, 1.0);
     Color fade(Color c) => o >= 1.0 ? c : c.withAlpha((c.a * 255 * o).round());
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 150),
       padding: EdgeInsets.symmetric(
         horizontal: isMobilePlatform ? 8 : 10,
         vertical: isMobilePlatform ? 5 : 5,
@@ -10827,7 +10880,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           context,
         ).modalBarrierDismissLabel,
         barrierColor: scheme.scrim.withAlpha(76),
-        transitionDuration: const Duration(milliseconds: 240),
+        transitionDuration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 240),
         pageBuilder: (ctx, anim, anim2) {
           final scheme = Theme.of(ctx).colorScheme;
           final w = MediaQuery.sizeOf(ctx).width;
@@ -10882,6 +10937,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           );
         },
         transitionBuilder: (ctx, anim, anim2, child) {
+          if (MediaQuery.disableAnimationsOf(ctx)) return child;
           final offset = Tween<Offset>(
             begin: const Offset(-1, 0),
             end: Offset.zero,
@@ -10903,6 +10959,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     // 与 insets 不叠加。
     showModalBottomSheet<void>(
       context: context,
+      sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
@@ -11734,6 +11793,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     ];
     await showModalBottomSheet<void>(
       context: context,
+      sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       useSafeArea: true,
       showDragHandle: true,
       builder: (ctx) => Padding(
@@ -13597,6 +13659,7 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
 
   @override
   void importMessages(List<Map<String, dynamic>> messages) {
+    _historySessionGeneration++;
     _historyFilePath = null;
     _historyTitleOverride = null;
     setState(() {
@@ -13642,6 +13705,8 @@ class _AiPanelViewState extends State<AiPanelView> implements AiPanelApi {
   final List<AiChatAttachment> _attachments = [];
   bool _historyOpen = false;
   List<Map<String, dynamic>> _historySessions = [];
+  int _historyListGeneration = 0;
+  int _historySessionGeneration = 0;
   _AiMobileSidebarPage _mobileSidebarPage = _AiMobileSidebarPage.history;
 
   /// File backing the current session. Reused so auto-saves overwrite instead of
@@ -14328,6 +14393,9 @@ Available actions: __TOOLS__''';
     final s = widget.strings;
     final ok = await showDialog<bool>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (dCtx) => AppAlertDialog(
         title: Text(
           s.isZh ? 'AI 请求执行操作' : 'AI requests to run an action',
@@ -15280,6 +15348,7 @@ Available actions: __TOOLS__''';
       // 所以「停止后立刻重发」不会被静默吞掉（见 _AiStreamRequest 注释）。
       return;
     }
+    _historySessionGeneration++;
     if (_requestHistoryOmittedCount != 0) {
       setState(() => _requestHistoryOmittedCount = 0);
     }
@@ -16568,7 +16637,10 @@ Available actions: __TOOLS__''';
                   } else {
                     setState(() {
                       _toolsOpen = !_toolsOpen;
-                      if (_toolsOpen) _historyOpen = false;
+                      if (_toolsOpen) {
+                        _historyOpen = false;
+                        _discardHistorySessions();
+                      }
                     });
                   }
                 },
@@ -16680,6 +16752,7 @@ Available actions: __TOOLS__''';
   /// 不这么做的话，清空消息后 _historyFilePath 仍指向旧文件，下一轮自动保存
   /// 会把新话题写回旧会话里（两个话题混成一条历史）。
   void _startNewChat() {
+    _historySessionGeneration++;
     if (_loading) _stopGeneration();
     setState(() {
       _messages.clear();
@@ -16703,6 +16776,7 @@ Available actions: __TOOLS__''';
 
   /// 关闭移动端弹层 / 侧栏：优先用宿主传入的 onCloseRequested，退化为折叠或 pop。
   void _requestMobileSheetClose() {
+    if (_historyOpen) _closeHistory();
     final close = widget.onCloseRequested;
     if (close != null) {
       close();
@@ -16725,7 +16799,7 @@ Available actions: __TOOLS__''';
           leading: SizedBox(
             width: 10,
             height: 10,
-            child: CircularProgressIndicator(
+            child: AppCircularProgressIndicator(
               strokeWidth: 1.4,
               color: scheme.primary,
             ),
@@ -17559,16 +17633,30 @@ Available actions: __TOOLS__''';
     );
   }
 
+  // Invalidate in-flight listings as soon as the list is hidden.
+  void _discardHistorySessions() {
+    _historyListGeneration++;
+    _historySessions = [];
+  }
+
+  void _closeHistory() {
+    setState(() {
+      _historyOpen = false;
+      _discardHistorySessions();
+    });
+  }
+
   /// Both embedded and external mobile headers toggle this same sidebar.
   Future<void> _toggleHistoryAt() async {
     if (_historyOpen) {
-      setState(() => _historyOpen = false);
+      _closeHistory();
       return;
     }
     if (!isMobilePlatform) {
       setState(() {
         _toolsOpen = false;
         _mobileSidebarPage = _AiMobileSidebarPage.history;
+        _discardHistorySessions();
         _historyOpen = true;
       });
       await _loadHistorySessions();
@@ -17578,14 +17666,24 @@ Available actions: __TOOLS__''';
   }
 
   Future<void> _loadHistorySessions() async {
-    final sessions = await AiChatHistory.listSessions();
-    if (mounted) setState(() => _historySessions = sessions);
+    if (!_historyOpen || _mobileSidebarPage != _AiMobileSidebarPage.history) {
+      return;
+    }
+    final generation = ++_historyListGeneration;
+    bool cancelled() =>
+        !mounted ||
+        generation != _historyListGeneration ||
+        !_historyOpen ||
+        _mobileSidebarPage != _AiMobileSidebarPage.history;
+    final sessions = await AiChatHistory.listSessions(isCancelled: cancelled);
+    if (!cancelled()) setState(() => _historySessions = sessions);
   }
 
   Future<void> openMobileSidebarPage(_AiMobileSidebarPage page) async {
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       _mobileSidebarPage = page;
+      _discardHistorySessions();
       _historyOpen = true;
     });
     if (page == _AiMobileSidebarPage.history) {
@@ -17617,7 +17715,7 @@ Available actions: __TOOLS__''';
           Positioned.fill(
             child: GestureDetector(
               excludeFromSemantics: true,
-              onTap: () => setState(() => _historyOpen = false),
+              onTap: _closeHistory,
               child: ColoredBox(color: scheme.scrim.withAlpha(68)),
             ),
           ),
@@ -17649,7 +17747,7 @@ Available actions: __TOOLS__''';
                         ),
                         IconButton(
                           tooltip: strings.isZh ? '关闭侧栏' : 'Close sidebar',
-                          onPressed: () => setState(() => _historyOpen = false),
+                          onPressed: _closeHistory,
                           icon: const Icon(Icons.close, size: 19),
                         ),
                       ],
@@ -17777,7 +17875,7 @@ Available actions: __TOOLS__''';
           ],
           const SizedBox(height: 18),
           FilledButton.icon(
-            onPressed: () => setState(() => _historyOpen = false),
+            onPressed: _closeHistory,
             icon: const Icon(Icons.chat_bubble_outline),
             label: Text(s.isZh ? '返回当前对话' : 'Return to conversation'),
           ),
@@ -17831,7 +17929,7 @@ Available actions: __TOOLS__''';
             Positioned.fill(
               child: GestureDetector(
                 excludeFromSemantics: true,
-                onTap: () => setState(() => _historyOpen = false),
+                onTap: _closeHistory,
                 child: ColoredBox(color: scheme.scrim.withAlpha(60)),
               ),
             ),
@@ -17906,7 +18004,7 @@ Available actions: __TOOLS__''';
           child: IconButton(
             tooltip: zh ? '关闭历史' : 'Close history',
             padding: EdgeInsets.zero,
-            onPressed: () => setState(() => _historyOpen = false),
+            onPressed: _closeHistory,
             icon: const Icon(Icons.close, size: 18),
           ),
         ),
@@ -17927,12 +18025,14 @@ Available actions: __TOOLS__''';
   }
 
   Future<void> _clearChatHistory() async {
+    _historySessionGeneration++;
+    _historyListGeneration++;
     await AiChatHistory.clearAll();
     if (!mounted) return;
     setState(() {
       _historyFilePath = null;
       _historyTitleOverride = null;
-      _historySessions = [];
+      _discardHistorySessions();
     });
   }
 
@@ -18011,8 +18111,8 @@ Available actions: __TOOLS__''';
         enabled: enabled,
         onTap: enabled
             ? () {
-                _loadHistorySession(session, strings);
-                setState(() => _historyOpen = false);
+                unawaited(_loadHistorySession(session, strings));
+                _closeHistory();
               }
             : null,
       ),
@@ -18059,6 +18159,8 @@ Available actions: __TOOLS__''';
   Future<void> _deleteHistorySession(Map<String, dynamic> session) async {
     final file = session['_file'] as String?;
     if (file == null || file.isEmpty) return;
+    _historySessionGeneration++;
+    _historyListGeneration++;
     await AiChatHistory.deleteSession(file);
     final wasCurrent = _historyFilePath == file;
     if (wasCurrent) {
@@ -18095,6 +18197,9 @@ Available actions: __TOOLS__''';
     final ctrl = TextEditingController(text: session['title'] as String? ?? '');
     final title = await showDialog<String>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (dialogContext) => AppAlertDialog(
         title: Text(s.isZh ? '重命名对话' : 'Rename chat'),
         content: TextField(
@@ -18119,15 +18224,22 @@ Available actions: __TOOLS__''';
     // 「A TextEditingController was used after being disposed」。
     Future<void>.delayed(const Duration(milliseconds: 300), ctrl.dispose);
     if (!mounted || title == null || title.isEmpty) return;
-    await AiChatHistory.saveSession(
+    // The list only owns metadata. Reload at confirmation time so renaming
+    // cannot overwrite the saved body (or cumulative token counts) with empties.
+    final entry = await AiChatHistory.loadSession(file);
+    if (!mounted || entry == null) return;
+    final saved = await AiChatHistory.saveSession(
       title: title,
-      provider: (session['provider'] as String?) ?? _effectiveProvider,
-      model: (session['model'] as String?) ?? _effectiveModel,
-      messages: ((session['messages'] as List?) ?? const [])
+      provider: (entry['provider'] as String?) ?? _effectiveProvider,
+      model: (entry['model'] as String?) ?? _effectiveModel,
+      messages: ((entry['messages'] as List?) ?? const [])
           .whereType<Map<String, dynamic>>()
           .toList(),
       filePath: file,
+      totalInputTokens: (entry['total_in'] as num?)?.toInt(),
+      totalOutputTokens: (entry['total_out'] as num?)?.toInt(),
     );
+    if (!mounted || saved == null) return;
     if (file == _historyFilePath) {
       // 当前会话：记住新标题，否则下一次自动保存会按首条用户消息重新推导
       // 并原地覆盖（用户的重命名静默丢失）；同时同步顶部标题。
@@ -18144,8 +18256,26 @@ Available actions: __TOOLS__''';
   /// token 字段用 historyMessage*Tokens 读取：本文件此前保存写
   /// inputTokens/outputTokens、导出用 in/out，两套键互不相认，加载后 token
   /// 统计会归零。现在读取侧同时兼容两套（旧历史文件无需迁移）。
-  void _loadHistorySession(Map<String, dynamic> entry, AppStrings s) {
-    final msgs = (entry['messages'] as List?) ?? [];
+  Future<void> _loadHistorySession(
+    Map<String, dynamic> summary,
+    AppStrings s,
+  ) async {
+    final file = summary['_file'] as String?;
+    if (file == null || file.isEmpty || _loading || _activeRequest != null) return;
+    final generation = ++_historySessionGeneration;
+    final entry = await AiChatHistory.loadSession(file);
+    if (!mounted ||
+        generation != _historySessionGeneration ||
+        _loading ||
+        _activeRequest != null) {
+      return;
+    }
+    if (entry == null) {
+      showToast(context, s.isZh ? '无法读取会话' : 'Could not load session');
+      return;
+    }
+    final msgs = ((entry['messages'] as List?) ?? const [])
+        .whereType<Map<String, dynamic>>();
     _historyFilePath = entry['_file'] as String?;
     // 换会话了：上一个会话的手动标题不能带过来。
     _historyTitleOverride = entry['title'] as String?;
@@ -18153,8 +18283,7 @@ Available actions: __TOOLS__''';
       _requestHistoryOmittedCount = 0;
       _messages.clear();
       _messages.addAll(
-        msgs.map((m) {
-          final mm = m as Map<String, dynamic>;
+        msgs.map((mm) {
           return (
             role: (mm['role'] as String?) ?? 'assistant',
             content: (mm['content'] as String?) ?? '',
@@ -18396,7 +18525,7 @@ Available actions: __TOOLS__''';
                   ),
                 );
                 if (isMobilePlatform) {
-                  setState(() => _historyOpen = false);
+                  _closeHistory();
                 }
               },
         child: Container(
@@ -19097,7 +19226,10 @@ Available actions: __TOOLS__''';
           ? SizedBox(
               width: 11,
               height: 11,
-              child: CircularProgressIndicator(strokeWidth: 1.5, color: accent),
+              child: AppCircularProgressIndicator(
+                strokeWidth: 1.5,
+                color: accent,
+              ),
             )
           : Icon(
               failed ? Icons.close_rounded : Icons.check_rounded,

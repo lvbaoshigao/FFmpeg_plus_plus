@@ -226,6 +226,9 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
     }
     final discard = await showDialog<bool>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) => AppAlertDialog(
         title: Text(_text('放弃更改？', 'Discard changes?')),
         content: Text(
@@ -408,6 +411,9 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
         if (!didPop && !_saving) _requestClose();
       },
       child: Dialog(
+        insetAnimationDuration: media.disableAnimations
+            ? Duration.zero
+            : const Duration(milliseconds: 100),
         insetPadding: EdgeInsets.all(media.size.width < 600 ? 16 : 24),
         constraints: const BoxConstraints(maxWidth: 980),
         clipBehavior: Clip.antiAlias,

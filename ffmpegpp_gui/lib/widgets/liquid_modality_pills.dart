@@ -116,6 +116,15 @@ class _LiquidModalityPillsState extends State<LiquidModalityPills>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _fromWeights = Map<String, double>.of(_toWeights);
+      _controller.value = 1;
+    }
+  }
+
+  @override
   void didUpdateWidget(LiquidModalityPills old) {
     super.didUpdateWidget(old);
     if (!setEquals(old.selected, widget.selected)) {
@@ -129,7 +138,7 @@ class _LiquidModalityPillsState extends State<LiquidModalityPills>
         ...current,
       };
       _toWeights = _weightsFor(widget.selected);
-      if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) {
+      if (MediaQuery.disableAnimationsOf(context)) {
         _fromWeights = Map<String, double>.of(_toWeights);
         _controller.value = 1;
       } else {

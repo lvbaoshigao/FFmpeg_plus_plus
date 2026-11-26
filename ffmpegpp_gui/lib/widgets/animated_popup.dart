@@ -42,6 +42,7 @@ Future<T?> showAnimatedMenu<T>({
   required Offset position,
   required List<AnimatedMenuEntry<T>> items,
   BoxConstraints? constraints,
+
   /// 期望的固定宽度（null = 按内容自适应）。
   ///
   /// 条目多（如「全部元素」29 项）时，`IntrinsicWidth` 会对每个子项各做一次
@@ -49,8 +50,7 @@ Future<T?> showAnimatedMenu<T>({
   /// 调用点已知期望宽度时传进来即跳过该测量。
   double? width,
 }) {
-  final overlay =
-      Overlay.of(context).context.findRenderObject() as RenderBox?;
+  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
   final screen = overlay?.size ?? MediaQuery.sizeOf(context);
   return Navigator.of(context).push(
     _AnimatedMenuRoute<T>(
@@ -59,9 +59,12 @@ Future<T?> showAnimatedMenu<T>({
       items: items,
       constraints: constraints ?? popupConstraints(),
       width: width,
-      capturedThemes:
-          InheritedTheme.capture(from: context, to: Navigator.of(context).context),
+      capturedThemes: InheritedTheme.capture(
+        from: context,
+        to: Navigator.of(context).context,
+      ),
       barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+      reduceMotion: MediaQuery.disableAnimationsOf(context),
     ),
   );
 }
@@ -92,11 +95,11 @@ class AnimatedMenuEntry<T> {
   }) : isDivider = false;
 
   const AnimatedMenuEntry.divider()
-      : value = null,
-        child = const SizedBox.shrink(),
-        isDivider = true,
-        height = 9,
-        onTap = null;
+    : value = null,
+      child = const SizedBox.shrink(),
+      isDivider = true,
+      height = 9,
+      onTap = null;
 
   bool get enabled => value != null || onTap != null;
 }
@@ -110,6 +113,7 @@ class _AnimatedMenuRoute<T> extends PopupRoute<T> {
     this.width,
     required this.capturedThemes,
     required this.barrierLabel,
+    required this.reduceMotion,
   });
 
   final Offset position;
@@ -120,6 +124,16 @@ class _AnimatedMenuRoute<T> extends PopupRoute<T> {
   /// 固定宽度（null = 按内容自适应，见 [showAnimatedMenu]）。
   final double? width;
   final CapturedThemes capturedThemes;
+  final bool reduceMotion;
+
+  bool get _animationsDisabled {
+    final routeContext = navigator?.context;
+    return routeContext == null
+        ? reduceMotion
+        : MediaQuery.disableAnimationsOf(routeContext);
+  }
+
+  bool _settleScheduled = false;
 
   @override
   final String barrierLabel;
@@ -140,10 +154,12 @@ class _AnimatedMenuRoute<T> extends PopupRoute<T> {
   }
 
   @override
-  Duration get transitionDuration => const Duration(milliseconds: 200);
+  Duration get transitionDuration =>
+      _animationsDisabled ? Duration.zero : const Duration(milliseconds: 200);
 
   @override
-  Duration get reverseTransitionDuration => const Duration(milliseconds: 140);
+  Duration get reverseTransitionDuration =>
+      _animationsDisabled ? Duration.zero : const Duration(milliseconds: 140);
 
   @override
   bool get barrierDismissible => true;
@@ -152,8 +168,11 @@ class _AnimatedMenuRoute<T> extends PopupRoute<T> {
   Color? get barrierColor => null;
 
   @override
-  Widget buildPage(BuildContext context, Animation<double> animation,
-      Animation<double> secondaryAnimation) {
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) {
     final menu = _AnimatedMenuBody<T>(
       items: items,
       constraints: constraints,
@@ -167,8 +186,25 @@ class _AnimatedMenuRoute<T> extends PopupRoute<T> {
   }
 
   @override
-  Widget buildTransitions(BuildContext context, Animation<double> animation,
-      Animation<double> secondaryAnimation, Widget child) {
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      if (controller?.isAnimating == true && !_settleScheduled) {
+        _settleScheduled = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _settleScheduled = false;
+          final current = controller;
+          if (navigator != null && current != null && current.isAnimating) {
+            current.value = current.status == AnimationStatus.reverse ? 0 : 1;
+          }
+        });
+      }
+      return child;
+    }
     final curved = _fade ??= CurvedAnimation(
       parent: animation,
       curve: Curves.easeOut,
@@ -209,10 +245,12 @@ class _MenuLayoutDelegate extends SingleChildLayoutDelegate {
 
   @override
   BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
-    return BoxConstraints.loose(Size(
-      constraints.maxWidth - _margin * 2,
-      constraints.maxHeight - _margin * 2,
-    ));
+    return BoxConstraints.loose(
+      Size(
+        constraints.maxWidth - _margin * 2,
+        constraints.maxHeight - _margin * 2,
+      ),
+    );
   }
 
   @override
@@ -223,7 +261,10 @@ class _MenuLayoutDelegate extends SingleChildLayoutDelegate {
       x = (position.dx - childSize.width).clamp(_margin, size.width - _margin);
     }
     if (y + childSize.height > size.height - _margin) {
-      y = (position.dy - childSize.height).clamp(_margin, size.height - _margin);
+      y = (position.dy - childSize.height).clamp(
+        _margin,
+        size.height - _margin,
+      );
     }
     return Offset(x, y);
   }
@@ -275,10 +316,7 @@ class _AnimatedMenuBody<T> extends StatelessWidget {
                 color: scheme.outlineVariant.withAlpha(90),
               )
             else
-              _MenuRow<T>(
-                item: item,
-                onSelected: onSelected,
-              ),
+              _MenuRow<T>(item: item, onSelected: onSelected),
         ],
       ),
     );

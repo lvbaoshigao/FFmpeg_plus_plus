@@ -16,17 +16,13 @@ void showToast(
 }) {
   final overlay = Overlay.of(context);
   final mobile = isMobilePlatform;
-  final reduceMotion = mobile && MediaQuery.disableAnimationsOf(context);
-  final duration = reduceMotion
-      ? Duration.zero
-      : const Duration(milliseconds: 250);
   late OverlayEntry entry;
-  final controller = AnimationController(vsync: overlay, duration: duration);
-  final animation = CurvedAnimation(
-    parent: controller,
-    curve: Curves.easeOut,
-    reverseCurve: Curves.easeIn,
-  );
+  var dismissed = false;
+  void dismiss() {
+    if (dismissed) return;
+    dismissed = true;
+    if (entry.mounted) entry.remove();
+  }
 
   entry = OverlayEntry(
     builder: (ctx) {
@@ -95,7 +91,7 @@ void showToast(
                 child: surface,
               ),
       );
-      Widget toast = Material(
+      final toast = Material(
         color: Colors.transparent,
         child: Container(
           constraints: const BoxConstraints(maxWidth: 420),
@@ -112,53 +108,105 @@ void showToast(
           child: surface,
         ),
       );
-      if (!reduceMotion) {
-        toast = FadeTransition(
-          opacity: animation,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, -0.3),
-              end: Offset.zero,
-            ).animate(animation),
-            child: toast,
-          ),
-        );
-      }
       return Positioned(
         top: top,
         left: 0,
         right: 0,
-        child: Center(child: toast),
+        child: Center(
+          child: _ToastMotion(onDismiss: dismiss, child: toast),
+        ),
       );
     },
   );
 
   overlay.insert(entry);
-  controller.forward();
+}
 
-  // Dispose once whether timeout or an overlay teardown wins the race.
-  var dismissed = false;
-  void dismiss() {
-    if (dismissed) return;
-    dismissed = true;
-    try {
-      entry.remove();
-    } catch (_) {}
-    try {
-      controller.dispose();
-    } catch (_) {}
+/// Own the ticker and timeout in the overlay subtree so preference changes and
+/// navigator teardown stop motion immediately, including desktop toasts.
+class _ToastMotion extends StatefulWidget {
+  const _ToastMotion({required this.onDismiss, required this.child});
+
+  final VoidCallback onDismiss;
+  final Widget child;
+
+  @override
+  State<_ToastMotion> createState() => _ToastMotionState();
+}
+
+class _ToastMotionState extends State<_ToastMotion>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final CurvedAnimation _animation;
+  late final Timer _timeout;
+  bool _reduceMotion = false;
+  bool _started = false;
+  bool _closing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    );
+    _animation = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOut,
+      reverseCurve: Curves.easeIn,
+    );
+    _timeout = Timer(const Duration(seconds: 2), _close);
   }
 
-  Timer(const Duration(seconds: 2), () {
-    if (dismissed) return;
-    if (!overlay.mounted) {
-      dismiss();
-      return;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (_reduceMotion) {
+      _controller.value = _closing ? 0 : 1;
+      if (_closing) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) widget.onDismiss();
+        });
+      }
+    } else if (!_started) {
+      _controller.forward();
     }
-    if (reduceMotion) {
-      dismiss();
+    _started = true;
+  }
+
+  void _close() {
+    if (!mounted) return;
+    _closing = true;
+    if (_reduceMotion) {
+      widget.onDismiss();
     } else {
-      controller.reverse().whenComplete(dismiss);
+      _controller.reverse().whenComplete(() {
+        if (mounted) widget.onDismiss();
+      });
     }
-  });
+  }
+
+  @override
+  void dispose() {
+    _timeout.cancel();
+    _animation.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_reduceMotion) return widget.child;
+    return FadeTransition(
+      opacity: _animation,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, -0.3),
+          end: Offset.zero,
+        ).animate(_animation),
+        child: widget.child,
+      ),
+    );
+  }
 }

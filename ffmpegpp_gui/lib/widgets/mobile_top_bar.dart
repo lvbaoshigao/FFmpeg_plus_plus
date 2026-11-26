@@ -161,6 +161,7 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
     with SingleTickerProviderStateMixin {
   /// 右半操作是否已展开（只在「确实放不下」的状态下才可能为 true）
   bool _expanded = false;
+  bool _reduceMotion = false;
 
   /// 0 = 左半可见、操作收在「…」里；1 = 左半已隐藏、全部操作已滑入。
   ///
@@ -194,6 +195,13 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
   FocusNode? _previousFocus;
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (_reduceMotion) _controllerInstance?.value = _expanded ? 1 : 0;
+  }
+
+  @override
   void didUpdateWidget(covariant MobilePillBarLayout oldWidget) {
     super.didUpdateWidget(oldWidget);
     // 外部强制收起（搜索态）或操作数量变化：回到收起态。
@@ -219,7 +227,11 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
     setState(() => _expanded = true);
     _previousFocus = FocusManager.instance.primaryFocus;
     _focusNode.requestFocus();
-    _controller.forward();
+    if (_reduceMotion) {
+      _controller.value = 1;
+    } else {
+      _controller.forward();
+    }
   }
 
   /// 收起。[fromUpdate] = true 表示在 didUpdateWidget 内调用（重建已在进行）。
@@ -230,7 +242,11 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
     } else {
       setState(() => _expanded = false);
     }
-    _controller.reverse();
+    if (_reduceMotion) {
+      _controller.value = 0;
+    } else {
+      _controller.reverse();
+    }
     final previous = _previousFocus;
     _previousFocus = null;
     if (previous != null && previous.canRequestFocus) {
@@ -484,7 +500,8 @@ class _MobilePillBarLayoutState extends State<MobilePillBarLayout>
               width: MobileUi.actionButtonSize,
               height: MobileUi.actionButtonSize,
               child: AnimatedSwitcher(
-                duration: _overflowDuration,
+                key: ValueKey(_reduceMotion),
+                duration: _reduceMotion ? Duration.zero : _overflowDuration,
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeOutCubic,
                 transitionBuilder: (child, anim) => ScaleTransition(

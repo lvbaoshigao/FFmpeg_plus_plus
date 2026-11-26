@@ -14,6 +14,7 @@ import '../platform/app_platform.dart';
 import '../services/android_platform.dart';
 import '../services/audio_visualization.dart';
 import '../services/backend_client.dart';
+import '../services/bounded_log_writer.dart';
 import '../services/config_service.dart';
 import '../services/diagnostic_trace.dart';
 import '../services/ffmpeg_installer.dart';
@@ -306,8 +307,10 @@ class AppState extends ChangeNotifier {
   final List<LogEntry> _logEntries = [];
   // 日志内存上限：长任务期间 stderr 逐行入队会无界增长，超出后丢弃最旧
   static const int _maxLogEntries = 2000;
-  // L-11：单日志文件磁盘上限，超出轮转到 .1 备份，避免写盘无界增长
-  static const int _maxLogDiskBytes = 10 * 1024 * 1024;
+  // Entry count alone does not bound large command/error/AI messages.
+  static const int _maxLogMessageChars = 16 * 1024;
+  static const int _maxLogChars = 512 * 1024;
+  int _logChars = 0;
   bool _logNotifyPending = false;
   // 日志版本号：每次日志内容变化时自增。日志页用 Selector 订阅该计数
   // 而非整个 AppState，避免无关的进度心跳/任务更新触发日志页重建。
@@ -315,8 +318,6 @@ class AppState extends ChangeNotifier {
   int get logVersion => _logVersion;
   // 进度类日志的合批通知定时器（见 addLog 注释）
   Timer? _progressLogNotifyTimer;
-  // 日志目录探测缓存（避免每条日志同步 existsSync/createSync）
-  String? _logDirReadyFor;
   // L-11：stderr 进度行节流时间戳（避免高频 time= 行让日志/通知无界增长）
   DateTime? _lastStderrProgressAt;
   // UnmodifiableListView 是零拷贝视图（List.unmodifiable 每次都会构造新列表），
@@ -342,13 +343,22 @@ class AppState extends ChangeNotifier {
       return;
     }
 
+    if (message.length > _maxLogMessageChars) {
+      const marker = '[...truncated...]\n';
+      message = marker +
+          message.substring(message.length - _maxLogMessageChars + marker.length);
+    }
     _logEntries.add(
       LogEntry(timestamp: DateTime.now(), message: message, category: cat),
     );
+    _logChars += message.length;
     _logVersion++;
-    if (_logEntries.length > _maxLogEntries) {
-      _logEntries.removeRange(0, _logEntries.length - _maxLogEntries);
+    var removeCount = 0;
+    while (_logEntries.length - removeCount > _maxLogEntries ||
+        _logChars > _maxLogChars) {
+      _logChars -= _logEntries[removeCount++].message.length;
     }
+    if (removeCount > 0) _logEntries.removeRange(0, removeCount);
     // L-11：progress 类日志不写盘（高频、纯进度，无价值且会让日志文件无界膨胀）
     if (config.saveLogs && config.logSavePath.isNotEmpty && cat != 'progress') {
       _writeLogToFile(message, cat);
@@ -377,49 +387,19 @@ class AppState extends ChangeNotifier {
 
   void clearLogs() {
     _logEntries.clear();
+    _logChars = 0;
     _logVersion++;
     notifyListeners();
   }
 
-  /// 日志文件串行化写入链（异步，避免阻塞 UI 且防止交错写坏文件）
-  Future<void>? _logWriteInFlight;
+  final _logWriter = BoundedLogWriter();
+
   void _writeLogToFile(String message, String category) {
-    try {
-      final dir = Directory(config.logSavePath);
-      // 目录存在性只需探测一次（路径变化时重新探测）
-      if (_logDirReadyFor != config.logSavePath) {
-        if (!dir.existsSync()) dir.createSync(recursive: true);
-        _logDirReadyFor = config.logSavePath;
-      }
-      final date = DateTime.now();
-      final file = File(
-        '${dir.path}${Platform.pathSeparator}ffmpegpp_${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}.log',
-      );
-      final ts = date.toIso8601String().substring(11, 23);
-      final line = '[$ts][$category] $message\n';
-      // 原 writeAsStringSync 每次打开-写入-关闭阻塞 UI；改为异步串行追加
-      _logWriteInFlight = (_logWriteInFlight ?? Future<void>.value()).then((
-        _,
-      ) async {
-        try {
-          // L-11：磁盘日志上限，超出则轮转到 .1 备份，避免写盘无界增长
-          if (await file.exists()) {
-            final size = await file.length();
-            if (size > _maxLogDiskBytes) {
-              final rotated = File('${file.path}.1');
-              try {
-                if (await rotated.exists()) await rotated.delete();
-                await file.rename(rotated.path);
-              } catch (_) {}
-            }
-          }
-          await file.writeAsString(line, mode: FileMode.append);
-        } catch (_) {}
-      });
-    } catch (_) {
-      // 目录创建失败等：重置缓存，下次重试
-      _logDirReadyFor = null;
-    }
+    final date = DateTime.now();
+    final path =
+        '${config.logSavePath}${Platform.pathSeparator}ffmpegpp_${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}.log';
+    final ts = date.toIso8601String().substring(11, 23);
+    _logWriter.append(path, '[$ts][$category] $message\n');
   }
 
   AppConfig get config => configService.config;
@@ -429,6 +409,10 @@ class AppState extends ChangeNotifier {
 
   bool _initialized = false;
   bool get initialized => _initialized;
+
+  /// Startup motion stays still until the saved preference is available.
+  bool _configLoaded = false;
+  bool get configLoaded => _configLoaded;
 
   /// 启动初始化。**保证不抛异常、保证 `initialized` 最终为 true**。
   ///
@@ -445,6 +429,8 @@ class AppState extends ChangeNotifier {
     DiagnosticSpan? span;
     try {
       await configService.load();
+      _configLoaded = true;
+      _safeNotify();
       diagnosticTrace.setEnabled(config.veryVerboseLogs);
       span = diagnosticTrace.begin(
         'app.initialize',
@@ -6072,6 +6058,7 @@ class AppState extends ChangeNotifier {
     await _persistTasksNow();
     await stopMcpServer();
     await pythonProcess.shutdown();
+    await _logWriter.flush(timeout: const Duration(seconds: 2));
   }
 
   @override

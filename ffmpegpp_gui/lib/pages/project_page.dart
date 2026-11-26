@@ -1028,6 +1028,9 @@ class ProjectPageState extends State<ProjectPage> {
       final scheme = Theme.of(context).colorScheme;
       final goOn = await showDialog<bool>(
         context: context,
+        animationStyle: MediaQuery.disableAnimationsOf(context)
+            ? AnimationStyle.noAnimation
+            : null,
         builder: (ctx) => AppAlertDialog(
           // 去掉 shape 覆盖：原来写死 radius 16 会把主题 dialogTheme 的
           // 圆角(22) 和 0.6px 细描边一起盖掉（RoundedRectangleBorder.side 默认 none），
@@ -1096,6 +1099,9 @@ class ProjectPageState extends State<ProjectPage> {
 
     await showDialog(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDlgState) {
           return AppAlertDialog(
@@ -1571,6 +1577,9 @@ class ProjectPageState extends State<ProjectPage> {
       } on FormatException {
         final openEditor = await showDialog<bool>(
           context: context,
+          animationStyle: MediaQuery.disableAnimationsOf(context)
+              ? AnimationStyle.noAnimation
+              : null,
           builder: (ctx) => AppAlertDialog(
             title: Text(
               zh ? '此流程需要节点编辑器' : 'Open this workflow in the node editor',
@@ -1601,6 +1610,9 @@ class ProjectPageState extends State<ProjectPage> {
       var queued = false;
       final saved = await showDialog<QuickConfig>(
         context: context,
+        animationStyle: MediaQuery.disableAnimationsOf(context)
+            ? AnimationStyle.noAnimation
+            : null,
         barrierDismissible: false,
         builder: (_) => QuickConfigPage(
           config: config,
@@ -1691,6 +1703,9 @@ class ProjectPageState extends State<ProjectPage> {
       final ctrl = TextEditingController(text: defaultName);
       final name = await showDialog<String>(
         context: context,
+        animationStyle: MediaQuery.disableAnimationsOf(context)
+            ? AnimationStyle.noAnimation
+            : null,
         builder: (ctx) => AppAlertDialog(
           title: Text(
             zh ? '容器名称' : 'Container Name',
@@ -1735,6 +1750,9 @@ class ProjectPageState extends State<ProjectPage> {
     // 液态玻璃菜单
     showModalBottomSheet(
       context: context,
+      sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       isScrollControlled: true,
       constraints: BoxConstraints(
         maxHeight: MediaQuery.sizeOf(context).height * 0.85,
@@ -1872,7 +1890,19 @@ class _ProbingBannerState extends State<_ProbingBanner>
   late final AnimationController _ctrl = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1200),
-  )..repeat();
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _ctrl
+        ..stop()
+        ..value = 0;
+    } else if (!_ctrl.isAnimating) {
+      _ctrl.repeat();
+    }
+  }
 
   @override
   void dispose() {

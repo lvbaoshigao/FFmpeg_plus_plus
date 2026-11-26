@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import 'app_alert_dialog.dart';
+import 'app_slider.dart';
 
 /// 通用字体选择器 — 点击弹出字体列表对话框
 class FontPicker extends StatelessWidget {
@@ -360,6 +361,9 @@ class FontPicker extends StatelessWidget {
   void _openPicker(BuildContext context) {
     showDialog(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (_) => _FontPickerDialog(
         currentFont: currentFont,
         language: language,
@@ -603,7 +607,7 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
                         SizedBox(
                           height: listHeight,
                           child: const Center(
-                            child: CircularProgressIndicator(),
+                            child: AppCircularProgressIndicator(),
                           ),
                         )
                       else if (_failed)
@@ -824,6 +828,9 @@ class _FontPickerDialogState extends State<_FontPickerDialog> {
     final isZh = widget.language == 'zh';
     showDialog(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) => AppModalSurface(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),

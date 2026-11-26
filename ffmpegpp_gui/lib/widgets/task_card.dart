@@ -497,6 +497,9 @@ class TaskCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     showDialog<void>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (dCtx) => AppAlertDialog(
         title: Text(
           s.isZh ? '移除任务记录' : 'Remove Task Record',
@@ -1677,7 +1680,9 @@ class _LogsPanelState extends State<_LogsPanel> {
             crossFadeState: _expanded
                 ? CrossFadeState.showSecond
                 : CrossFadeState.showFirst,
-            duration: const Duration(milliseconds: 200),
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 200),
           ),
         ],
       ),

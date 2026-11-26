@@ -435,7 +435,10 @@ Widget _optionRow<T>({
             const SizedBox(width: 10),
             // Reserve the checkmark width so all labels wrap consistently.
             AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
+              key: ValueKey(MediaQuery.disableAnimationsOf(context)),
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 180),
               transitionBuilder: (child, anim) =>
                   FadeTransition(opacity: anim, child: child),
               child: selected
@@ -837,6 +840,7 @@ class OptionMenuBar<T> extends StatefulWidget {
 class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
     with SingleTickerProviderStateMixin {
   bool _expanded = false;
+  bool _reduceMotion = false;
 
   /// 浮层控制器：展开的选项列表挂在 Overlay 上（不参与宿主卡的布局）。
   final OverlayPortalController _portal = OverlayPortalController();
@@ -893,6 +897,19 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
     );
     _ovScale = Tween<double>(begin: 0.97, end: 1.0).animate(_ovCurve);
     _ovCtrl.addStatusListener(_onOverlayStatus);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (_reduceMotion) {
+      _ovCtrl.value = _expanded ? 1 : 0;
+      if (!_expanded && _portal.isShowing) {
+        _portal.hide();
+        _resetSearch();
+      }
+    }
   }
 
   /// 动画落定（完全展开）才开启实时玻璃，见 optionMenuPanel(liveGlass:)。
@@ -960,7 +977,11 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
       _expanded = true;
       _highlightIndex = null;
     });
-    _ovCtrl.forward(from: 0);
+    if (_reduceMotion) {
+      _ovCtrl.value = 1;
+    } else {
+      _ovCtrl.forward(from: 0);
+    }
     // 选中项可能在滚动区之外：等浮层首帧布局完成后把它滚进可视区，
     // 否则长列表里看不到「现在选的是什么」。
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1002,6 +1023,12 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
       });
     }
     if (!_portal.isShowing) {
+      _resetSearch();
+      return;
+    }
+    if (_reduceMotion) {
+      _ovCtrl.value = 0;
+      _portal.hide();
       _resetSearch();
       return;
     }
@@ -1228,8 +1255,11 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
                       const SizedBox(width: 4),
                       // 展开时箭头旋转 180°，与设置页二级菜单同一动画语言
                       AnimatedRotation(
+                        key: ValueKey(MediaQuery.disableAnimationsOf(context)),
                         turns: _expanded ? 0.5 : 0,
-                        duration: const Duration(milliseconds: 180),
+                        duration: MediaQuery.disableAnimationsOf(context)
+                            ? Duration.zero
+                            : const Duration(milliseconds: 180),
                         child: Icon(
                           Icons.expand_more,
                           size: 16,
@@ -1545,7 +1575,10 @@ class _OptionMenuBarState<T> extends State<OptionMenuBar<T>>
                       const SizedBox(width: 4),
                     ] else
                       AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 180),
+                        key: ValueKey(MediaQuery.disableAnimationsOf(context)),
+                        duration: MediaQuery.disableAnimationsOf(context)
+                            ? Duration.zero
+                            : const Duration(milliseconds: 180),
                         transitionBuilder: (child, anim) =>
                             FadeTransition(opacity: anim, child: child),
                         child: it.icon == null
@@ -1639,6 +1672,7 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
   final OverlayPortalController _portal = OverlayPortalController();
   final LayerLink _link = LayerLink();
   bool _expanded = false;
+  bool _reduceMotion = false;
 
   /// 键盘高亮行下标（null = 还没开始键盘导航）。
   ///
@@ -1670,6 +1704,16 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
     _ctrl.addStatusListener(_onMountStatus);
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (_reduceMotion) {
+      _ctrl.value = _expanded ? 1 : 0;
+      if (!_expanded && _portal.isShowing) _portal.hide();
+    }
+  }
+
   /// 动画落定才开启实时玻璃（同 OptionMenuBar）。
   final ValueNotifier<bool> _settled = ValueNotifier<bool>(false);
   final GlobalKey _contentKey = GlobalKey();
@@ -1695,7 +1739,11 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
       // （用户反馈「选择框默认框住第一个」）。↑/↓ 才显示高亮。
       _highlightIndex = null;
     });
-    _ctrl.forward(from: 0);
+    if (_reduceMotion) {
+      _ctrl.value = 1;
+    } else {
+      _ctrl.forward(from: 0);
+    }
   }
 
   /// PC 键盘：Esc 关闭、↑/↓ 移动高亮、Enter/Space 选中。
@@ -1743,6 +1791,11 @@ class _ScaleMenuButtonState<T> extends State<ScaleMenuButton<T>>
       });
     }
     if (!_portal.isShowing) return;
+    if (_reduceMotion) {
+      _ctrl.value = 0;
+      _portal.hide();
+      return;
+    }
     _ctrl.reverse();
     Future.delayed(_hideDelay, () {
       if (!mounted || _expanded) return;

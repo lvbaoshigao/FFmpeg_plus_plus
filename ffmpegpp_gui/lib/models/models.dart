@@ -2566,6 +2566,9 @@ class AppConfig {
   /// （见 widgets/app_slider.dart 的性能约定）。
   bool sliderParticles;
 
+  /// Disable interface motion without changing individual effect preferences.
+  bool disableAnimations;
+
   // ═══ 玻璃细节参数（设置 → 样式 → 玻璃细节）═══
   //
   // 用户要求：玻璃效果要能逐项调节（模糊度 / 通透度 / 高光强度与位置 / 边缘光），
@@ -2799,6 +2802,7 @@ class AppConfig {
     this.glassAutoTuned = false,
     this.glassFollowTheme = false,
     this.sliderParticles = true,
+    this.disableAnimations = false,
     this.glassBlur = 16.0,
     this.glassClarity = 0.45,
     this.glassHighlight = 1.0,
@@ -2981,6 +2985,7 @@ class AppConfig {
       1.0,
       0.8,
     ), // [FIX H-14] 透明度钳制 0~1
+    disableAnimations: json['disable_animations'] as bool? ?? false,
     glassEffect: json['glass_effect'] as String? ?? 'liquid',
     cardStyle: _migrateSurfaceStyle(json['card_style'] as String?),
     navStyle: _migrateSurfaceStyle(json['nav_style'] as String?),
@@ -3159,6 +3164,7 @@ class AppConfig {
     'font_weight': fontWeightIndex,
     'background_image': backgroundImage,
     'background_opacity': backgroundOpacity,
+    'disable_animations': disableAnimations,
     'glass_effect': glassEffect,
     'card_style': cardStyle, 'nav_style': navStyle, 'pill_style': pillStyle,
     'nav_auto_hide': navAutoHide,

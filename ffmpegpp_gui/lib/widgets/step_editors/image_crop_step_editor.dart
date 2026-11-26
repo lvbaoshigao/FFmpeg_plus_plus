@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../app_slider.dart';
 import 'image_crop_dialog.dart';
 
 class ImageCropStepEditor extends StatefulWidget {
@@ -362,7 +363,7 @@ class _ImageCropStepEditorState extends State<ImageCropStepEditor> {
     if (_imageSize == null) {
       return SizedBox(
         height: 160,
-        child: Center(child: CircularProgressIndicator(strokeWidth: 2, color: cs.primary)),
+        child: Center(child: AppCircularProgressIndicator(strokeWidth: 2, color: cs.primary)),
       );
     }
 

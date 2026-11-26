@@ -18,6 +18,7 @@ import '../theme/app_strings.dart';
 import '../widgets/adaptive_top_bar.dart';
 import '../widgets/app_alert_dialog.dart';
 import '../widgets/app_card.dart';
+import '../widgets/app_slider.dart';
 import '../widgets/fppx_password.dart';
 import '../widgets/glass_panel.dart';
 import '../widgets/liquid_glass_mobile_nav.dart';
@@ -142,6 +143,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
 
     showDialog(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) {
         // 新建时选择文件版本：新版为 v2 模块化二进制（Beta），旧版完全兼容历史行为
         var newFormat = false;
@@ -290,6 +294,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       final ids = result.unknownTypeIds.join(', ');
       final goOn = await showDialog<bool>(
         context: context,
+        animationStyle: MediaQuery.disableAnimationsOf(context)
+            ? AnimationStyle.noAnimation
+            : null,
         builder: (ctx) => AppAlertDialog(
           // 同 project_page：不再覆盖 shape（否则会连主题的细描边一起丢掉）
           title: Row(
@@ -331,6 +338,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     if (result.warnings.isNotEmpty) {
       final proceed = await showDialog<bool>(
         context: context,
+        animationStyle: MediaQuery.disableAnimationsOf(context)
+            ? AnimationStyle.noAnimation
+            : null,
         builder: (ctx) => AppAlertDialog(
           title: Row(
             children: [
@@ -512,6 +522,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     final scheme = Theme.of(context).colorScheme;
     showDialog(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) {
         return AppAlertDialog(
           title: Row(
@@ -576,6 +589,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     final ctrl = TextEditingController(text: entry.name);
     showDialog(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) => AppAlertDialog(
         title: Text(
           zh ? '重命名' : 'Rename',
@@ -727,6 +743,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
 
     final result = await showDialog<_ExportOptions>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           final width = MediaQuery.sizeOf(ctx).width;
@@ -985,6 +1004,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     final entry = _configs[index];
     showDialog(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) {
         final colors = Theme.of(ctx).colorScheme;
         return AppAlertDialog(
@@ -1022,6 +1044,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
   void _openQuickEditor(QuickConfig cfg) {
     showDialog(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       barrierDismissible: false,
       builder: (_) => QuickConfigPage(
         config: cfg,
@@ -1046,6 +1071,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
     final confirmed = await showDialog<bool>(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) {
         final colors = Theme.of(ctx).colorScheme;
         return AppAlertDialog(
@@ -1305,7 +1333,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                     top: MobileUi.pageTopPadding(context),
                   ),
                   child: !_loaded
-                      ? const Center(child: CircularProgressIndicator())
+                      ? const Center(child: AppCircularProgressIndicator())
                       : LayoutBuilder(
                           builder: (context, constraints) {
                             final placement = MobileNavPlacementScope.of(
@@ -1406,7 +1434,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                         _buildTabSelector(scheme, zh, compact: compact),
                         Expanded(
                           child: !_loaded
-                              ? const Center(child: CircularProgressIndicator())
+                              ? const Center(child: AppCircularProgressIndicator())
                               : ListView(
                                   // 开窗卡所在列表必须关（见 app_card 的
                                   // _WallpaperWindowPainter）

@@ -20,6 +20,7 @@ import 'services/integrity.dart';
 import 'services/multi_window.dart';
 // 高刷新率（Android 专用）：在支持 90/120/144Hz 的屏幕上按设置请求最高刷新率
 import 'services/refresh_rate.dart';
+import 'theme/app_motion_binding.dart';
 // shaderGlassSupported：玻璃 shader 是否被当前后端支持（Skia/Windows 为 false）。
 // 用于门控下面的 shader 预加载，避免在永远走不到 shader 分支的平台上白编译。
 import 'widgets/liquid_glass_fallback.dart';
@@ -57,7 +58,12 @@ void _startupLog(String msg) {
 }
 
 void main(List<String> arguments) async {
-  WidgetsFlutterBinding.ensureInitialized();
+  AppWidgetsFlutterBinding();
+  // Every Windows/macOS panel owns a separate engine and image cache. Apply
+  // the same budget before the detached-window early return as well.
+  PaintingBinding.instance.imageCache
+    ..maximumSizeBytes = 12 << 20
+    ..maximumSize = 64;
   // Each detached engine must preload too, before its early-return branch.
   await initializeDesktopGlass();
 
@@ -107,11 +113,6 @@ void main(List<String> arguments) async {
 
   // Binding 已在 main() 开头初始化（面板窗口判定需要它）
   _startupLog('1-Binding OK');
-  // Decoded image cache is separate from live images and renderer textures.
-  // Wallpaper decode is independently capped by ImageMemoryBudget.
-  PaintingBinding.instance.imageCache
-    ..maximumSizeBytes = 12 << 20
-    ..maximumSize = 64;
   _startupLog('1a-ImageCache capped at 12MiB / 64 entries');
 
   // 完整性校验 — 后台执行，失败不退出（策略：写日志 + 记录原因，不阻断启动）
@@ -321,6 +322,9 @@ Future<void> _precacheWallpaper(AppState state) async {
       size.width,
       size.height,
       view.devicePixelRatio,
+      disableAnimations: state.config.disableAnimations ||
+          WidgetsBinding.instance.platformDispatcher.accessibilityFeatures
+              .disableAnimations,
     );
     // 触发解码并等待完成，使图片进入 ImageCache（后续同参数请求直接命中）
     final stream = provider.resolve(ImageConfiguration.empty);

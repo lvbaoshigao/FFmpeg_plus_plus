@@ -143,7 +143,7 @@ class _FrameStepEditorState extends State<FrameStepEditor> with StepEditorState<
               if (_previewPath == null && !_loading)
                 Icon(Icons.photo_camera_outlined, size: 48, color: cs.outline.withAlpha(100)),
               if (_loading)
-                SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: cs.primary)),
+                SizedBox(width: 24, height: 24, child: AppCircularProgressIndicator(strokeWidth: 2, color: cs.primary)),
             ]),
           ),
         )),

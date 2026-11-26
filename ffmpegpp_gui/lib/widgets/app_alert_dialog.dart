@@ -403,10 +403,11 @@ class AppAlertDialog extends StatelessWidget {
     );
     // Keep one scroll viewport around title, form, and footer so the keyboard
     // cannot leave the actions or title outside the available dialog height.
-    Widget body = SingleChildScrollView(child: chrome);
-    if (!media.highContrast && !media.disableAnimations && surface.a < 1) {
-      body = BackdropFilter(filter: cachedGlassBlur(8), child: body);
-    }
+    Widget body = BackdropFilter(
+      filter: cachedGlassBlur(8),
+      enabled: !media.highContrast && !media.disableAnimations && surface.a < 1,
+      child: SingleChildScrollView(child: chrome),
+    );
     body = ClipPath(
       clipper: ShapeBorderClipper(
         shape: resolvedShape,
@@ -415,21 +416,23 @@ class AppAlertDialog extends StatelessWidget {
       child: body,
     );
 
-    return AlertDialog(
-      content: body,
-      contentPadding: EdgeInsets.zero,
-      backgroundColor: media.highContrast
-          ? surface.withAlpha(255)
-          : backgroundColor,
-      elevation: elevation,
-      shadowColor: shadowColor,
-      surfaceTintColor: surfaceTintColor,
-      semanticLabel: semanticLabel,
-      insetPadding: insetPadding,
-      clipBehavior: clipBehavior,
-      shape: shape,
-      alignment: alignment,
-      constraints: constraints,
+    return _DialogKeyboardInsets(
+      child: AlertDialog(
+        content: body,
+        contentPadding: EdgeInsets.zero,
+        backgroundColor: media.highContrast
+            ? surface.withAlpha(255)
+            : backgroundColor,
+        elevation: elevation,
+        shadowColor: shadowColor,
+        surfaceTintColor: surfaceTintColor,
+        semanticLabel: semanticLabel,
+        insetPadding: insetPadding,
+        clipBehavior: clipBehavior,
+        shape: shape,
+        alignment: alignment,
+        constraints: constraints,
+      ),
     );
   }
 
@@ -510,13 +513,53 @@ class AppModalSurface extends StatelessWidget {
     final surface =
         DialogTheme.of(context).backgroundColor ??
         theme.colorScheme.surfaceContainerHigh;
-    return Dialog(
-      backgroundColor: media.highContrast ? surface.withAlpha(255) : null,
-      insetPadding: insetPadding,
-      constraints: constraints,
-      alignment: alignment,
-      clipBehavior: clipBehavior,
-      child: child,
+    return _DialogKeyboardInsets(
+      child: Dialog(
+        backgroundColor: media.highContrast ? surface.withAlpha(255) : null,
+        insetAnimationDuration: media.disableAnimations
+            ? Duration.zero
+            : const Duration(milliseconds: 100),
+        insetPadding: insetPadding,
+        constraints: constraints,
+        alignment: alignment,
+        clipBehavior: clipBehavior,
+        child: child,
+      ),
+    );
+  }
+}
+
+/// Own keyboard avoidance outside Material's private AnimatedPadding so a motion
+/// preference change can snap immediately without replacing the dialog subtree.
+class _DialogKeyboardInsets extends StatelessWidget {
+  const _DialogKeyboardInsets({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    return TweenAnimationBuilder<EdgeInsets>(
+      tween: EdgeInsetsTween(end: media.viewInsets),
+      duration: media.disableAnimations
+          ? Duration.zero
+          : const Duration(milliseconds: 100),
+      curve: Curves.decelerate,
+      builder: (context, insets, child) => Padding(
+        // A running implicit animation need not restart when only its duration
+        // changes. Bypass its current value as well when motion is disabled.
+        padding: media.disableAnimations ? media.viewInsets : insets,
+        child: child,
+      ),
+      child: MediaQuery(
+        data: media.removeViewInsets(
+          removeLeft: true,
+          removeTop: true,
+          removeRight: true,
+          removeBottom: true,
+        ),
+        child: child,
+      ),
     );
   }
 }

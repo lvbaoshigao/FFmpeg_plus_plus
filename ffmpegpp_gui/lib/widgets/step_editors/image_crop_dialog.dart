@@ -43,19 +43,27 @@ Future<Rect?> showImageCropDialog(
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black87,
-      transitionDuration: const Duration(milliseconds: 160),
+      transitionDuration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 160),
       // SizedBox.expand：Overlay 给 route 的约束不保证是 tight，裸 child 会
       // 收缩到内容尺寸（Row 撑宽但 Column 撑不高），全屏外壳必须显式铺满
       pageBuilder: (_, _, _) => SizedBox.expand(child: child),
-      transitionBuilder: (_, animation, _, page) => FadeTransition(
-        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
-        child: page,
-      ),
+      transitionBuilder: (ctx, animation, _, page) {
+        if (MediaQuery.disableAnimationsOf(ctx)) return page;
+        return FadeTransition(
+          opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+          child: page,
+        );
+      },
     );
   }
   // 桌面端：居中大对话框
   return showDialog<Rect>(
     context: context,
+    animationStyle: MediaQuery.disableAnimationsOf(context)
+        ? AnimationStyle.noAnimation
+        : null,
     barrierDismissible: false,
     builder: (_) {
       final size = MediaQuery.sizeOf(context);

@@ -65,6 +65,9 @@ class _SubtitleStepEditorState extends State<SubtitleStepEditor>
     final current = _hexToColor(p[key] as String? ?? '#FFFFFF');
     showDialog(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) => _ColorPickerDialog(
         initialColor: current,
         isZh: widget.isZh,

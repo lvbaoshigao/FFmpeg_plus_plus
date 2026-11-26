@@ -239,7 +239,7 @@ class _ExtractAudioStepEditorState extends State<ExtractAudioStepEditor> with St
             ),
             const Spacer(),
             if (_isExtracting)
-              SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: cs.primary))
+              SizedBox(width: 20, height: 20, child: AppCircularProgressIndicator(strokeWidth: 2, color: cs.primary))
             else
               IconButton(
                 icon: Icon(_isPlaying ? Icons.stop_circle : Icons.play_circle, size: 28, color: cs.primary),

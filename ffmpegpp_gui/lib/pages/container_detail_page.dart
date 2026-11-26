@@ -511,6 +511,9 @@ class _ContainerDetailPageState extends State<ContainerDetailPage> {
     final ctrl = TextEditingController(text: container.name);
     showDialog(
       context: context,
+      animationStyle: MediaQuery.disableAnimationsOf(context)
+          ? AnimationStyle.noAnimation
+          : null,
       builder: (ctx) {
         final cs = Theme.of(ctx).colorScheme;
         return AppAlertDialog(
