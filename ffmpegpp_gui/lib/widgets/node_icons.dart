@@ -55,6 +55,7 @@ TablerGlyph stepIconFor(PipelineStepType type) => switch (type) {
   PipelineStepType.audioSilenceTrim => TablerGlyph.volume3,
   PipelineStepType.videoDeinterlace => TablerGlyph.lineHeight,
   PipelineStepType.unknown => TablerGlyph.helpCircle,
+  PipelineStepType.plugin => TablerGlyph.layersIntersect,
   PipelineStepType.audioSpectrum => TablerGlyph.chartLine,
   PipelineStepType.audioWaveform => TablerGlyph.waveSine,
   PipelineStepType.audioReverse => TablerGlyph.rotateClockwise,

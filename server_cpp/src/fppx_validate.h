@@ -24,6 +24,7 @@ struct VNode {
     std::string label;                   // 报错用显示名
     uint8_t mediaIn = 0;                 // 通用节点按 params.media_type 解析后的输入媒体类型
     uint8_t mediaOut = 0;                // start / 通用节点按 params 解析后的输出媒体类型
+    bool allowControl = true;             // plugin snapshot IsLogic; execution revalidates catalog
 };
 
 struct VEdge {

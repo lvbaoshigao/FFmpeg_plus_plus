@@ -39,6 +39,39 @@ class BackendClient {
   Stream<ProgressUpdate> get progressStream => _progressController.stream;
   Stream<List<String>> get auditStream => _auditController.stream;
 
+  /// Whether this native backend has the bounded WebAssembly plugin ABI.
+  Future<Map<String, dynamic>> configurePluginRoot(String root) => _traceRequest(
+    'plugin_set_root',
+    () => _process.requestWithTimeout('plugin_set_root', 5, {'root': root}),
+    requestFields: 1,
+  );
+
+  Future<Map<String, dynamic>> pluginCapabilities() => _traceRequest(
+    'plugin_capabilities',
+    () => _process.requestWithTimeout('plugin_capabilities', 5),
+    requestFields: 0,
+  );
+
+  /// Execute one bounded plugin export inside the native WASM sandbox.
+  /// [timeoutSeconds] is deliberately larger than the per-call guest budget so
+  /// the backend watchdog can terminate and serialize the result first.
+  Future<Map<String, dynamic>> invokePlugin({
+    required String modulePath,
+    required String entry,
+    required Map<String, dynamic> request,
+    required Map<String, dynamic> limits,
+    int timeoutSeconds = 10,
+  }) => _traceRequest(
+    'plugin_invoke',
+    () => _process.requestWithTimeout('plugin_invoke', timeoutSeconds.clamp(1, 90), {
+      'module_path': modulePath,
+      'entry': entry,
+      'request': request,
+      'limits': limits,
+    }),
+    requestFields: 4,
+  );
+
   // ── 后端正在执行的任务 id ──────────────────────────────────────────────
   // 暂停只允许作用在「确实有一个可冻结的进程」的任务上。仅凭 TaskInfo.status
   // == processing 判断是不够的：流水线任务的当前步骤可能是 Dart 侧短命的

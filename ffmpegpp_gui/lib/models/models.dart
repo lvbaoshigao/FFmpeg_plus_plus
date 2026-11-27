@@ -1,6 +1,8 @@
 import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'package:uuid/uuid.dart';
+import '../plugins/plugin_manifest.dart';
+import '../plugins/plugin_node_catalog.dart';
 import '../services/legacy_ai_key_decoder.dart';
 
 export 'quick_config.dart';
@@ -136,6 +138,9 @@ enum PipelineStepType {
   videoReverse,
   audioEqualizer,
   videoFade,
+
+  // One stable carrier; individual plugin node identities live in params._plugin.
+  plugin,
 }
 
 class PipelineStep {
@@ -258,6 +263,8 @@ class PipelineStep {
         return '音频均衡器';
       case PipelineStepType.videoFade:
         return '视频淡入淡出';
+      case PipelineStepType.plugin:
+        return '插件节点';
       case PipelineStepType.unknown:
         return '未知节点';
     }
@@ -369,6 +376,8 @@ class PipelineStep {
         return 'Audio Equalizer';
       case PipelineStepType.videoFade:
         return 'Video Fade';
+      case PipelineStepType.plugin:
+        return 'Plugin node';
       case PipelineStepType.unknown:
         return 'Unknown';
     }
@@ -490,7 +499,7 @@ class PipelineNode {
   }
 
   /// 是否为逻辑门节点（控制流节点）
-  bool get isGate => gateType != null;
+  bool get isGate => type != PipelineStepType.plugin && gateType != null;
 
   LogicGateType? get gate =>
       gateType == null ? null : LogicGateType.values.asNameMap()[gateType];
@@ -838,12 +847,15 @@ class PipelineNode {
         return '音频均衡器';
       case PipelineStepType.videoFade:
         return '视频淡入淡出';
+      case PipelineStepType.plugin:
+        return pluginDisplayDefinition?.name ?? '插件节点';
       case PipelineStepType.unknown:
         return '未知节点${unknownTypeId == null ? '' : ' $unknownTypeId'}';
     }
   }
 
   String get labelEn {
+    if (type == PipelineStepType.plugin) return pluginDisplayDefinition?.name ?? 'Plugin node';
     switch (type) {
       case PipelineStepType.start:
         return 'Source';
@@ -949,15 +961,118 @@ class PipelineNode {
         return 'Audio Equalizer';
       case PipelineStepType.videoFade:
         return 'Video Fade';
+      case PipelineStepType.plugin:
+        return 'Plugin node';
       case PipelineStepType.unknown:
         return 'Unknown';
     }
   }
 
-  bool get hasInput => type != PipelineStepType.start;
-  bool get hasOutput => !isGate && type != PipelineStepType.output;
+  /// The live enabled catalog alone authorizes execution; snapshots are for display.
+  Map<String, dynamic> get pluginEnvelope {
+    final raw = params['_plugin'];
+    return raw is Map && raw.keys.every((key) => key is String)
+        ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+  }
+
+  String get pluginId => pluginEnvelope['id'] is String
+      ? pluginEnvelope['id'] as String : '';
+  String get pluginNodeId => pluginEnvelope['node'] is String
+      ? pluginEnvelope['node'] as String : '';
+
+  PluginNodeDefinition? get pluginDefinition => type == PipelineStepType.plugin
+      ? PluginNodeCatalog.instance.lookup(pluginId, pluginNodeId) : null;
+
+  PluginNodeDefinition? get pluginDisplayDefinition {
+    final installed = pluginDefinition;
+    final manifest = PluginNodeCatalog.instance.plugin(pluginId);
+    if (installed != null && manifest?.version == pluginEnvelope['version'] &&
+        installed.schemaVersion == pluginEnvelope['schema_version']) {
+      return installed;
+    }
+    final snapshot = pluginEnvelope['snapshot'];
+    if (snapshot is! Map || !snapshot.keys.every((key) => key is String)) return null;
+    try {
+      return PluginNodeDefinition.fromJson(Map<String, dynamic>.from(snapshot));
+    } on FormatException {
+      return null;
+    } on TypeError {
+      return null;
+    }
+  }
+
+  String? get pluginCompatibilityIssue {
+    if (type != PipelineStepType.plugin) return null;
+    final envelope = pluginEnvelope;
+    final definition = pluginDefinition;
+    final manifest = PluginNodeCatalog.instance.plugin(pluginId);
+    if (definition == null || manifest == null) {
+      return '插件未安装、未启用或节点未声明: $pluginId/$pluginNodeId';
+    }
+    if (envelope['version'] != manifest.version ||
+        envelope['schema_version'] != definition.schemaVersion) {
+      return '插件节点版本不兼容: $pluginId/$pluginNodeId';
+    }
+    return null;
+  }
+
+  String? get pluginUnavailableReason {
+    if (type != PipelineStepType.plugin) return null;
+    final compatibility = pluginCompatibilityIssue;
+    if (compatibility != null) return compatibility;
+    final definition = pluginDefinition!;
+    final raw = params['values'];
+    if (raw is! Map || !raw.keys.every((key) => key is String)) {
+      return '插件节点参数必须是对象';
+    }
+    try {
+      definition.validateValues(Map<String, dynamic>.from(raw));
+    } on FormatException catch (error) {
+      return '插件节点参数无效: ${error.message}';
+    }
+    return null;
+  }
+
+  Map<String, dynamic> validatedPluginValues() {
+    final reason = pluginUnavailableReason;
+    if (reason != null) throw FormatException(reason);
+    return pluginDefinition!.validateValues(
+      Map<String, dynamic>.from(params['values'] as Map),
+    );
+  }
+
+  static Map<String, dynamic> pluginParams({
+    required String pluginId,
+    required String pluginVersion,
+    required PluginNodeDefinition definition,
+  }) => {
+    '_plugin': {
+      'id': pluginId,
+      'node': definition.id,
+      'version': pluginVersion,
+      'schema_version': definition.schemaVersion,
+      'snapshot': definition.toJson(),
+    },
+    'values': definition.validateValues(<String, dynamic>{}),
+  };
+
+  bool get hasControlInput => !isGate && type != PipelineStepType.start &&
+      (type != PipelineStepType.plugin || pluginDisplayDefinition?.isLogic == true);
+  bool get hasControlOutput => !isGate && type != PipelineStepType.start &&
+      (type != PipelineStepType.plugin || pluginDisplayDefinition?.isLogic == true);
+
+  bool get hasInput => !isGate && type != PipelineStepType.start &&
+      (type != PipelineStepType.plugin || pluginDisplayDefinition?.inputCount == 1);
+  bool get hasOutput => !isGate && type != PipelineStepType.output &&
+      (type != PipelineStepType.plugin || pluginDisplayDefinition?.outputCount == 1);
 
   Set<MediaType> get inputTypes {
+    if (type == PipelineStepType.plugin) {
+      return {
+        for (final name in pluginDisplayDefinition?.inputTypes ?? const <String>[])
+          ?MediaType.values.asNameMap()[name],
+      };
+    }
     // 通用节点：类型来自属性选择，未选则空集（画布不允许连线）
     if (isGenericMedia) {
       final k = mediaKind;
@@ -1012,7 +1127,7 @@ class PipelineNode {
         MediaType.image,
         MediaType.audio,
       },
-      PipelineStepType.unknown => {},
+      PipelineStepType.unknown || PipelineStepType.plugin => {},
       PipelineStepType.mediaConvert ||
       PipelineStepType.mediaScale ||
       PipelineStepType.mediaCrop ||
@@ -1025,6 +1140,9 @@ class PipelineNode {
   }
 
   MediaType? get outputType {
+    if (type == PipelineStepType.plugin) {
+      return MediaType.values.asNameMap()[pluginDisplayDefinition?.outputType];
+    }
     if (isGenericMedia) return mediaKind;
     return switch (type) {
       PipelineStepType.start => switch (params['file_media_type'] as String? ??
@@ -1076,7 +1194,7 @@ class PipelineNode {
       PipelineStepType.videoFade => MediaType.video,
       PipelineStepType.imageAdjust => MediaType.image,
       PipelineStepType.output => null,
-      PipelineStepType.unknown => null,
+      PipelineStepType.unknown || PipelineStepType.plugin => null,
       PipelineStepType.mediaConvert ||
       PipelineStepType.mediaScale ||
       PipelineStepType.mediaCrop ||
@@ -2633,6 +2751,8 @@ class AppConfig {
 
   /// 「最近使用」保留条数（与整份配置一起落盘，不宜过大）。
   static const int recentNodeLimit = 6;
+  /// Experimental plugin loading and navigation are opt-in.
+  bool pluginsEnabled;
   bool debugMode;
 
   /// Whether opt-in operation-boundary trace logging is enabled.
@@ -2816,6 +2936,7 @@ class AppConfig {
     this.nodeSnap = true,
     List<String>? favoriteNodeTypes,
     List<String>? recentNodeTypes,
+    this.pluginsEnabled = false,
     this.debugMode = false,
     this.veryVerboseLogs = false,
     this.saveLogs = false,
@@ -3042,6 +3163,7 @@ class AppConfig {
       0.7,
     ), // [FIX H-14] 透明度钳制 0~1
     canvasBg: json['canvas_bg'] as String? ?? 'global',
+    pluginsEnabled: _softBool(json['plugins_enabled']) ?? false,
     debugMode: json['debug_mode'] as bool? ?? false,
     veryVerboseLogs: _softBool(json['very_verbose_logs']) ?? false,
     saveLogs: json['save_logs'] as bool? ?? false,
@@ -3195,6 +3317,7 @@ class AppConfig {
     'theme_tone': themeTone,
     'card_opacity': cardOpacity,
     'canvas_bg': canvasBg,
+    'plugins_enabled': pluginsEnabled,
     'debug_mode': debugMode,
     'very_verbose_logs': veryVerboseLogs,
     'save_logs': saveLogs,

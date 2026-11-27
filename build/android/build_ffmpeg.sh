@@ -491,7 +491,8 @@ log "ffmpeg/ffprobe staged (PT_INTERP ok): $(ls -la $BUILD/dist)"
 # 用源码 hash 标记判断是否需要重建：即使 restore-keys 恢复了旧缓存，
 # 只要 server_cpp 源码变了（hash 不匹配）就会强制重新编译，避免产物过时。
 SRC_HASH=$(find "$FFMPEGPP_ROOT/server_cpp/src" "$FFMPEGPP_ROOT/server_cpp/include" \
-    "$FFMPEGPP_ROOT/server_cpp/CMakeLists.txt" -type f 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
+    "$FFMPEGPP_ROOT/server_cpp/runtime" "$FFMPEGPP_ROOT/server_cpp/CMakeLists.txt" \
+    "$FFMPEGPP_ROOT/build/android/build_ffmpeg.sh" -type f 2>/dev/null | sort | xargs md5sum 2>/dev/null | md5sum | cut -d' ' -f1)
 [ -z "$SRC_HASH" ] && SRC_HASH="nosrc"
 CACHED_HASH=""
 [ -f $BUILD/dist/libffmpegpp.so.hash ] && CACHED_HASH=$(cat $BUILD/dist/libffmpegpp.so.hash)

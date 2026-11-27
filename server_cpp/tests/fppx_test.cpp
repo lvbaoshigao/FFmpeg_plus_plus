@@ -173,6 +173,49 @@ int main() {
         CHECK(found, "二次往返后未知 ID 仍为 19243");
     }
 
+    // Plugin carrier survives file round trips without an installed runtime.
+    {
+        json g = sampleGraph();
+        json snapshot = {
+            {"id", "flip"}, {"name", "Video flip"}, {"fun", "Flip video"},
+            {"IsLogic", false}, {"IO", {{"inputs", 1}, {"outputs", 1}}},
+            {"input_types", json::array({"video"})}, {"output_type", "video"},
+            {"schema_version", 1}, {"fields", json::array()}
+        };
+        json envelope = {{"id", "org.ffmpegpp.flip"}, {"node", "flip"},
+            {"version", "1.0.0"}, {"schema_version", 1}, {"snapshot", snapshot}};
+        g["nodes"][1]["type"] = "plugin";
+        g["nodes"][1]["params"] = {{"_plugin", envelope}, {"values", {{"axis", "vertical"}}}};
+        const auto* spec = findTypeByName("plugin");
+        CHECK(spec && spec->id == makeTypeId(0x33), "插件承载类型固定 ID 0x33");
+        const auto path = tmpFile("plugin_node.fppx");
+        const auto exported = exportGraph(g, path.string());
+        CHECK(exported.success, "无需安装插件即可保存带端口快照的插件图");
+        const auto imported = fppx2Import(path.string(), false);
+        CHECK(imported.success && imported.graph.is_object(), "插件图可正常导入");
+        CHECK(imported.unknownTypeIds.empty(), "插件承载类型由注册表识别");
+        if (imported.graph.is_object()) {
+            CHECK(imported.graph["nodes"][1]["type"] == "plugin", "插件承载类型未降级");
+            CHECK(imported.graph["nodes"][1]["params"] == g["nodes"][1]["params"],
+                  "插件身份、版本、快照及私有参数完整保留");
+            const auto again = exportGraph(imported.graph, tmpFile("plugin_node_again.fppx").string());
+            CHECK(again.success, "插件节点再次导出成功");
+        }
+        json controlled = g;
+        controlled["nodes"].push_back({{"id", "gate"}, {"type", "start"},
+            {"gate", "const1"}, {"params", json::object()}, {"x", 10}, {"y", 10}});
+        controlled["connections"].push_back({{"from", "gate"}, {"to", "uuid-b"}, {"kind", "control"}});
+        CHECK(!exportGraph(controlled, tmpFile("plugin_no_control.fppx").string()).success,
+              "IsLogic=false 的插件节点拒绝控制线");
+        json mismatch = g;
+        mismatch["nodes"][1]["params"]["_plugin"]["snapshot"]["input_types"] = json::array({"audio"});
+        CHECK(!exportGraph(mismatch, tmpFile("plugin_bad_media.fppx").string()).success,
+              "插件快照端口参与文件媒体兼容校验");
+        json multi = g;
+        multi["nodes"][1]["params"]["_plugin"]["snapshot"]["IO"]["outputs"] = 2;
+        CHECK(!exportGraph(multi, tmpFile("plugin_multi_port.fppx").string()).success,
+              "插件 v1 拒绝多端口快照");
+    }
     // ── 4. CRC 损坏 / 截断 / 尾随垃圾 ──
     {
         fs::path p = tmpFile("crc.fppx");

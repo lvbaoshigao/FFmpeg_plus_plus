@@ -16,6 +16,7 @@
 #include "subprocess.h"
 #include "installer.h"
 #include "message_queues.h"
+#include "plugin_runtime.h"
 #include <set>
 #include <mutex>
 #include <vector>
@@ -101,6 +102,8 @@ struct AuxThread {
     std::shared_ptr<std::atomic<bool>> done;
 };
 static std::vector<AuxThread> g_auxThreads;
+// Bounded admission avoids unbounded auxiliary worker allocation by plugins.
+static std::atomic<unsigned> g_pluginRequests{0};
 
 static void spawnAuxThread(std::function<void()> fn) {
     // [FIX H-11] 只回收已完成线程：遍历 vector，done 为 true 的才 join 并移除，
@@ -284,6 +287,7 @@ FFMPEGPP_API int ffmpegpp_init() {
             slog_init();
             slog("=== DLL INIT v%s ===", SERVER_VERSION);
             resetMessageQueues();
+            clearPluginRoot();
             {
                 std::lock_guard<std::mutex> cancelLock(g_cancelMutex);
                 g_cancelledTaskIds.clear();
@@ -461,6 +465,45 @@ FFMPEGPP_API int ffmpegpp_request(const char* json_utf8) {
                               "请求缺少有效 id（必须是非空字符串）");
             return -1;
         }
+        if (action == "plugin_capabilities" || action == "plugin_invoke" || action == "plugin_set_root") {
+            const bool invoke = action == "plugin_invoke";
+            if (invoke && g_pluginRequests.fetch_add(1) >= 2) {
+                g_pluginRequests.fetch_sub(1);
+                JsonWriter::reply(pendingId, false, nullptr, "Plugin: runtime busy");
+                return 0;
+            }
+            try {
+                spawnAuxThread([req, invoke, action]() {
+                    struct Admission {
+                        bool active;
+                        ~Admission() { if (active) g_pluginRequests.fetch_sub(1); }
+                    } admission{invoke};
+                    const auto id = req.at("id").get<std::string>();
+                    try {
+                        auto cancelled = [id]() {
+                            if (g_shutdownFlag.load()) return true;
+                            std::lock_guard<std::mutex> lock(g_cancelMutex);
+                            return g_cancelledTaskIds.count(id) != 0;
+                        };
+                        const auto data = invoke
+                            ? invokePlugin(req.value("params", json::object()), cancelled)
+                            : (action == "plugin_set_root"
+                                ? configurePluginRoot(req.value("params", json::object()))
+                                : pluginCapabilities());
+                        JsonWriter::reply(id, true, data);
+                    } catch (const std::exception& error) {
+                        JsonWriter::reply(id, false, nullptr, error.what());
+                    } catch (...) {
+                        JsonWriter::reply(id, false, nullptr, "Plugin: unknown invocation failure");
+                    }
+                });
+            } catch (...) {
+                if (invoke) g_pluginRequests.fetch_sub(1);
+                JsonWriter::reply(pendingId, false, nullptr, "Plugin: cannot create worker");
+                return -1;
+            }
+            return 0;
+        }
         if (action == "probe" || action == "check_env" || action == "query_ffmpeg_features" ||
             action == "fppx_import" ||
             action == "fppx2_import" || action == "fppx2_export" ||
@@ -545,6 +588,7 @@ FFMPEGPP_API void ffmpegpp_shutdown() {
 
     // 先等 probe/check_env/query_features 辅助线程退出，再停止输出与线程
     joinAuxThreads();
+    clearPluginRoot();
 
     if (g_workerThread.joinable()) {
         g_workerThread.join();

@@ -11,6 +11,7 @@ import 'models/models.dart';
 import 'pages/command_page.dart';
 import 'pages/config_library_page.dart';
 import 'pages/log_page.dart';
+import 'pages/plugins_page.dart';
 import 'pages/project_page.dart';
 import 'pages/queue_page.dart';
 import 'pages/settings_page.dart';
@@ -544,8 +545,15 @@ class _AppShellState extends State<AppShell>
   bool get _mobile => widget.mobile ?? isMobilePlatform;
   final _projectPageKey = GlobalKey<ProjectPageState>();
 
-  /// 底部导航可见的页面索引，横向滑动按此顺序循环切换。
-  static const List<int> _kMobileNavOrder = [0, 1, 3, 4];
+  /// All mobile navigation surfaces share the same stable destination order.
+  List<int> get _mobileNavOrder => mobileNavOrder(
+    pluginsEnabled: context.read<AppState>().config.pluginsEnabled,
+  );
+
+  int _effectiveNav(AppState state) =>
+      !state.config.pluginsEnabled && state.selectedNav == pluginsNavDestination
+      ? settingsNavDestination
+      : state.selectedNav;
 
   /// 移动端 Tab 翻页控制器：PageView 跟随手指（半程滑动即显示「各半张页面」）。
   late final PageController _mobilePageController;
@@ -560,14 +568,18 @@ class _AppShellState extends State<AppShell>
   /// 用 ScrollUpdateNotification 而非 UserScrollNotification：fling 惯性
   /// 滑动期间同样持续产生 update 通知，跟手与惯性阶段行为一致。
   bool _handleContentScroll(ScrollNotification n, bool enabled) {
-    if (n.metrics.axis == Axis.horizontal && n is ScrollEndNotification) {
+    if (n.depth == 0 &&
+        n.metrics is PageMetrics &&
+        n.metrics.axis == Axis.horizontal &&
+        n is ScrollEndNotification) {
       final page = n.metrics is PageMetrics
           ? (n.metrics as PageMetrics).page
           : null;
       if (page != null) {
         final index = page.round();
-        if (index >= 0 && index < _kMobileNavOrder.length) {
-          final target = _kMobileNavOrder[index];
+        final order = _mobileNavOrder;
+        if (index >= 0 && index < order.length) {
+          final target = order[index];
           if (context.read<AppState>().selectedNav != target) {
             context.read<AppState>().selectNav(target);
           }
@@ -592,7 +604,14 @@ class _AppShellState extends State<AppShell>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _mobilePageController = PageController(initialPage: 0);
+    final state = context.read<AppState>();
+    _lastPluginsEnabled = state.config.pluginsEnabled;
+    final order = _mobileNavOrder;
+    _mobilePageController = PageController(
+      initialPage: order
+          .indexOf(_effectiveNav(state))
+          .clamp(0, order.length - 1),
+    );
     // 移动端没有窗口管理器，跳过窗口相关初始化。
     // 监听器只用于 onWindowClose（优雅关闭后端 / 子进程）；标题栏的
     // 最大化图标状态由 widgets/window_chrome.dart 自己维护。
@@ -616,6 +635,7 @@ class _AppShellState extends State<AppShell>
       // selectNav）也必须让移动端 PageView 跟过去，否则底部导航高亮切走了、
       // 可见内容还停在旧 Tab。
       state.addListener(_onNavChanged);
+      _scheduleNavigationSync();
     });
   }
 
@@ -625,6 +645,9 @@ class _AppShellState extends State<AppShell>
 
   /// 上一次已知的导航索引（用于识别「外部调用 selectNav」并同步 PageView）。
   int _lastNav = 0;
+  bool _lastPluginsEnabled = false;
+  bool _navigationSyncScheduled = false;
+  bool _resetMobilePosition = false;
 
   void _onNoPreloadChanged() {
     if (!mounted) return;
@@ -645,22 +668,46 @@ class _AppShellState extends State<AppShell>
   /// selectedNav 被外部改动（不经过底部导航）时，让移动端 PageView 滑动到对应 Tab。
   void _onNavChanged() {
     if (!mounted) return;
-    final nav = context.read<AppState>().selectedNav;
-    if (nav == _lastNav) return;
-    _lastNav = nav;
+    final state = context.read<AppState>();
+    final featureChanged = state.config.pluginsEnabled != _lastPluginsEnabled;
+    if (state.selectedNav == _lastNav && !featureChanged) return;
+    _lastNav = state.selectedNav;
+    _lastPluginsEnabled = state.config.pluginsEnabled;
+    final nav = _effectiveNav(state);
     _pageLru.remove(nav);
     _pageLru.add(nav);
     _schedulePageEviction();
-    if (!_mobile) return;
-    final idx = _kMobileNavOrder.indexOf(nav);
-    if (idx < 0) return;
-    // 帧后再动 PageController：监听回调可能发生在 build/layout 阶段，
-    // 此时直接 animateToPage 会与正在进行的布局冲突。
+    _scheduleNavigationSync(resetMobilePosition: featureChanged);
+  }
+
+  /// Reconcile after layout so a shrinking PageView cannot retain an invalid
+  /// page or finish an old swipe into a destination that was just disabled.
+  void _scheduleNavigationSync({bool resetMobilePosition = false}) {
+    _resetMobilePosition |= resetMobilePosition;
+    if (_navigationSyncScheduled) return;
+    _navigationSyncScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_mobilePageController.hasClients) return;
-      final current = _mobilePageController.page?.round() ?? idx;
-      if (current == idx) return; // 已在该 Tab（底部导航点击路径）→ 无需重复动画
-      _showMobilePage(idx);
+      _navigationSyncScheduled = false;
+      if (!mounted) return;
+      final resetPosition = _resetMobilePosition;
+      _resetMobilePosition = false;
+      final state = context.read<AppState>();
+      if (!state.config.pluginsEnabled) {
+        _pageCache[pluginsNavDestination] = null;
+        _pageLru.remove(pluginsNavDestination);
+        _pageKeepAlive[pluginsNavDestination].value = false;
+        if (state.selectedNav == pluginsNavDestination) {
+          state.selectNav(settingsNavDestination);
+        }
+      }
+      if (!_mobile || !_mobilePageController.hasClients) return;
+      final index = _mobileNavOrder.indexOf(_effectiveNav(state));
+      if (index < 0) return;
+      if (resetPosition) {
+        _mobilePageController.jumpToPage(index);
+      } else if ((_mobilePageController.page?.round() ?? index) != index) {
+        _showMobilePage(index);
+      }
     });
   }
 
@@ -1053,7 +1100,13 @@ class _AppShellState extends State<AppShell>
   @override
   Widget build(BuildContext context) {
     // 用 select 只监听导航索引，避免任何进度/日志 notify 都重建整棵页面树。
-    final nav = context.select<AppState, int>((s) => s.selectedNav);
+    final selectedNav = context.select<AppState, int>((s) => s.selectedNav);
+    final pluginsEnabled = context.select<AppState, bool>(
+      (state) => state.config.pluginsEnabled,
+    );
+    final nav = !pluginsEnabled && selectedNav == pluginsNavDestination
+        ? settingsNavDestination
+        : selectedNav;
     // 菜单栏位置设置（'auto' / 'bottom' / 'left' / 'right'）。必须在这里订阅：
     // 主壳原本只 select 了 selectedNav，不订阅本字段的话在设置里改方向不会重排
     // 布局。select 只在该值变化时触发重建，不引入额外重建开销。
@@ -1216,8 +1269,10 @@ class _AppShellState extends State<AppShell>
 
   /// 底部导航点击：切换选中页，并让 PageView 滑动到对应位置（带滑动动画）。
   void _selectMobileNav(int i) {
+    final order = _mobileNavOrder;
+    final idx = order.indexOf(i);
+    if (idx < 0) return;
     context.read<AppState>().selectNav(i);
-    final idx = _kMobileNavOrder.indexOf(i);
     if (idx >= 0 &&
         _mobilePageController.hasClients &&
         (_mobilePageController.page?.round() ?? idx) != idx) {
@@ -1226,6 +1281,11 @@ class _AppShellState extends State<AppShell>
   }
 
   void _showMobilePage(int index) {
+    if (!_mobilePageController.hasClients ||
+        index < 0 ||
+        index >= _mobileNavOrder.length) {
+      return;
+    }
     if (MediaQuery.disableAnimationsOf(context)) {
       _mobilePageController.jumpToPage(index);
     } else {
@@ -1239,8 +1299,9 @@ class _AppShellState extends State<AppShell>
 
   /// The viewport requests destinations on demand instead of building all tabs.
   Widget _mobilePageView() {
-    final nav = context.read<AppState>().selectedNav;
-    final idx = _kMobileNavOrder.indexOf(nav);
+    final nav = _effectiveNav(context.read<AppState>());
+    final order = _mobileNavOrder;
+    final idx = order.indexOf(nav);
     return PageView.builder(
       controller: _mobilePageController,
       physics: _SwipeGatePagePhysics(
@@ -1248,9 +1309,15 @@ class _AppShellState extends State<AppShell>
         gateFraction: 0.42,
       ),
       onPageChanged: (_) {},
-      itemCount: _kMobileNavOrder.length,
+      itemCount: order.length,
+      findChildIndexCallback: (key) => key is ValueKey<int>
+          ? switch (order.indexOf(key.value)) {
+              -1 => null,
+              final index => index,
+            }
+          : null,
       itemBuilder: (context, index) {
-        final destination = _kMobileNavOrder[index];
+        final destination = order[index];
         return _KeepAlive(
           key: ValueKey<int>(destination),
           keepAlive: _pageKeepAlive[destination],
@@ -1266,7 +1333,7 @@ class _AppShellState extends State<AppShell>
     );
   }
 
-  static const int _kPageCount = 6;
+  static const int _kPageCount = 7;
   static const int _kMaxAlivePages = 2;
   final List<Widget?> _pageCache = List.filled(_kPageCount, null);
   final List<int> _pageLru = [];
@@ -1295,6 +1362,7 @@ class _AppShellState extends State<AppShell>
           3 => const ConfigLibraryPage(),
           4 => const SettingsPage(),
           5 => const LogPage(embedded: true),
+          pluginsNavDestination => const PluginsPage(),
           _ => const SizedBox.shrink(),
         };
     _pageCache[index] = page;
@@ -1345,13 +1413,15 @@ class _AppShellState extends State<AppShell>
     fit: StackFit.expand,
     children: [
       for (var index = 0; index < _kPageCount; index++)
-        CachedPageSlot(
-          key: ValueKey<int>(index),
-          active: index == current,
-          child: index == current
-              ? _page(index)
-              : (_pageCache[index] ?? const SizedBox.shrink()),
-        ),
+        if (index != pluginsNavDestination ||
+            context.read<AppState>().config.pluginsEnabled)
+          CachedPageSlot(
+            key: ValueKey<int>(index),
+            active: index == current,
+            child: index == current
+                ? _page(index)
+                : (_pageCache[index] ?? const SizedBox.shrink()),
+          ),
     ],
   );
 }

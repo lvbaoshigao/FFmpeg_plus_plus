@@ -81,3 +81,4 @@ flutter:
     - assets/brand_icons/
     - assets/tabler_icons/outline/
     - assets/tabler_icons/LICENSE
+    - assets/plugin_sdk/

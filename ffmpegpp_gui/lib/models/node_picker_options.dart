@@ -1,7 +1,7 @@
 import 'models.dart';
 
 /// Shared media groups for the main and detached element pickers.
-enum NodePickerCategory { video, audio, image, generic, control, container }
+enum NodePickerCategory { video, audio, image, generic, control, container, plugin }
 
 /// Ordering within the selected category; favourites can be pinned separately.
 enum NodePickerSort { name, usage }
@@ -88,6 +88,7 @@ String nodePickerCategoryLabel(
   NodePickerCategory.generic => isZh ? '通用' : 'General',
   NodePickerCategory.control => isZh ? '控制与逻辑' : 'Control & logic',
   NodePickerCategory.container => isZh ? '容器' : 'Container',
+  NodePickerCategory.plugin => isZh ? '插件' : 'Plugins',
 };
 
 String nodePickerGateUsageKey(String name) => 'gate:$name';

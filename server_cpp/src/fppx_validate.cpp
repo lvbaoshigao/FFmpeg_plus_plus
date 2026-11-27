@@ -28,6 +28,46 @@ uint8_t mediaKindFromParam(const json& params) {
 
 void resolveGenericMediaPorts(VNode& node, const json& params,
                               std::vector<std::string>& errors) {
+    // Snapshots describe file structure only; execution uses the enabled catalog.
+    if (node.spec && std::string(node.spec->name) == "plugin") {
+        auto invalid = [&]() { errors.push_back("插件节点缺少有效的 v1 端口快照"); };
+        if (!params.is_object() || !params.contains("_plugin") || !params["_plugin"].is_object()) {
+            invalid(); return;
+        }
+        const auto& envelope = params["_plugin"];
+        if (!envelope.contains("snapshot") || !envelope["snapshot"].is_object()) {
+            invalid(); return;
+        }
+        const auto& snapshot = envelope["snapshot"];
+        if (!snapshot.contains("IO") || !snapshot["IO"].is_object() ||
+            !snapshot["IO"].contains("inputs") || snapshot["IO"]["inputs"] != 1 ||
+            !snapshot["IO"].contains("outputs") || snapshot["IO"]["outputs"] != 1 ||
+            !snapshot.contains("input_types") || !snapshot["input_types"].is_array() ||
+            snapshot["input_types"].empty() || snapshot["input_types"].size() > 3 ||
+            !snapshot.contains("output_type") || !snapshot["output_type"].is_string() ||
+            !snapshot.contains("IsLogic") || !snapshot["IsLogic"].is_boolean()) {
+            invalid(); return;
+        }
+        auto kind = [](const json& value) -> uint8_t {
+            if (!value.is_string()) return MK_NONE;
+            if (value == "video") return MK_VIDEO;
+            if (value == "image") return MK_IMAGE;
+            if (value == "audio") return MK_AUDIO;
+            return MK_NONE;
+        };
+        uint8_t inputs = MK_NONE;
+        for (const auto& value : snapshot["input_types"]) {
+            const auto k = kind(value);
+            if (k == MK_NONE) { invalid(); return; }
+            inputs |= k;
+        }
+        const auto output = kind(snapshot["output_type"]);
+        if (output == MK_NONE) { invalid(); return; }
+        node.mediaIn = inputs;
+        node.mediaOut = output;
+        node.allowControl = snapshot["IsLogic"].get<bool>();
+        return;
+    }
     // 注册了 media_type 的节点由用户选择实际媒体类型；允许范围仍以注册表为准。
     if (!node.spec || node.spec->isGate || !node.spec->paramKeys.count("media_type")) return;
     const uint8_t supported = node.spec->mediaIn;
@@ -171,6 +211,10 @@ void validateGraphSemantics(const std::vector<VNode>& nodes, const std::vector<V
             continue;
         }
         if (e.control) {
+            if (known(e.from) && !nodes[e.from].allowControl)
+                errors.push_back("插件节点「" + labelOf(e.from) + "」未声明控制输出能力");
+            if (known(e.to) && !nodes[e.to].allowControl)
+                errors.push_back("插件节点「" + labelOf(e.to) + "」未声明使能输入能力");
             // 源端必须有控制输出能力：门节点或非起始节点（状态输出）
             if (known(e.from) && nodes[e.from].spec && !nodes[e.from].spec->isGate &&
                 nodes[e.from].isStart) {

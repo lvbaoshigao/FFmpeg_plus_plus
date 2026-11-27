@@ -24,6 +24,7 @@ import '../services/graph_executor.dart';
 import '../services/island_progress.dart';
 import '../services/native_process.dart';
 import '../services/task_process_runner.dart';
+import '../plugins/plugin_manager.dart';
 
 class AppState extends ChangeNotifier {
   AppState() : _importCacheDirectoryForTest = null;
@@ -47,6 +48,11 @@ class AppState extends ChangeNotifier {
     trace: diagnosticTrace,
   );
   late final BackendClient backend = _createBackend();
+  PluginManager? _plugins;
+  Directory? _pluginRoot;
+  Future<void>? _pluginInitialization;
+  PluginManager? get plugins => _plugins;
+
   late final ConfigService configService = ConfigService(
     trace: diagnosticTrace,
   );
@@ -431,6 +437,10 @@ class AppState extends ChangeNotifier {
       await configService.load();
       _configLoaded = true;
       _safeNotify();
+      // Plugin metadata loading must not hold the splash screen hostage.
+      // It performs no WASM calls; the native root is configured only after
+      // the backend announces readiness.
+      unawaited(_initializePlugins());
       diagnosticTrace.setEnabled(config.veryVerboseLogs);
       span = diagnosticTrace.begin(
         'app.initialize',
@@ -486,6 +496,7 @@ class AppState extends ChangeNotifier {
       _envOk = false;
       return false;
     }
+    await _configurePluginRuntimeRoot();
     // L-10：此处 env 尚未确知，recheckEnv() 会在结果确定后置真值并通知；
     // 不再抢先置 false 并 notify，避免启动瞬间 UI 闪一下「环境异常」。
     debugPrint('[init] 7-setup log listeners');
@@ -748,6 +759,94 @@ class AppState extends ChangeNotifier {
       '后端模式: ${pythonProcess.isRunning ? "已连接" : "未连接"}',
       category: 'info',
     );
+  }
+
+  Future<void> _configurePluginRuntimeRoot() async {
+    final root = _pluginRoot;
+    if (root == null || !pythonProcess.isRunning) {
+      await _plugins?.setFeatureEnabled(false);
+      return;
+    }
+    try {
+      final response = await backend.configurePluginRoot(root.path);
+      if (response['success'] != true) {
+        addLog(
+          '插件运行时拒绝插件根目录: ${response['error'] ?? 'unknown error'}',
+          category: 'warning',
+        );
+        await _plugins?.setFeatureEnabled(false);
+        return;
+      }
+      final capabilities = await backend.pluginCapabilities();
+      final supported = capabilities['success'] == true &&
+          capabilities['data']?['available'] == true;
+      if (!supported) {
+        addLog('当前原生后端不支持 WebAssembly 插件执行。', category: 'warning');
+      }
+      await _plugins?.setFeatureEnabled(config.pluginsEnabled && supported);
+    } catch (error) {
+      addLog('无法配置插件运行时目录: $error', category: 'warning');
+      await _plugins?.setFeatureEnabled(false);
+    }
+  }
+
+  Future<void> _initializePlugins() {
+    final pending = _pluginInitialization;
+    if (pending != null) return pending;
+    final future = () async {
+      try {
+        final support = await getApplicationSupportDirectory();
+        if (_disposed) return;
+        final root = Directory('${support.path}${Platform.pathSeparator}plugins');
+        await root.create(recursive: true);
+        if (_disposed) return;
+        _pluginRoot = root;
+        final manager = PluginManager(
+          root: root,
+          runtime: CallbackPluginRuntime((modulePath, entry, request, limits) async {
+            final timeoutSeconds =
+                ((limits.timeMs * 17 + 999) ~/ 1000).clamp(2, 90).toInt();
+            final response = await backend.invokePlugin(
+              modulePath: modulePath,
+              entry: entry,
+              request: request,
+              limits: limits.toJson(),
+              timeoutSeconds: timeoutSeconds,
+            );
+            if (response['success'] != true) {
+              throw PluginException(
+                response['error'] as String? ?? 'WebAssembly plugin execution failed.',
+                code: 'runtime_failure',
+              );
+            }
+            final data = response['data'];
+            if (data is! Map) {
+              throw const PluginException(
+                'The native plugin runtime returned an invalid response.',
+                code: 'invalid_response',
+              );
+            }
+            return Map<String, dynamic>.from(data);
+          }),
+          appVersion: '6.0.0-beta2',
+        );
+        _plugins = manager;
+        await manager.initialize();
+        if (_disposed) {
+          manager.dispose();
+          if (identical(_plugins, manager)) _plugins = null;
+          return;
+        }
+        if (pythonProcess.isRunning) await _configurePluginRuntimeRoot();
+        _safeNotify();
+      } catch (error) {
+        addLog('插件系统初始化失败: $error', category: 'error');
+      } finally {
+        _pluginInitialization = null;
+      }
+    }();
+    _pluginInitialization = future;
+    return future;
   }
 
   void selectNav(int i) {
@@ -2910,6 +3009,9 @@ class AppState extends ChangeNotifier {
                 options: p['options'] as Map<String, dynamic>?,
               );
               break;
+            case '_plugin':
+              resp = await _runPluginCall(run, task.id, p);
+              break;
             case '_file_copy':
               run.throwIfCancelled();
               resp = await _runFileCopy(p);
@@ -4205,6 +4307,166 @@ class AppState extends ChangeNotifier {
     return v.clamp(lo, hi).toDouble();
   }
 
+  Future<Map<String, dynamic>> _runPluginCall(
+    TaskProcessRun run,
+    String taskId,
+    Map<String, dynamic> call,
+  ) async {
+    run.throwIfCancelled();
+    final manager = _plugins;
+    if (!config.pluginsEnabled || manager == null) {
+      return {'success': false, 'error': 'Plugins are disabled or unavailable.'};
+    }
+    final envelope = call['plugin'];
+    final values = call['values'];
+    if (envelope is! Map || values is! Map) {
+      return {'success': false, 'error': 'Invalid plugin node payload.'};
+    }
+    final identity = envelope['_plugin'];
+    if (identity is! Map ||
+        identity['id'] is! String ||
+        identity['node'] is! String ||
+        identity['version'] is! String) {
+      return {'success': false, 'error': 'Invalid plugin node identity.'};
+    }
+    final pluginId = identity['id'] as String;
+    final pluginNodeId = identity['node'] as String;
+    final pluginVersion = identity['version'] as String;
+    final schemaVersion = identity['schema_version'];
+    final installed = manager.plugin(pluginId);
+    if (!config.pluginsEnabled ||
+        installed == null ||
+        !installed.enabled ||
+        installed.manifest.version != pluginVersion ||
+        schemaVersion is! int ||
+        !manager.isActive(pluginId)) {
+      return {'success': false, 'error': 'Plugin node is disabled, stale, or unavailable.'};
+    }
+    final definition = installed.manifest.nodes
+        .where((candidate) => candidate.id == pluginNodeId)
+        .firstOrNull;
+    if (definition == null || definition.schemaVersion != schemaVersion) {
+      return {'success': false, 'error': 'Plugin node schema is no longer available.'};
+    }
+    final pluginGeneration = manager.generation(pluginId);
+    void ensurePluginGeneration() {
+      run.throwIfCancelled();
+      final latest = manager.plugin(pluginId);
+      if (!config.pluginsEnabled ||
+          !manager.isActive(pluginId, generation: pluginGeneration) ||
+          latest == null ||
+          latest.manifest.version != pluginVersion ||
+          !latest.manifest.nodes.any(
+            (candidate) =>
+                candidate.id == pluginNodeId &&
+                candidate.schemaVersion == schemaVersion,
+          )) {
+        throw const PluginException(
+          'The plugin was disabled or changed before its result could be applied.',
+          code: 'stale_invocation',
+        );
+      }
+    }
+    final mediaType = call['media_type'];
+    if (mediaType is! String ||
+        !definition.inputTypes.contains(mediaType) ||
+        definition.outputType != mediaType) {
+      return {'success': false, 'error': 'Unsupported plugin media conversion.'};
+    }
+    try {
+      ensurePluginGeneration();
+      final normalizedValues = definition.validateValues(
+        Map<String, dynamic>.from(values),
+      );
+      final result = await manager.invoke(
+        pluginId,
+        'Node_execute',
+        {
+          'api_version': 1,
+          'plugin_id': identity['id'],
+          'node_id': pluginNodeId,
+          'schema_version': schemaVersion,
+          'params': normalizedValues,
+          'media_type': mediaType,
+        },
+        isCancelled: () => run.isCancelled,
+      );
+      ensurePluginGeneration();
+      final operation = result['operation'];
+      final input = call['input'];
+      final output = call['output'];
+      if (input is! String || output is! String) {
+        throw const FormatException('Plugin node is missing its host-managed media chain.');
+      }
+      switch (operation) {
+        case 'media.copy':
+          ensurePluginGeneration();
+          return await _runFileCopy({'input': input, 'output': output});
+        case 'audio.volume':
+          final amount = (result['decibels'] as num?)?.toDouble();
+          if (mediaType != 'audio' ||
+              definition.outputType != 'audio' ||
+              amount == null ||
+              !amount.isFinite ||
+              amount < -60 ||
+              amount > 12) {
+            throw const FormatException('Invalid audio.volume result.');
+          }
+          ensurePluginGeneration();
+          return await backend.transcode(
+            taskId,
+            input: input,
+            output: output,
+            options: {'af_filters': ['volume=${amount}dB'], 'overwrite': true},
+          );
+        case 'video.flip':
+          final axis = result['axis'];
+          if (mediaType != 'video' ||
+              definition.outputType != 'video' ||
+              (axis != 'horizontal' && axis != 'vertical')) {
+            throw const FormatException('Invalid video.flip result.');
+          }
+          ensurePluginGeneration();
+          return await backend.transcode(
+            taskId,
+            input: input,
+            output: output,
+            options: {
+              'vf_filters': [axis == 'horizontal' ? 'hflip' : 'vflip'],
+              'overwrite': true,
+            },
+          );
+        case 'video.scale':
+          final width = result['width'];
+          final height = result['height'];
+          if (mediaType != 'video' ||
+              definition.outputType != 'video' ||
+              width is! int ||
+              height is! int ||
+              width < 1 ||
+              height < 1 ||
+              width > 16384 ||
+              height > 16384) {
+            throw const FormatException('Invalid video.scale result.');
+          }
+          ensurePluginGeneration();
+          return await backend.transcode(
+            taskId,
+            input: input,
+            output: output,
+            options: {
+              'vf_filters': ['scale=$width:$height'],
+              'overwrite': true,
+            },
+          );
+        default:
+          throw const FormatException('Plugin returned an unsupported operation.');
+      }
+    } catch (error) {
+      return {'success': false, 'error': '$error'};
+    }
+  }
+
   Future<Map<String, dynamic>> _runFileCopy(Map<String, dynamic> p) async {
     final input = p['input'] as String;
     final output = p['output'] as String;
@@ -4656,6 +4918,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> updateConfig(AppConfig Function(AppConfig) f) async {
+    final pluginsWereEnabled = config.pluginsEnabled;
     await configService.update((current) {
       final updated = f(current);
       final wasEnabled = diagnosticTrace.enabled;
@@ -4687,7 +4950,19 @@ class AppState extends ChangeNotifier {
       return updated;
     });
     _invalidateBinCache(); // ffmpeg/ffprobe 路径可能已变更
+    if (pluginsWereEnabled != config.pluginsEnabled) {
+      if (_plugins == null) await _initializePlugins();
+      await _configurePluginRuntimeRoot();
+    }
     notifyListeners();
+  }
+
+  /// Persists a security-sensitive import immediately and reports disk failures.
+  Future<void> updateConfigAndFlush(AppConfig Function(AppConfig) transform) async {
+    await updateConfig(transform);
+    await configService.flush();
+    final failure = configService.persistenceError;
+    if (failure != null) throw StateError(failure);
   }
 
   /// Updates detailed trace logging immediately and persists the preference.
@@ -6076,6 +6351,8 @@ class AppState extends ChangeNotifier {
     }
     _disposed = true; // [FIX S-6] 之后所有 _safeNotify 直接短路
     diagnosticTrace.dispose();
+    _plugins?.dispose();
+    _plugins = null;
     _taskPersistTimer?.cancel();
     _progressFlushTimer?.cancel();
     _progressLogNotifyTimer?.cancel();

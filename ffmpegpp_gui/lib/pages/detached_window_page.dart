@@ -25,6 +25,7 @@ import '../widgets/app_slider.dart';
 import '../widgets/desktop_resize_scope.dart';
 import '../widgets/gate_symbol_painter.dart';
 import '../widgets/node_icons.dart';
+import '../widgets/plugin_form.dart';
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
 import '../widgets/step_editors/audio_convert_step_editor.dart';
 import '../widgets/step_editors/audio_denoise_step_editor.dart';
@@ -696,8 +697,8 @@ class _DetachedNodeToolboxState extends State<DetachedNodeToolbox> {
       final scheme = Theme.of(context).colorScheme;
       final categories = [
         for (final category in NodePickerCategory.values)
-          if (category != NodePickerCategory.container ||
-              store.props['containerName'] != null)
+          if ((category != NodePickerCategory.container || store.props['containerName'] != null) &&
+              (category != NodePickerCategory.plugin || store.config.pluginsEnabled))
             category,
       ];
       final sourceCategory = switch (store.video['fileMediaType']) {
@@ -721,6 +722,15 @@ class _DetachedNodeToolboxState extends State<DetachedNodeToolbox> {
         sort: _sort,
         usageCounts: store.config.nodeUsageCount,
       );
+      final pluginEntries = [
+        if (category == NodePickerCategory.plugin && store.config.pluginsEnabled)
+          for (final entry in store.toolbox)
+            if (entry['kind'] == 'plugin' && entry['id'] is String &&
+                (query.isEmpty || '${entry['label']} ${entry['id']}'.toLowerCase().contains(query))) entry,
+      ];
+      pluginEntries.sort((a, b) => compareNodePickerEntries(
+        '${a['label']}', '${b['label']}', keyA: '${a['id']}', keyB: '${b['id']}',
+        sort: _sort, usageCounts: store.config.nodeUsageCount));
       final gatesByName = LogicGateType.values.asNameMap();
       final gates = <LogicGateType>{
         if (category == NodePickerCategory.control)
@@ -837,7 +847,7 @@ class _DetachedNodeToolboxState extends State<DetachedNodeToolbox> {
             ),
           ),
           const SizedBox(height: 8),
-          if (types.isEmpty && gates.isEmpty)
+          if (types.isEmpty && gates.isEmpty && pluginEntries.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
               child: Text(
@@ -845,6 +855,15 @@ class _DetachedNodeToolboxState extends State<DetachedNodeToolbox> {
                 style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),
             ),
+          if (pluginEntries.isNotEmpty) _arrange([
+            for (final entry in pluginEntries) _toolboxItem(
+              key: ValueKey('detached-plugin-${entry['id']}'),
+              label: '${entry['label']}', tag: '${entry['tag'] ?? ''}',
+              icon: Icon(Icons.extension_outlined, size: 13, color: scheme.secondary),
+              accent: scheme.secondary, scheme: scheme, isZh: s.isZh, listLayout: listLayout,
+              onTap: () => unawaited(store.addNode(entry['id'] as String)),
+            ),
+          ], listLayout),
           if (pinned.isNotEmpty) ...[
             Text(
               s.isZh ? '收藏' : 'Favourites',
@@ -1222,6 +1241,24 @@ Widget buildDetachedNodeEditor(PanelWindowStore store, PipelineNode node) {
 
   Widget editor;
   switch (node.type) {
+    case PipelineStepType.plugin:
+      final definition = node.pluginDisplayDefinition;
+      final values = params['values'];
+      final editable = store.config.pluginsEnabled && store.props['pluginEditable'] == true;
+      editor = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(definition?.fun ?? (isZh ? '插件节点' : 'Plugin node')),
+        if (!editable) Text(isZh ? '插件未启用或不兼容；数据保持不变。' : 'Plugin unavailable; saved data is preserved.'),
+        const SizedBox(height: 8),
+        PluginForm(
+          fields: definition?.fields.map((field) => field.toJson()).toList() ?? [],
+          values: values is Map && values.keys.every((key) => key is String)
+              ? Map<String, dynamic>.from(values) : <String, dynamic>{},
+          enabled: editable,
+          onChanged: (next) {
+            if (editable) { params['values'] = next; onChanged(); }
+          },
+        ),
+      ]);
     case PipelineStepType.start:
       final containerName = store.props['containerName'] as String?;
       if (containerName != null) {

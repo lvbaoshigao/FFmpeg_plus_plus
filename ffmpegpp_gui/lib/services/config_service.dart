@@ -36,6 +36,9 @@ class ConfigService {
   AppConfig _config = AppConfig();
   AppConfig get config => _config;
 
+  /// Non-null only when the most recent settings persistence attempt failed.
+  String? get persistenceError => _persistenceError;
+
   Timer? _saveTimer;
   Future<void>? _saveInFlight;
   bool _dirty = false;

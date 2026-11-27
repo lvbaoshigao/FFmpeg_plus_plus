@@ -1239,6 +1239,33 @@ class _SettingsPageState extends State<SettingsPage> {
       ],
     ),
     _SectionDef(
+      id: 'experimental',
+      title: (s) => s.experimentalFeatures,
+      icon: Icons.science_outlined,
+      cards: [
+        _CardDef(
+          id: 'plugins',
+          title: (s) => s.navPlugins,
+          icon: Icons.extension_outlined,
+          keywords: [
+            '插件',
+            '插件系统',
+            '启用插件',
+            '实验性功能',
+            'plugin',
+            'plugins',
+            'experimental',
+            'webassembly',
+            'wasm',
+            'sdk',
+            '扩展',
+            'extension',
+          ],
+          build: _buildExperimentalPlugins,
+        ),
+      ],
+    ),
+    _SectionDef(
       id: 'about',
       title: (s) => s.secAbout,
       icon: Icons.info_outline,
@@ -1364,6 +1391,7 @@ class _SettingsPageState extends State<SettingsPage> {
         state.config.islandProgress,
         state.config.highRefreshRate,
         state.config.noPreload,
+        state.config.pluginsEnabled,
         state.config.debugMode,
         state.config.veryVerboseLogs,
         state.config.saveLogs,
@@ -5865,6 +5893,32 @@ Widget _buildPreload(BuildContext ctx, AppState state) {
       ),
       value: cfg.noPreload,
       onChanged: (v) => state.updateConfig((c) => c..noPreload = v),
+    ),
+  ]);
+}
+
+Widget _buildExperimentalPlugins(BuildContext ctx, AppState state) {
+  final cfg = state.config;
+  final s = AppStrings.of(cfg.language);
+  final scheme = Theme.of(ctx).colorScheme;
+  return _glass(ctx, state, s.navPlugins, [
+    SwitchListTile(
+      key: const ValueKey('settings_plugins_enabled'),
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(
+        s.pluginsEnabledLabel,
+        style: TextStyle(color: scheme.onSurface, fontSize: 13),
+      ),
+      subtitle: Text(
+        s.pluginsEnabledHint,
+        style: SettingsTypography.description.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
+      ),
+      value: cfg.pluginsEnabled,
+      onChanged: (enabled) =>
+          state.updateConfig((config) => config..pluginsEnabled = enabled),
     ),
   ]);
 }

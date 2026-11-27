@@ -120,6 +120,12 @@ class GraphExecutor {
           '（可以保存或导出该配置，但不能用于任务）');
     }
 
+    for (final node in graph.nodes.where((n) => n.type == PipelineStepType.plugin)) {
+      final reason = node.pluginUnavailableReason;
+      if (reason != null) errors.add(reason);
+      if (node.gateType != null) errors.add('插件媒体节点不能冒充逻辑门');
+    }
+
     if (startNodes.isEmpty) errors.add('缺少源文件节点');
     if (outputNodes.isEmpty) errors.add('缺少输出节点');
 
@@ -183,16 +189,14 @@ class GraphExecutor {
         // 控制连线：状态输出 / 逻辑门输出 → 使能输入 / 逻辑门输入
         final src = graph.nodes[fi];
         final dst = graph.nodes[ti];
-        final fromOk = src.isGate ? src.hasGateOutput : src.type != PipelineStepType.start;
+        final fromOk = src.isGate ? src.hasGateOutput : src.hasControlOutput;
         if (!fromOk) errors.add('"${src.label}" 不能作为控制连线起点');
         if (dst.isGate) {
           if (!dst.hasGateInput) errors.add('"${dst.label}" 不接收控制输入');
         } else {
-          // 非逻辑节点的红色使能端：只能由逻辑门输出接入
-          if (!src.isGate) {
-            errors.add('"${dst.label}" 的使能端只接受逻辑门输出，不能直接连接 "${src.label}"');
-          }
-          if (dst.type == PipelineStepType.start) {
+          // The editor also permits upstream status -> enable control chaining.
+          // Per-node capability getters include the plugin IsLogic declaration.
+          if (!dst.hasControlInput) {
             errors.add('"${dst.label}" 没有使能输入端');
           }
         }
@@ -507,6 +511,7 @@ class GraphExecutor {
       } else {
         for (final n in processing) {
           final action = switch (n.type) {
+            PipelineStepType.plugin => '_plugin',
             PipelineStepType.clip => 'clip',
             PipelineStepType.frame => 'frame',
             PipelineStepType.imageConvert => 'image_convert',
@@ -990,6 +995,42 @@ class GraphExecutor {
       final callsBeforeStep = calls.length;
 
       switch (step.action) {
+        case '_plugin':
+          if (step.nodes.length != 1) return fail('插件节点 v1 仅支持单节点串联');
+          final node = step.nodes.single;
+          if (node.type != PipelineStepType.plugin) return fail('插件步骤必须使用插件承载节点');
+          final reason = node.pluginUnavailableReason;
+          if (reason != null) return fail(reason);
+          final definition = node.pluginDefinition!;
+          if (!definition.isLogic && plan.graph.connections.any((connection) =>
+              connection.kind == 'control' && (connection.fromNodeId == node.id || connection.toNodeId == node.id))) {
+            return fail('插件节点未声明 IsLogic 控制能力');
+          }
+          if (definition.inputCount != 1 || definition.outputCount != 1) {
+            return fail('插件节点 v1 只支持一个数据输入和一个数据输出');
+          }
+          final upstreamId = plan.graph.connections
+              .where((connection) => connection.kind == 'data' && connection.toNodeId == node.id)
+              .firstOrNull?.fromNodeId;
+          final inputMedia = plan.graph.nodes.where((n) => n.id == upstreamId)
+              .firstOrNull?.outputType ?? plan.startNode.outputType;
+          if (inputMedia == null || !definition.inputTypes.contains(inputMedia.name)) {
+            return fail('插件节点输入媒体类型不兼容');
+          }
+          Map<String, dynamic> values;
+          try {
+            values = node.validatedPluginValues();
+          } on FormatException catch (error) {
+            return fail(error.message);
+          }
+          calls.add(BackendCall(action: '_plugin', params: {
+            'input': currentInput,
+            'output': currentOutput,
+            'plugin': PipelineNode.deepCopyMap(node.pluginEnvelope),
+            'values': PipelineNode.deepCopyMap(values),
+            'media_type': inputMedia.name,
+          }));
+          break;
         case 'merged':
           final avNodes = step.nodes.where((n) => n.type == PipelineStepType.avProcess).toList();
           final subNodes = step.nodes.where((n) => n.type == PipelineStepType.subtitle).toList();
