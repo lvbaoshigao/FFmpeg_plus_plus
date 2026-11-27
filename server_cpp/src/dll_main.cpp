@@ -252,8 +252,6 @@ static void workerLoop() {
                 handleImageSequence(req, isCancelled);
             } else if (action == "remove_metadata") {
                 handleRemoveMetadata(req, isCancelled);
-            } else if (action == "custom_command") {
-                handleCustomCommand(req, isCancelled);
             } else {
                 JsonWriter::reply(reqId, false, nullptr, "未知 action: " + action);
             }

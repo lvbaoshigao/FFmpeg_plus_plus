@@ -20,7 +20,6 @@ set(SHARED_SOURCES
     src/transcoder.cpp
     src/subtitle.cpp
     src/installer.cpp
-    src/parser.cpp
     src/audit.cpp
     src/ffmpeg_features.cpp
     src/fppx2.cpp

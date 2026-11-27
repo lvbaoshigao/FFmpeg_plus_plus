@@ -120,10 +120,6 @@ export default defineConfig({
                 "link": "/features/queue"
             },
             {
-                "text": "命令模式",
-                "link": "/features/commands"
-            },
-            {
                 "text": "配置库与文件交换",
                 "link": "/features/library"
             },

@@ -10,7 +10,6 @@
 #include "audit.h"
 #include "ffmpeg_features.h"
 #include "constants.h"
-#include "parser.h"
 #include "fppx2.h"
 
 #ifdef _WIN32
@@ -809,62 +808,6 @@ void handleImageSequence(const json& req, const CancelCheck& isCancelled) {
 
     slog("handleImageSequence: %zu images -> %s @%.1f fps", files.size(), output.c_str(), framerate);
     runFFmpegProcess(req["id"], cmd, isCancelled, output);
-}
-
-// ═══════════════════════════════════════════
-// handleCustomCommand — 用户自定义 ffmpeg 命令
-// ═══════════════════════════════════════════
-
-void handleCustomCommand(const json& req, const CancelCheck& isCancelled) {
-    json params = getParams(req);
-    std::string command = params.value("command", "");
-    std::string output_path = params.value("output", "");
-
-    if (command.empty()) {
-        JsonWriter::reply(req["id"], false, nullptr, "命令为空");
-        return;
-    }
-
-    auto tokens = splitCommand(command);
-    if (tokens.empty()) {
-        JsonWriter::reply(req["id"], false, nullptr, "命令解析失败");
-        return;
-    }
-
-    // 确保以 ffmpeg 可执行文件开头（用户可能输入裸 "ffmpeg" 或完整路径，
-    // 也可能直接以参数开头，统一补上解析出的路径）
-    // 精确 basename 匹配：避免 "my-ffmpeg-wrapper" 等非 ffmpeg 程序被误判
-    const std::string& first = tokens[0];
-    size_t lastSlash = first.find_last_of("/\\");
-    std::string basename = (lastSlash != std::string::npos) ? first.substr(lastSlash + 1) : first;
-    if (basename != "ffmpeg" && basename != "ffmpeg.exe") {
-        tokens.insert(tokens.begin(), getFFmpegPath());
-    }
-
-    slog("handleCustomCommand: %s", command.c_str());
-
-    // [FIX S-7] 自定义命令同样必须过滤镜安全白名单，防止 subtitles=/etc/passwd、
-    // movie= 等可读本地任意文件/执行命令的危险滤镜绕过黑名单（与 handleTranscode 一致）。
-    for (size_t i = 0; i + 1 < tokens.size(); ++i) {
-        if ((tokens[i] == "-vf" || tokens[i] == "-af" || tokens[i] == "-filter_complex")
-            && !isFilterSafe(tokens[i + 1])) {
-            JsonWriter::reply(req["id"], false, nullptr, "自定义命令包含不安全滤镜");
-            return;
-        }
-    }
-    // [FIX S-7] 输入/输出路径同样走既有安全校验，防止路径穿越/任意文件读取。
-    for (size_t i = 0; i + 1 < tokens.size(); ++i) {
-        if (tokens[i] == "-i" && !isPathSafe(tokens[i + 1])) {
-            JsonWriter::reply(req["id"], false, nullptr, "自定义命令包含不安全输入路径");
-            return;
-        }
-    }
-    if (!output_path.empty() && !isPathSafe(output_path)) {
-        JsonWriter::reply(req["id"], false, nullptr, "自定义命令包含不安全输出路径");
-        return;
-    }
-
-    runFFmpegProcess(req["id"], tokens, isCancelled, output_path);
 }
 
 // ═══════════════════════════════════════════

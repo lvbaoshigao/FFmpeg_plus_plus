@@ -89,7 +89,7 @@ void main() {
     await gesture.moveTo(end, timeStamp: const Duration(milliseconds: 100));
     await gesture.up();
     await tester.pumpAndSettle();
-    expect(selected, 4);
+    expect(selected, 3);
     await tester.pump(const Duration(seconds: 1));
   });
 
@@ -105,28 +105,28 @@ void main() {
         of: rail,
         matching: find.byType(SingleChildScrollView),
       );
-      expect(tester.getSize(_railItem(4)).height, 54);
+      expect(tester.getSize(_railItem(3)).height, 54);
 
       tester.view.viewInsets = const FakeViewPadding(bottom: 85);
       await tester.pumpAndSettle();
       expect(tester.element(rail), same(railElement));
-      expect(tester.getSize(_railItem(4)).height, inExclusiveRange(44, 54));
-      expect(_railItem(4).hitTestable(), findsOneWidget);
+      expect(tester.getSize(_railItem(3)).height, inExclusiveRange(44, 54));
+      expect(_railItem(3).hitTestable(), findsOneWidget);
 
       tester.view.viewInsets = const FakeViewPadding(bottom: 140);
       await tester.pumpAndSettle();
       expect(tester.element(rail), same(railElement));
-      for (final index in [0, 1, 3, 4]) {
+      for (final index in [0, 1, 2, 3]) {
         expect(tester.getSize(_railItem(index)).height, 44);
       }
-      expect(_railItem(4).hitTestable(), findsNothing);
+      expect(_railItem(3).hitTestable(), findsNothing);
       await tester.drag(scroll, const Offset(0, -100));
       await tester.pumpAndSettle();
       expect(selections, isEmpty);
-      expect(_railItem(4).hitTestable(), findsOneWidget);
-      await tester.tap(_railItem(4));
+      expect(_railItem(3).hitTestable(), findsOneWidget);
+      await tester.tap(_railItem(3));
       await tester.pump();
-      expect(selections, [4]);
+      expect(selections, [3]);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     });
@@ -157,7 +157,7 @@ void main() {
       tester.view.viewInsets = const FakeViewPadding(bottom: 140);
       await tester.pumpAndSettle();
       final ring = find.byKey(const ValueKey('mobile-rail-focus-ring'));
-      for (final index in [0, 1, 3, 4]) {
+      for (final index in [0, 1, 2, 3]) {
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
         await tester.pumpAndSettle();
         expect(
@@ -168,13 +168,13 @@ void main() {
       final border =
           tester.widget<DecoratedBox>(ring).decoration as BoxDecoration;
       expect((border.border! as Border).top.width, 3);
-      expect(_railItem(4).hitTestable(), findsOneWidget);
+      expect(_railItem(3).hitTestable(), findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
-      expect(selections, [1, 4]);
+      expect(selections, [1, 3]);
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
       await tester.pump();
-      expect(selections, [1, 4, 4]);
+      expect(selections, [1, 3, 3]);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     });

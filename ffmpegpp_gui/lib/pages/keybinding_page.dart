@@ -245,14 +245,6 @@ class _KeybindingDialogState extends State<_KeybindingDialog> {
                 conflicts: conflicts,
               ),
               _shortcutTile(
-                actionId: 'nav_command',
-                label: isZh ? '跳转命令页' : 'Go to Command',
-                keys: config.keyBindings['nav_command'] ?? [],
-                scheme: scheme,
-                clr: clr,
-                conflicts: conflicts,
-              ),
-              _shortcutTile(
                 actionId: 'nav_settings',
                 label: isZh ? '跳转设置页' : 'Go to Settings',
                 keys: config.keyBindings['nav_settings'] ?? [],

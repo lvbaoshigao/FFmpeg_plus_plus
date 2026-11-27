@@ -63,12 +63,12 @@ void main() {
       tester,
     ) async {
       state.config.veryVerboseLogs = true;
-      state.selectNav(5);
+      state.selectNav(4);
       await showPage(tester, const AppShell(mobile: false));
       final slots = tester.widgetList<CachedPageSlot>(
         find.byType(CachedPageSlot, skipOffstage: false),
       );
-      expect(state.selectedNav, 5);
+      expect(state.selectedNav, 4);
       expect(slots.where((slot) => slot.active).single.child, isA<LogPage>());
       expect(find.byType(LogPage, skipOffstage: false), findsOneWidget);
       expect(find.byType(WallpaperBackground), findsOneWidget);

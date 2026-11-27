@@ -13,7 +13,6 @@ class AppStrings {
   // ── 侧边栏 ──
   String get navProjects => lang == 'zh' ? '项目' : 'Projects';
   String get navQueue => lang == 'zh' ? '处理队列' : 'Queue';
-  String get navCommand => lang == 'zh' ? '命令' : 'Command';
   String get navSettings => lang == 'zh' ? '设置' : 'Settings';
   String get backendConnected => lang == 'zh' ? '后端已连接' : 'Backend connected';
   String get navCollapse => lang == 'zh' ? '收起侧边栏' : 'Collapse sidebar';
@@ -159,16 +158,6 @@ class AppStrings {
   // 预测式返回（Android 14+）
   String get predictiveBack => lang == 'zh' ? '预测式返回' : 'Predictive back';
   String get predictiveBackHint => lang == 'zh' ? '侧滑返回时预览上一页（Android 14+，Android 16 原生手势）' : 'Preview the previous screen when swiping back (Android 14+ gesture)';
-  // Resource monitor
-  // Command page
-  String get cmdExecute => lang == 'zh' ? '执行' : 'Execute';
-  String get cmdInput => lang == 'zh' ? '命令输入' : 'Command Input';
-  String get cmdOutput => lang == 'zh' ? '命令输出' : 'Command Output';
-  String get cmdClear => lang == 'zh' ? '清空' : 'Clear';
-  String get cmdClearOutput => lang == 'zh' ? '清空输出' : 'Clear Output';
-  String get cmdNoOutput => lang == 'zh' ? '暂无输出' : 'No output yet';
-  String get cmdInputHint => lang == 'zh' ? '输入 FFmpeg 命令...' : 'Enter FFmpeg command...';
-
   // ── 设置页 ──
   String get settingsTitle => lang == 'zh' ? '设置' : 'Settings';
   String get language => lang == 'zh' ? '语言' : 'Language';

@@ -61,7 +61,6 @@ import '../widgets/wallpaper_background.dart';
 import '../widgets/window_chrome.dart';
 import 'ads_page.dart';
 import 'ai_settings_mobile.dart';
-import 'command_page.dart';
 import 'credits_page.dart';
 import 'keybinding_page.dart';
 import 'log_page.dart';
@@ -1007,30 +1006,13 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ],
       ),
-    // 移动端专用：命令与日志从底部导航移入设置（避免底部元素过多）
+    // 移动端专用：日志入口放在设置中，避免底部元素过多。
     if (isMobilePlatform)
       _SectionDef(
         id: 'tools',
         title: (s) => s.isZh ? '工具' : 'Tools',
         icon: Icons.handyman_outlined,
         cards: [
-          _CardDef(
-            id: 'command',
-            title: (s) => s.navCommand,
-            icon: Icons.terminal,
-            keywords: [
-              '命令',
-              'ffmpeg',
-              'command',
-              'terminal',
-              '终端',
-              '执行',
-              'run',
-              '模板',
-              'template',
-            ],
-            build: _buildMobileCommandEntry,
-          ),
           _CardDef(
             id: 'logs',
             title: (s) => s.qLogs,
@@ -2198,25 +2180,15 @@ class _SettingsPageState extends State<SettingsPage> {
       return _mobileLanguageRow(state, scheme, c.icon, highlightedTitle);
     }
 
-    // 命令 / 日志：直接进入对应页面（它们的「内容」本身就是入口，不套二级页）
+    // 日志直接进入对应页面，其余选项按需打开确认框或二级页。
     return ListTile(
       leading: _miIcon(scheme, c.icon),
       title: highlightedTitle,
       trailing: Icon(Icons.chevron_right, size: 20, color: scheme.outline),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       onTap: () {
-        if (c.id == 'command') {
-          // CommandPage / LogPage 自身已用 withWallpaper 铺壁纸，且顶栏自带安全区
-          // 偏移。这里若再套一层 withWallpaper + SafeArea：
-          //   1) 双层壁纸多解码一次并多一层遮罩；
-          //   2) SafeArea 会把子树的 MediaQuery.padding.top 清零 → 顶栏被状态栏压住。
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              allowSnapshotting: false,
-              builder: (_) => const CommandPage(),
-            ),
-          );
-        } else if (c.id == 'logs') {
+        if (c.id == 'logs') {
+          // LogPage 自带壁纸与安全区顶栏，避免重复包装。
           Navigator.of(context).push(
             MaterialPageRoute(
               allowSnapshotting: false,
@@ -4716,39 +4688,6 @@ class _ThemeBackgroundSectionState extends State<_ThemeBackgroundSection> {
   );
 }
 
-/// 移动端设置 → 工具 → 命令：进入命令页
-Widget _buildMobileCommandEntry(BuildContext ctx, AppState state) {
-  final scheme = Theme.of(ctx).colorScheme;
-  final s = AppStrings.of(state.config.language);
-  return _glass(ctx, state, s.navCommand, [
-    ListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(Icons.terminal_outlined, color: scheme.primary, size: 22),
-      title: Text(
-        s.isZh ? '手动执行 FFmpeg 命令' : 'Run custom FFmpeg commands',
-        style: TextStyle(fontSize: 13, color: scheme.onSurface),
-      ),
-      subtitle: Text(
-        s.isZh
-            ? '命令输入 + 快捷模板 + 参数参考'
-            : 'Manual input + quick templates + parameter reference',
-        style: SettingsTypography.description.copyWith(
-          color: scheme.onSurfaceVariant,
-        ),
-      ),
-      trailing: Icon(Icons.chevron_right, color: scheme.outline),
-      // CommandPage 自带壁纸与安全区顶栏，不再外层重复包装（见 _mobileToolRow 注释）
-      onTap: () => Navigator.of(ctx).push(
-        MaterialPageRoute(
-          allowSnapshotting: false,
-          builder: (_) => const CommandPage(),
-        ),
-      ),
-    ),
-  ]);
-}
-
 /// 移动端设置 → 工具 → 日志：进入日志页
 Widget _buildMobileLogsEntry(BuildContext ctx, AppState state) {
   final scheme = Theme.of(ctx).colorScheme;
@@ -4771,7 +4710,7 @@ Widget _buildMobileLogsEntry(BuildContext ctx, AppState state) {
         ),
       ),
       trailing: Icon(Icons.chevron_right, color: scheme.outline),
-      // LogPage 自带壁纸与安全区顶栏，不再外层重复包装（见 _mobileToolRow 注释）
+      // LogPage 自带壁纸与安全区顶栏，避免重复包装。
       onTap: () => Navigator.of(ctx).push(
         MaterialPageRoute(
           allowSnapshotting: false,

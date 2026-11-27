@@ -2,6 +2,7 @@ import 'package:ffmpegpp_gui/app.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
@@ -115,6 +116,48 @@ Future<void> _navigate(WidgetTester tester, AppState state, int index) async {
 }
 
 void main() {
+  testWidgets('desktop navigation maps the remaining destinations in order', (
+    tester,
+  ) async {
+    final state = await _mount(tester, _PageLedger(), mobile: false);
+    state.config.veryVerboseLogs = true;
+    await _navigate(tester, state, 0);
+    expect(find.text('Command'), findsNothing);
+    final destinations = [
+      ('Queue', 1),
+      ('Configs', 2),
+      ('Settings', 3),
+      ('Logs', 4),
+    ];
+    for (final (label, index) in destinations) {
+      await tester.tap(find.text(label));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(state.selectedNav, index);
+      expect(find.text('Destination $index'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets(
+    'navigation shortcuts retain settings and ignore removed command',
+    (tester) async {
+      final state = await _mount(tester, _PageLedger(), mobile: false);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit3);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(state.selectedNav, 0);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit4);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(state.selectedNav, 3);
+      expect(find.text('Destination 3'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final mobile in [false, true]) {
     group('AppShell ${mobile ? "mobile" : "desktop"} page cache', () {
       if (mobile) {
@@ -202,11 +245,11 @@ void main() {
           expect(ledger.mounted[0], same(home));
           expect(home.input.text, 'home draft');
           expect(homeInput.focusNode.hasFocus, isFalse);
-          await _navigate(tester, state, 3);
-          expect(ledger.mounted.keys.toSet(), {1, 3});
+          await _navigate(tester, state, 2);
+          expect(ledger.mounted.keys.toSet(), {1, 2});
           expect(ledger.disposed, contains(0));
           expect(home.mounted, isFalse);
-          final currentField = find.byKey(const ValueKey('input-3'));
+          final currentField = find.byKey(const ValueKey('input-2'));
           await tester.enterText(currentField, 'current draft');
           final currentInput = tester.widget<EditableText>(
             find.descendant(
@@ -215,12 +258,12 @@ void main() {
             ),
           );
           expect(currentInput.focusNode.hasFocus, isTrue);
-          final current = ledger.mounted[3];
-          await _navigate(tester, state, 4);
+          final current = ledger.mounted[2];
+          await _navigate(tester, state, 3);
           expect(ledger.mounted.length, 2);
-          expect(ledger.mounted[3], same(current));
+          expect(ledger.mounted[2], same(current));
           expect(ledger.disposed, contains(1));
-          expect(state.selectedNav, 4);
+          expect(state.selectedNav, 3);
           expect(tester.takeException(), isNull);
         },
       );
@@ -261,8 +304,8 @@ void main() {
         await _navigate(tester, state, 1);
         expect(ledger.mounted.keys, [1]);
         expect(ledger.disposed, contains(0));
-        await _navigate(tester, state, 3);
-        expect(ledger.mounted.keys, [3]);
+        await _navigate(tester, state, 2);
+        expect(ledger.mounted.keys, [2]);
         expect(ledger.disposed, contains(1));
         expect(tester.takeException(), isNull);
       });
@@ -284,8 +327,8 @@ void main() {
           await tester.pump(const Duration(seconds: 2));
           expect(ledger.requested, built);
           expect(ledger.mounted.keys, [1]);
-          await _navigate(tester, state, 3);
-          expect(ledger.mounted.keys.toSet(), {1, 3});
+          await _navigate(tester, state, 2);
+          expect(ledger.mounted.keys.toSet(), {1, 2});
           expect(tester.takeException(), isNull);
         },
       );

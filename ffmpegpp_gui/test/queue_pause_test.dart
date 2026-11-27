@@ -189,6 +189,72 @@ void main() {
     });
   });
 
+  group('旧命令任务兼容', () {
+    TaskInfo savedTask(
+      TaskStatus status, {
+      String videoId = '',
+      List<BackendCall>? calls,
+    }) => TaskInfo(
+      id: 'saved-command',
+      videoId: videoId,
+      filename: 'input.mp4',
+      inputPath: '/tmp/input.mp4',
+      outputPath: '/tmp/output.mp4',
+      config: TranscodeConfig(),
+      status: status,
+      progress: 42,
+      speed: '2x',
+      command: const ['ffmpeg', '-i', '/tmp/input.mp4', '/tmp/output.mp4'],
+      pipelineCalls: calls,
+    );
+
+    test('未完成的旧命令任务取消，命令日志仍保留', () {
+      for (final status in [
+        TaskStatus.pending,
+        TaskStatus.processing,
+        TaskStatus.paused,
+      ]) {
+        final task = savedTask(status);
+        final restored = normalizeRestoredTask(
+          TaskInfo.fromJson(task.toJson()),
+          zh: true,
+        );
+        expect(restored.status, TaskStatus.cancelled);
+        expect(restored.progress, 0);
+        expect(restored.speed, '');
+        expect(restored.error, '命令界面已移除，旧命令任务已取消');
+        expect(restored.command, task.command);
+      }
+    });
+
+    test('旧命令终态历史保持可查看', () {
+      for (final status in [
+        TaskStatus.completed,
+        TaskStatus.failed,
+        TaskStatus.cancelled,
+      ]) {
+        final task = savedTask(status);
+        expect(identical(normalizeRestoredTask(task, zh: false), task), isTrue);
+      }
+    });
+
+    test('通用转码和结构化流程的命令日志不被误判为旧命令任务', () {
+      final transcode = savedTask(TaskStatus.pending, videoId: 'video');
+      final pipeline = savedTask(
+        TaskStatus.pending,
+        calls: [BackendCall(action: 'transcode', params: {})],
+      );
+      expect(
+        identical(normalizeRestoredTask(transcode, zh: true), transcode),
+        isTrue,
+      );
+      expect(
+        identical(normalizeRestoredTask(pipeline, zh: true), pipeline),
+        isTrue,
+      );
+    });
+  });
+
   group('RunningNodeViewport（类地图视口）', () {
     List<BackendCall> calls(int n) =>
         [for (int i = 0; i < n; i++) BackendCall(action: 'transcode', params: {})];
@@ -264,7 +330,7 @@ void main() {
   });
 
   group('移动端详情布局', () {
-    testWidgets('顶部运行节点视口 + 基本信息/高级两栏，字段不丢', (tester) async {
+    testWidgets('结构化流程结果保留命令日志及基本信息/高级两栏', (tester) async {
       tester.view.physicalSize = const Size(430, 932);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);

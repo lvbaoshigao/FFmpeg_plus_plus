@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:ffmpegpp_gui/pages/command_page.dart';
 import 'package:ffmpegpp_gui/pages/config_library_page.dart';
 import 'package:ffmpegpp_gui/pages/log_page.dart';
 import 'package:ffmpegpp_gui/pages/project_page.dart';
@@ -50,7 +49,6 @@ final _pages = <({String name, Widget Function() create})>[
   (name: 'Queue', create: () => QueuePage(monitor: _IdleMonitor())),
   (name: 'ConfigLibrary', create: () => const ConfigLibraryPage()),
   (name: 'Settings', create: () => const SettingsPage()),
-  (name: 'Command', create: () => const CommandPage()),
   (name: 'Log', create: () => const LogPage(embedded: true)),
 ];
 

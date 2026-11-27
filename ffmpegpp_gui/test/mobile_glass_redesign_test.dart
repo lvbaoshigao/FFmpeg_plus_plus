@@ -412,7 +412,7 @@ void main() {
       final configs = find.bySemanticsLabel('Configs');
       tester.semantics.tap(find.semantics.byLabel('Configs'));
       await tester.pump();
-      expect(page, 3);
+      expect(page, 2);
       expect(
         tester.getSemantics(configs).flagsCollection.isSelected,
         ui.Tristate.isTrue,

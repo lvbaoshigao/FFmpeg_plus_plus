@@ -1931,67 +1931,6 @@ class AppState extends ChangeNotifier {
     _scheduleTaskPersist();
   }
 
-  /// 从命令页面添加自定义 FFmpeg 命令任务
-  void addCustomTask({
-    required String inputPath,
-    required String outputPath,
-    required String command,
-    required String filename,
-  }) {
-    _tasks.add(
-      TaskInfo(
-        id: 'task_${const Uuid().v4()}',
-        videoId: '',
-        filename: filename,
-        inputPath: inputPath,
-        outputPath: outputPath,
-        config: TranscodeConfig(),
-        // 引号感知分词（原 command.split(' ') 会把 `-i "my file.mp4"` 拆坏）
-        command: _splitCommandQuoted(command),
-      ),
-    );
-    _tasksNotify();
-    _scheduleTaskPersist();
-  }
-
-  /// 命令行分词：支持单/双引号包裹的空格（与后端 parser::splitCommand 一致）。
-  static List<String> _splitCommandQuoted(String cmd) {
-    final tokens = <String>[];
-    final current = StringBuffer();
-    bool inQuote = false;
-    String quoteChar = '';
-    for (var i = 0; i < cmd.length; i++) {
-      final c = cmd[i];
-      if (inQuote) {
-        if (c == quoteChar) {
-          inQuote = false;
-        } else {
-          current.write(c);
-        }
-      } else if (c == '"' || c == '\'') {
-        inQuote = true;
-        quoteChar = c;
-      } else if (c == ' ' || c == '\t') {
-        if (current.isNotEmpty) {
-          tokens.add(current.toString());
-          current.clear();
-        }
-      } else {
-        current.write(c);
-      }
-    }
-    if (current.isNotEmpty) tokens.add(current.toString());
-    return tokens;
-  }
-
-  /// join 时重新给含空格的 token 加引号，保证后端 splitCommand 能还原（否则引号信息丢失）。
-  static String _quoteToken(String t) {
-    if (t.contains(' ') || t.contains('\t')) {
-      return '"${t.replaceAll('"', r'\"')}"';
-    }
-    return t;
-  }
-
   void processSingleTask(String tid) {
     final limit = _taskConcurrencyLimit;
     if (_runningTaskIds.length >= limit) return;
@@ -2080,8 +2019,6 @@ class AppState extends ChangeNotifier {
       details: {
         'kind': task.pipelineCalls?.isNotEmpty == true
             ? 'pipeline'
-            : task.command?.isNotEmpty == true
-            ? 'custom'
             : 'transcode',
         'stepCount': task.pipelineCalls?.length ?? 0,
         'activeCount': _runningTaskIds.length,
@@ -2142,11 +2079,16 @@ class AppState extends ChangeNotifier {
     run.throwIfCancelled();
     final pi = _tasks.indexWhere((t) => t.id == task.id);
     if (pi < 0) return;
+    if (task.pipelineCalls?.isNotEmpty != true && task.videoId.isEmpty) {
+      throw StateError(
+        config.language == 'zh'
+            ? '任务缺少可执行流程'
+            : 'Task has no executable workflow',
+      );
+    }
     _ensureOutputDir(task.outputPath);
     if (task.pipelineCalls != null && task.pipelineCalls!.isNotEmpty) {
       await _processPipelineTask(run, task.id);
-    } else if (task.command != null && task.command!.isNotEmpty) {
-      await _processCustomCommand(run, task.id, task);
     } else {
       await _processLegacyTask(run, task.id, task);
     }
@@ -2301,95 +2243,6 @@ class AppState extends ChangeNotifier {
         }
         final cmd = (d?['command'] as List?)?.cast<String>();
         if (cmd != null) addLog('  命令: ${cmd.join(' ')}', category: 'ffmpeg');
-        onTaskFinished?.call(task.filename, TaskStatus.completed);
-      } else {
-        _tasks[fi] = _tasks[fi].copyWith(
-          status: TaskStatus.failed,
-          error: resp['error'] as String?,
-          logLines: (resp['data']?['log_lines'] as List?)?.cast<String>() ?? [],
-          command: (resp['data']?['command'] as List?)?.cast<String>(),
-        );
-        addLog('任务失败: ${task.filename} - ${resp['error']}', category: 'error');
-        onTaskFinished?.call(task.filename, TaskStatus.failed);
-      }
-      _tasksNotify();
-      _scheduleTaskPersist();
-    }
-  }
-
-  /// 处理用户自定义 FFmpeg 命令任务
-  Future<void> _processCustomCommand(
-    TaskProcessRun run,
-    String taskId,
-    TaskInfo task,
-  ) async {
-    addLog('自定义命令: ${task.command!.join(' ')}', category: 'info');
-
-    StreamSubscription<ProgressUpdate>? sub;
-    // 进度消息先登记、按 300ms 批量冲刷（见类头「进度心跳节流」注释），
-    // 不再每条消息都 notifyListeners() → 整棵订阅树全量重建。
-    sub = backend.progressStream.listen((u) {
-      if (u.taskId == taskId) {
-        _queueProgress(taskId, () {
-          if (!_ownsRun(taskId, run)) return false;
-          final i = _tasks.indexWhere((t) => t.id == taskId);
-          // 已取消/已完成/已失败的任务不再被进度消息改回 processing
-          if (i < 0 || _tasks[i].status != TaskStatus.processing) return false;
-          _tasks[i] = _tasks[i].copyWith(
-            status: TaskStatus.processing,
-            progress: u.progress,
-            elapsed: u.currentTime,
-            remaining: u.remaining,
-            speed: u.speed,
-            fps: u.fps,
-            bitrate: u.bitrate,
-            frame: u.frame,
-          );
-          return true;
-        });
-      }
-    });
-
-    // 自定义命令：input/output 已在 addCustomTask 时解析好（含引号分词），
-    // 这里直接把命令全文交给后端 custom_command 执行
-    // （原来再 split(' ') 解析一遍会覆盖正确路径，且 _custom_command 后端根本不处理）
-    final cmdParts = task.command!;
-    // 含空格的路径需重新加引号，否则 join 后后端 splitCommand 会把路径拆开
-    final commandText = cmdParts.map(_quoteToken).join(' ');
-    final Map<String, dynamic> resp;
-    try {
-      resp = await backend.customCommand(
-        task.id,
-        command: commandText,
-        input: task.inputPath,
-        output: task.outputPath,
-      );
-    } finally {
-      await sub.cancel();
-    }
-
-    final fi = _tasks.indexWhere((t) => t.id == taskId);
-    // 取消后若用户重新开始（_cancelRequested 复位），旧任务在途响应不得把 cancelled 改回终态
-    if (_ownsRun(taskId, run) &&
-        fi >= 0 &&
-        !_cancelRequested &&
-        _isLiveStatus(_tasks[fi].status)) {
-      if (resp['success'] == true) {
-        final d = resp['data'] as Map<String, dynamic>?;
-        _tasks[fi] = _tasks[fi].copyWith(
-          status: TaskStatus.completed,
-          progress: 100,
-          // 完成态把每步进度补满 1.0：后端只为流式步骤发进度事件，快速步骤
-          // （清理/移动等）可能停在 0，UI 上会出现「完成了但最后一段是空的」
-          callProgresses: List<double>.filled(
-            _tasks[fi].callProgresses.length,
-            1.0,
-          ),
-          outputSize: d?['output_size'] as int?,
-          duration: (d?['duration'] as num?)?.toDouble(),
-          command: (d?['command'] as List?)?.cast<String>(),
-        );
-        addLog('任务完成: ${task.filename} (${d?['duration']}s)', category: 'info');
         onTaskFinished?.call(task.filename, TaskStatus.completed);
       } else {
         _tasks[fi] = _tasks[fi].copyWith(
@@ -6104,6 +5957,7 @@ class AppState extends ChangeNotifier {
 ///   解冻（resumeTask 找不到目标），会成为永远醒不过来的假暂停；而且 paused
 ///   计为活动任务，会一直占着并发槽位，队列再也拉不起新任务。改成 pending 后
 ///   用户可以重新开始（ffmpeg 无法从半截文件续跑，所以进度归零，不保留误导值）；
+/// - 旧版命令页未完成任务转为 cancelled，避免恢复后误用默认转码配置；
 /// - 其它状态原样返回（历史记录不丢）。
 TaskInfo normalizeRestoredTask(TaskInfo t, {required bool zh}) {
   TaskInfo clearRuntime(TaskInfo src, TaskStatus status, String? error) =>
@@ -6120,6 +5974,20 @@ TaskInfo normalizeRestoredTask(TaskInfo t, {required bool zh}) {
         currentCallIndex: 0,
         error: error,
       );
+  if (t.videoId.isEmpty &&
+      t.pipelineCalls?.isNotEmpty != true &&
+      t.command?.isNotEmpty == true &&
+      (t.status == TaskStatus.pending ||
+          t.status == TaskStatus.processing ||
+          t.status == TaskStatus.paused)) {
+    return clearRuntime(
+      t,
+      TaskStatus.cancelled,
+      zh
+          ? '命令界面已移除，旧命令任务已取消'
+          : 'Command page removed; saved command task cancelled',
+    );
+  }
   switch (t.status) {
     case TaskStatus.processing:
       return clearRuntime(

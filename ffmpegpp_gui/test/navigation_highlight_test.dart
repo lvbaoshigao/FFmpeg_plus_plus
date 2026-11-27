@@ -197,13 +197,13 @@ void main() {
           _expectMaterial(tester, mask, style);
           expect(_hasLocalBoundary(tester, mask, MobileNavRail), isFalse);
           final first = find.byKey(const ValueKey('mobile-rail-item-0'));
-          final last = find.byKey(const ValueKey('mobile-rail-item-4'));
+          final last = find.byKey(const ValueKey('mobile-rail-item-3'));
           await tester.dragFrom(
             tester.getCenter(first),
             tester.getCenter(last) - tester.getCenter(first),
           );
           await tester.pumpAndSettle();
-          expect(selections.last, 4);
+          expect(selections.last, 3);
           expect(
             tester.getSemantics(last).flagsCollection.isSelected,
             Tristate.isTrue,
@@ -292,7 +292,7 @@ void main() {
           _expectMaterial(tester, mask, style);
           await tester.tap(find.byKey(const ValueKey('flat-nav-item-2')));
           await tester.pumpAndSettle();
-          expect(selections, [3]);
+          expect(selections, [2]);
           expect(
             tester
                 .getSemantics(find.byKey(const ValueKey('flat-nav-item-2')))

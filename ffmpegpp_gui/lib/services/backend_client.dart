@@ -234,27 +234,6 @@ class BackendClient {
     }
   }
 
-  /// 执行用户自定义 FFmpeg 命令（命令全文交给后端执行）
-  Future<Map<String, dynamic>> customCommand(
-    String taskId, {
-    required String command,
-    required String input,
-    required String output,
-  }) {
-    return _runTracked(
-      taskId,
-      () => _traceRequest(
-        'custom_command',
-        () => _process.requestWithId(taskId, 'custom_command', {
-          'command': command,
-          'input': input,
-          'output': output,
-        }),
-        requestFields: 3,
-      ),
-    );
-  }
-
   /// 帧提取
   Future<Map<String, dynamic>> extractFrame(
     String taskId, {

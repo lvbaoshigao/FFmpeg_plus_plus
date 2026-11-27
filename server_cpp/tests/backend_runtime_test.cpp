@@ -74,6 +74,21 @@ int main() {
     require(ffmpegpp_request("{\"id\":\"ping\",\"action\":\"ping\"}") == 0, "ping failed");
     auto messages = pollAll();
     require(messages.back()["data"]["pong"] == true, "ping protocol changed");
+    // The removed standalone command API must use the unknown-action path.
+    require(ffmpegpp_request(R"({"id":"removed-command","action":"custom_command","params":{}})") == 0,
+            "removed command request was not queued");
+    bool removedCommandRejected = false;
+    auto deadline = Clock::now() + std::chrono::seconds(2);
+    while (!removedCommandRejected && Clock::now() < deadline) {
+        for (const auto& message : pollAll()) {
+            if (message.value("id", "") != "removed-command") continue;
+            require(message.value("success", true) == false, "removed command action succeeded");
+            require(message.value("error", "") == "未知 action: custom_command", "removed command handler still exists");
+            removedCommandRejected = true;
+        }
+        if (!removedCommandRejected) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(removedCommandRejected, "removed command action did not produce a reply");
     // Old output must not cross an FFI shutdown/init boundary.
     ffmpegpp_request("{\"id\":\"old\",\"action\":\"ping\"}");
     ffmpegpp_request("{\"action\":\"shutdown\"}");

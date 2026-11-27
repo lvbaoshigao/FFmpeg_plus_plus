@@ -348,13 +348,13 @@ void main() {
           final movingTop = tester.getTopLeft(highlight).dy;
           expect(movingTop, greaterThan(initialTop));
           expect(movingTop, lessThan(tester.getTopLeft(row(2)).dy));
-          await tester.tap(row(4));
+          await tester.tap(row(3));
           await tester.pumpAndSettle();
-          expect(selected, 4);
+          expect(selected, 3);
           expect(tester.element(highlight), same(element));
-          expect(tester.getTopLeft(highlight).dy, tester.getTopLeft(row(4)).dy);
+          expect(tester.getTopLeft(highlight).dy, tester.getTopLeft(row(3)).dy);
           expect(
-            tester.getSemantics(row(4)).flagsCollection.isSelected,
+            tester.getSemantics(row(3)).flagsCollection.isSelected,
             Tristate.isTrue,
           );
           expect(

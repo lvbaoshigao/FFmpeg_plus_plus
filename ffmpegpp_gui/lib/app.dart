@@ -8,7 +8,6 @@ import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'models/models.dart';
-import 'pages/command_page.dart';
 import 'pages/config_library_page.dart';
 import 'pages/log_page.dart';
 import 'pages/project_page.dart';
@@ -545,7 +544,7 @@ class _AppShellState extends State<AppShell>
   final _projectPageKey = GlobalKey<ProjectPageState>();
 
   /// 底部导航可见的页面索引，横向滑动按此顺序循环切换。
-  static const List<int> _kMobileNavOrder = [0, 1, 3, 4];
+  static const List<int> _kMobileNavOrder = [0, 1, 2, 3];
 
   /// 移动端 Tab 翻页控制器：PageView 跟随手指（半程滑动即显示「各半张页面」）。
   late final PageController _mobilePageController;
@@ -953,14 +952,9 @@ class _AppShellState extends State<AppShell>
       state.selectNav(1);
       return KeyEventResult.handled;
     }
-    final navCommand = bindings['nav_command'] ?? ['Control', '3'];
-    if (_matchesBinding(event, navCommand)) {
-      state.selectNav(2);
-      return KeyEventResult.handled;
-    }
     final navSettings = bindings['nav_settings'] ?? ['Control', '4'];
     if (_matchesBinding(event, navSettings)) {
-      state.selectNav(4);
+      state.selectNav(3);
       return KeyEventResult.handled;
     }
 
@@ -1155,7 +1149,7 @@ class _AppShellState extends State<AppShell>
       final Widget mobileBody = Stack(
         children: [
           // 槽位 0：内容区。底部形态全屏铺满；侧边形态按方向让出侧向宽度。
-          // 页面区用 PageView：[0,1,3,4] 四个 Tab 滑动全程跟随手指（拖到一半即
+          // 页面区用 PageView：[0,1,2,3] 四个 Tab 滑动全程跟随手指（拖到一半即
           // 「各展示一半」），松手由 PageView 决定回弹或翻页；底部导航点击时同步。
           Positioned.fill(
             child: NotificationListener<ScrollNotification>(
@@ -1266,7 +1260,7 @@ class _AppShellState extends State<AppShell>
     );
   }
 
-  static const int _kPageCount = 6;
+  static const int _kPageCount = 5;
   static const int _kMaxAlivePages = 2;
   final List<Widget?> _pageCache = List.filled(_kPageCount, null);
   final List<int> _pageLru = [];
@@ -1291,10 +1285,9 @@ class _AppShellState extends State<AppShell>
         switch (index) {
           0 => ProjectPage(key: _projectPageKey),
           1 => const QueuePage(),
-          2 => const CommandPage(),
-          3 => const ConfigLibraryPage(),
-          4 => const SettingsPage(),
-          5 => const LogPage(embedded: true),
+          2 => const ConfigLibraryPage(),
+          3 => const SettingsPage(),
+          4 => const LogPage(embedded: true),
           _ => const SizedBox.shrink(),
         };
     _pageCache[index] = page;

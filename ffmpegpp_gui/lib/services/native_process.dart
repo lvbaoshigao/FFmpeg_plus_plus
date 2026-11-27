@@ -226,7 +226,7 @@ class NativeProcessManager {
   // Action names cross the public request boundary; never log arbitrary values.
   static String _actionLabel(String action) => switch (action) {
     'check_env' || 'set_paths' || 'probe' || 'transcode' || 'subtitle' ||
-    'custom_command' || 'extract_frame' || 'remove_metadata' || 'concat' ||
+    'extract_frame' || 'remove_metadata' || 'concat' ||
     'image_sequence' || 'fppx_import' || 'fppx2_export' ||
     'fppx_legacy_export' || 'pause' || 'resume' || 'cancel' || 'ping' => action,
     _ => 'other',

@@ -676,7 +676,7 @@ class LiquidGlassMobileNav extends StatelessWidget {
   final ValueChanged<int> onSelected;
   final bool hidden;
 
-  static const _pageOrder = [0, 1, 3, 4];
+  static const _pageOrder = [0, 1, 2, 3];
 
   @override
   Widget build(BuildContext context) {

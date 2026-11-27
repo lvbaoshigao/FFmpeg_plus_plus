@@ -183,7 +183,7 @@ void main() {
     });
 
     test(
-      'custom commands require a computed fraction before showing progress',
+      'execution logs do not create progress without a computed fraction',
       () {
         final task = _task().copyWith(
           command: ['ffmpeg', '-i', 'in.mp4', 'out.mp4'],

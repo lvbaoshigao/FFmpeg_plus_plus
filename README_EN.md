@@ -38,13 +38,12 @@ shared library loaded through Dart FFI. The actual encoding and decoding is stil
 
 With nodes, a processing chain becomes a graph you can see, save, reuse, and share.
 
-### Three ways to work
+### Two ways to work
 
 | Mode | Best for |
 |------|----------|
 | 🧩 **Node Editor** | Complex multi-step, multi-branch pipelines: transcode + filters + subtitles + audio in one graph |
 | 🎚 **Quick Config** | Fast single-file work: pick parameters from presets and send straight to the queue |
-| 🧠 **Command Mode** | Full freedom: write raw ffmpeg commands with templates and a parameter reference |
 
 ---
 
@@ -52,9 +51,7 @@ With nodes, a processing chain becomes a graph you can see, save, reuse, and sha
 
 ### Main Window
 
-<img src="make/1.png" alt="FFmpeg++ main window" width="100%">
-
-The Projects page is the entry point: the sidebar switches between Projects / Queue / Command /
+The Projects page is the entry point: the sidebar switches between Projects / Queue /
 Config Library / Settings. Media appears as cards with drag-and-drop import, thumbnail previews and
 automatic ffprobe detection (codec, resolution, duration, bitrate). From a selected file you can open
 the node editor, apply a quick-config preset, and every processing job lands in the shared queue.

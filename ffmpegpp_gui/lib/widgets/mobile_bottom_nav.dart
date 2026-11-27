@@ -541,9 +541,9 @@ class _MobileNavRailState extends State<MobileNavRail> {
       (TablerGlyph.settings, s.navSettings),
     ];
 
-    // 页面索引映射：0=项目, 1=队列, 3=配置库, 4=设置
-    const pageToItem = {0: 0, 1: 1, 3: 2, 4: 3};
-    const itemToPage = {0: 0, 1: 1, 2: 3, 3: 4};
+    // 页面索引映射：0=项目, 1=队列, 2=配置库, 3=设置
+    const pageToItem = {0: 0, 1: 1, 2: 2, 3: 3};
+    const itemToPage = {0: 0, 1: 1, 2: 2, 3: 3};
     final itemIdx = pageToItem[widget.selectedIndex] ?? 0;
 
     final itemContentHeight =
@@ -1005,7 +1005,7 @@ class _MobileNavRailState extends State<MobileNavRail> {
       final p = (pc != null && pc.hasClients) ? pc.page : null;
       if (p != null) {
         // PageView 的下标空间与菜单项序号同序（app.dart 的 _kMobileNavOrder
-        // = [0,1,3,4]，正好是 4 个 Tab 的 PageView 下标），故可直接按项宽定位。
+        // = [0,1,2,3]，正好是 4 个 Tab 的 PageView 下标），故可直接按项宽定位。
         followLeft = p.clamp(0.0, itemCount - 1).toDouble() * (itemW + pillGap);
       }
     }

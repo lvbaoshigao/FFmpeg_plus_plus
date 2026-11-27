@@ -2002,6 +2002,8 @@ class TaskInfo {
   final bool expanded;
   final int? outputSize;
   final double? duration;
+
+  /// Actual argv retained for execution logs and previews, never task dispatch.
   final List<String>? command;
   final List<BackendCall>? pipelineCalls;
   final int currentCallIndex;
@@ -2768,7 +2770,6 @@ class AppConfig {
     'canvas_select_button': ['left'],
     'nav_projects': ['Control', '1'],
     'nav_queue': ['Control', '2'],
-    'nav_command': ['Control', '3'],
     'nav_settings': ['Control', '4'],
     'project_search': ['Control', 'F'],
   };
@@ -2876,7 +2877,9 @@ class AppConfig {
        nodeUsageCount = nodeUsageCount ?? {},
        favoriteNodeTypes = favoriteNodeTypes ?? <String>[],
        recentNodeTypes = recentNodeTypes ?? <String>[],
-       keyBindings = keyBindings ?? Map.from(defaultKeyBindings);
+       keyBindings = Map<String, List<String>>.from(
+         keyBindings ?? defaultKeyBindings,
+       )..remove('nav_command');
 
   static bool? _softBool(dynamic v) => v is bool ? v : null;
 

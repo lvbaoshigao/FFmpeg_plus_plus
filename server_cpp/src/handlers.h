@@ -49,7 +49,6 @@ void handleExtractFrame(const json& req, const CancelCheck& isCancelled);
 void handleRemoveMetadata(const json& req, const CancelCheck& isCancelled);
 void handleConcat(const json& req, const CancelCheck& isCancelled);
 void handleImageSequence(const json& req, const CancelCheck& isCancelled);
-void handleCustomCommand(const json& req, const CancelCheck& isCancelled);
 
 // FPPX 配置文件（新版 v2 + 旧版迁移），纯文件解析无 ffmpeg 依赖
 void handleFppxImport(const json& req);       // 自动路由（按文件头判别新旧格式）

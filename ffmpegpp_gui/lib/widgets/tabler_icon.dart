@@ -38,7 +38,6 @@ enum TablerGlyph {
   subtitles('subtitles'),
   switchHorizontal('switch-horizontal'),
   tag('tag'),
-  terminal2('terminal-2'),
   video('video'),
   volume('volume'),
   volume3('volume-3'),

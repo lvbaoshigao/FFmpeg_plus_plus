@@ -76,7 +76,6 @@ class _SidebarState extends State<Sidebar> {
     final items = <(TablerGlyph, String)>[
       (TablerGlyph.movie, s.navProjects),
       (TablerGlyph.listDetails, s.navQueue),
-      (TablerGlyph.terminal2, s.navCommand),
       (TablerGlyph.folders, lang == 'zh' ? '配置库' : 'Configs'),
       (TablerGlyph.settings, s.navSettings),
       if (showLogs) (TablerGlyph.fileText, lang == 'zh' ? '日志' : 'Logs'),
