@@ -32,6 +32,12 @@ Output: dist/audio-gain.fppplugin. The script generates metadata constants from 
 python3 tools/build_plugin.py --output dist/audio-gain.fppplugin --emit-wasm dist/audio-gain.wasm --self-test --fixtures dist/selftest.json
 ~~~
 
+The SDK also includes a Video Flip node that exercises the host's video.flip operation and a declarative select field:
+
+~~~sh
+python3 tools/build_plugin.py --example examples/video-flip --output dist/video-flip.fppplugin --self-test
+~~~
+
 The script's core flags are --target=wasm32 -nostdlib -fno-builtin with --no-entry, --export-memory, a bounded memory maximum and no automatic initializer export. Every business export is void(void). Only ffmpegpp.request_read and ffmpegpp.response_write imports are allowed. See include/ffmpegpp_plugin.h and schema/manifest.schema.json. Schema validation in an editor is useful; the application's stricter semantic validation is authoritative.
 
 ## Import and run

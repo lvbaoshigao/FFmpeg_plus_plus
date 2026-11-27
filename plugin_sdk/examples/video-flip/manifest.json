@@ -1,0 +1,55 @@
+{
+  "format_version": 1,
+  "id": "org.ffmpegpp.examples.video-flip",
+  "api_version": 1,
+  "app_version": ">=6.0.0-beta2 <7.0.0",
+  "Basic_info": {
+    "Name": "Video Flip Demo",
+    "Version": "1.0.0",
+    "IsPreview": true,
+    "Summary": "A compiled C/WASM video flip node using the host video.flip operation."
+  },
+  "module": "plugin.wasm",
+  "Node_info": [
+    {
+      "id": "video_flip",
+      "name": "Video Flip",
+      "fun": "Flip video frames horizontally or vertically through the existing FFmpeg pipeline.",
+      "IsLogic": true,
+      "IO": {
+        "inputs": 1,
+        "outputs": 1
+      },
+      "input_types": [
+        "video"
+      ],
+      "output_type": "video",
+      "schema_version": 1,
+      "fields": [
+        {
+          "key": "axis",
+          "label": "Flip axis",
+          "type": "select",
+          "default": "horizontal",
+          "options": [
+            "horizontal",
+            "vertical"
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": {
+    "files": {
+      "read": false,
+      "write": false
+    },
+    "network": []
+  },
+  "limits": {
+    "memory_mb": 16,
+    "time_ms": 1000,
+    "fuel": 1000000
+  },
+  "dependencies": []
+}

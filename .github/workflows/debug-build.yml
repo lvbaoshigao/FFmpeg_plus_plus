@@ -137,10 +137,12 @@ jobs:
 
   # ══════════════════════════════════════════
   # Linux x86_64
+  # Build on the oldest supported ABI baseline; keep this aligned with
+  # build-release.yml so debug artifacts also work on Ubuntu 22.04.
   # ══════════════════════════════════════════
   debug-linux-x64:
     if: inputs.target == 'linux-x64'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
         with:
@@ -173,6 +175,8 @@ jobs:
           mkdir -p output
           cp -r ffmpegpp_gui/build/linux/x64/release/bundle/* output/
           test -f output/lib/libffmpegpp.so
+          python3 -m unittest discover -s build/linux -p 'test_*.py'
+          python3 build/linux/check_backend_abi.py --load output/lib/libffmpegpp.so
           tar -czf "FFmpeg++_v${VER}_linux-x64_portable.tar.gz" -C output .
         env:
           VER: ${{ inputs.version }}

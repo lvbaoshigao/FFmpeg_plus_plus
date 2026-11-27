@@ -38,19 +38,42 @@ async function invoke(entry, request) {
   assert.notEqual(result, undefined, entry + ' must emit JSON');
   return result;
 }
-const base = { api_version: 1, plugin_id: manifest.id, node_id: 'audio_gain', media_type: 'audio' };
-const error = { error: 'Invalid audio_gain request or gain outside [-60,12]' };
-const cases = [
+const node = manifest.Node_info?.[0];
+if (!node || !Array.isArray(node.input_types) || node.input_types.length === 0) {
+  throw new Error('self-test needs one declared media node');
+}
+const base = { api_version: 1, plugin_id: manifest.id, node_id: node.id, media_type: node.input_types[0] };
+const common = [
   { name: 'metadata', entry: 'Basic_info', request: {}, response: manifest.Basic_info },
   { name: 'nodes', entry: 'Node_info', request: {}, response: { nodes: manifest.Node_info } },
-  { name: 'host-ui-fields', entry: 'Node_editor_add', request: { node_id: 'audio_gain' }, response: { fields: manifest.Node_info[0].fields } },
-  ...[-60, -6, 0, 3.5, 12].map(decibels => ({ name: 'gain-' + decibels, entry: 'Node_execute', request: { ...base, params: { decibels } }, response: { operation: 'audio.volume', decibels } })),
-  ...[-61, 13, '2', null].map((decibels, i) => ({ name: 'reject-gain-' + i, entry: 'Node_execute', request: { ...base, params: { decibels } }, response: error })),
-  { name: 'reject-wrong-media', entry: 'Node_execute', request: { ...base, media_type: 'video', params: { decibels: -6 } }, response: error },
-  { name: 'reject-unknown-node', entry: 'Node_execute', request: { ...base, node_id: 'not_audio_gain', params: { decibels: -6 } }, response: error },
-  { name: 'skip-nested-decibels', entry: 'Node_execute', request: { ...base, params: { nested: { decibels: 99 }, decibels: -4 } }, response: { operation: 'audio.volume', decibels: -4 } },
-  { name: 'reject-oversized-request', entry: 'Node_execute', request: { ...base, params: { decibels: -6 }, padding: 'x'.repeat(17000) }, response: error },
+  { name: 'host-ui-fields', entry: 'Node_editor_add', request: { node_id: node.id }, response: { fields: node.fields } },
 ];
+let cases;
+if (node.id === 'audio_gain' && base.media_type === 'audio') {
+  const error = { error: 'Invalid audio_gain request or gain outside [-60,12]' };
+  cases = [
+    ...common,
+    ...[-60, -6, 0, 3.5, 12].map(decibels => ({ name: 'gain-' + decibels, entry: 'Node_execute', request: { ...base, params: { decibels } }, response: { operation: 'audio.volume', decibels } })),
+    ...[-61, 13, '2', null].map((decibels, i) => ({ name: 'reject-gain-' + i, entry: 'Node_execute', request: { ...base, params: { decibels } }, response: error })),
+    { name: 'reject-wrong-media', entry: 'Node_execute', request: { ...base, media_type: 'video', params: { decibels: -6 } }, response: error },
+    { name: 'reject-unknown-node', entry: 'Node_execute', request: { ...base, node_id: 'not_audio_gain', params: { decibels: -6 } }, response: error },
+    { name: 'skip-nested-decibels', entry: 'Node_execute', request: { ...base, params: { nested: { decibels: 99 }, decibels: -4 } }, response: { operation: 'audio.volume', decibels: -4 } },
+    { name: 'reject-oversized-request', entry: 'Node_execute', request: { ...base, params: { decibels: -6 }, padding: 'x'.repeat(17000) }, response: error },
+  ];
+} else if (node.id === 'video_flip' && base.media_type === 'video') {
+  const error = { error: 'Invalid video_flip request or axis' };
+  cases = [
+    ...common,
+    ...['horizontal', 'vertical'].map(axis => ({ name: 'flip-' + axis, entry: 'Node_execute', request: { ...base, params: { axis } }, response: { operation: 'video.flip', axis } })),
+    ...['diagonal', null, 3].map((axis, i) => ({ name: 'reject-axis-' + i, entry: 'Node_execute', request: { ...base, params: { axis } }, response: error })),
+    { name: 'reject-wrong-media', entry: 'Node_execute', request: { ...base, media_type: 'audio', params: { axis: 'horizontal' } }, response: error },
+    { name: 'reject-unknown-node', entry: 'Node_execute', request: { ...base, node_id: 'not_video_flip', params: { axis: 'horizontal' } }, response: error },
+    { name: 'skip-nested-axis', entry: 'Node_execute', request: { ...base, params: { nested: { axis: 'vertical' }, axis: 'horizontal' } }, response: { operation: 'video.flip', axis: 'horizontal' } },
+    { name: 'reject-oversized-request', entry: 'Node_execute', request: { ...base, params: { axis: 'horizontal' }, padding: 'x'.repeat(17000) }, response: error },
+  ];
+} else {
+  throw new Error('No self-test profile for node ' + node.id);
+}
 for (const test of cases) assert.deepEqual(await invoke(test.entry, test.request), test.response, test.name);
 const fixtureIndex = options.indexOf('--fixtures');
 if (fixtureIndex >= 0) {

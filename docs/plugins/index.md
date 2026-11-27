@@ -11,7 +11,7 @@
 - [主题配置与 AI 目录导入](./contributions.md)
 - [权限、资源限制、依赖与升级](./security.md)
 
-可下载 [Audio Gain 预编译示例](/examples/plugin-demo.fppplugin) 和 [主题/AI 数据包示例](/examples/plugin-theme-ai.fppplugin)。示例故意标记为预览版以展示确认流程；请先使用可重复生成的测试媒体验证输出。
+可下载 [Audio Gain 预编译示例](/examples/plugin-demo.fppplugin)、[Video Flip 预编译示例](/examples/video-flip.fppplugin) 和 [主题/AI 数据包示例](/examples/plugin-theme-ai.fppplugin)。示例故意标记为预览版以展示确认流程；请先使用可重复生成的测试媒体验证输出。
 
 ## 能力边界
 

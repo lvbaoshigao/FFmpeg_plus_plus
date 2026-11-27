@@ -93,9 +93,12 @@ jobs:
 
   # ══════════════════════════════════════════
   # 编译阶段 — Linux x86_64
+  # Ubuntu 22.04 establishes the GLIBC_2.35 compatibility baseline.
+  # Do not build on a newer image: the backend .so would require newer glibc
+  # symbols and fail to load while the Flutter UI still starts successfully.
   # ══════════════════════════════════════════
   compile-linux-x64:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
 
@@ -126,6 +129,8 @@ jobs:
           mkdir -p output
           cp -r ffmpegpp_gui/build/linux/x64/release/bundle/* output/
           test -f output/lib/libffmpegpp.so
+          python3 -m unittest discover -s build/linux -p 'test_*.py'
+          python3 build/linux/check_backend_abi.py --load output/lib/libffmpegpp.so
 
       - name: Pack bundle
         run: tar -czf linux-x64-bundle.tar.gz -C output .

@@ -12,6 +12,7 @@ FILES = [
     "schema/manifest.schema.json", "schema/theme.schema.json", "schema/ai-config.schema.json",
     "tools/build_plugin.py", "tools/self_test.mjs",
     "examples/audio-gain/manifest.json", "examples/audio-gain/plugin.c",
+    "examples/video-flip/manifest.json", "examples/video-flip/plugin.c",
     "examples/theme-ai/manifest.json",
 ]
 

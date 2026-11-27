@@ -87,6 +87,20 @@ class PluginSdkTests(unittest.TestCase):
                 self.assertEqual(archive.read("plugin.wasm"), wasm.read_bytes())
                 self.assertTrue(wasm.read_bytes().startswith(b"\0asm\x01\0\0\0"))
 
+    @unittest.skipUnless(shutil.which("clang") and shutil.which("node"), "real compilation requires clang, wasm-ld and node")
+    def test_video_flip_example_compiles_and_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "video-flip.fppplugin"
+            wasm = Path(directory) / "video-flip.wasm"
+            build_plugin.build(ROOT / "examples" / "video-flip", output, emit_wasm=wasm, self_test=True)
+            with zipfile.ZipFile(output) as archive:
+                self.assertEqual(sorted(archive.namelist()), ["manifest.json", "plugin.wasm"])
+                manifest = json.loads(archive.read("manifest.json"))
+                self.assertEqual(manifest["id"], "org.ffmpegpp.examples.video-flip")
+                self.assertEqual(manifest["Node_info"][0]["output_type"], "video")
+                self.assertEqual(archive.read("plugin.wasm"), wasm.read_bytes())
+            self.assertTrue(wasm.read_bytes().startswith(b"\0asm\x01\0\0\0"))
+
     def test_shipped_requests_are_valid_complete_json(self):
         fixture = ROOT.parent / "docs" / "public" / "examples" / "plugin-fixtures" / "selftest.json"
         data = json.loads(fixture.read_text(encoding="utf-8"))

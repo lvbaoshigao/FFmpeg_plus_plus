@@ -12,9 +12,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-    'both SDK manifests pass actual host models and contributions',
+    'SDK manifests pass actual host models and contributions',
     () async {
-      for (final example in ['audio-gain', 'theme-ai']) {
+      for (final example in ['audio-gain', 'video-flip', 'theme-ai']) {
         final source = File('../plugin_sdk/examples/$example/manifest.json');
         final manifest = PluginManifest.fromJson(
           jsonDecode(await source.readAsString()) as Map<String, dynamic>,
@@ -59,6 +59,7 @@ void main() {
     }
     expect(archive.findFile('include/ffmpegpp_plugin.h'), isNotNull);
     expect(archive.findFile('examples/audio-gain/plugin.c'), isNotNull);
+    expect(archive.findFile('examples/video-flip/plugin.c'), isNotNull);
     expect(archive.findFile('tools/build_plugin.py'), isNotNull);
     expect(archive.findFile('schema/manifest.schema.json'), isNotNull);
     expect(PluginSdk.archiveFileName, endsWith('.zip'));
