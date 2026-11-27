@@ -1,4 +1,5 @@
 #include "plugin_runtime.h"
+#include "plugin_ffmpeg.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -478,6 +479,7 @@ nlohmann::json pluginCapabilities() {
     return {{"available", FFMPEGPP_ENABLE_PLUGINS != 0}, {"api_version", 1},
         {"runtime", "WAMR"}, {"runtime_version", "2.4.6"}, {"mode", "interpreter"},
         {"isolation", "wasm-traps-in-process"}, {"wasi", false}, {"guest_threads", false},
+        {"ffmpeg", pluginFFmpegCapabilities()},
         {"max_module_bytes", kModuleBytes}, {"max_request_bytes", kJsonBytes}, {"max_response_bytes", kJsonBytes},
         {"limits", {{"memory_mb", 64}, {"time_ms", 5000}, {"fuel", 10000000}, {"table_elements", kTableElements}}}};
 }

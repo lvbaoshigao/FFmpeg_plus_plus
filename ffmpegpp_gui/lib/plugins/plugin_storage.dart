@@ -11,6 +11,7 @@ import 'plugin_runtime.dart';
 const pluginMaxPackageBytes = 16 * 1024 * 1024;
 const pluginMaxExpandedBytes = 32 * 1024 * 1024;
 const pluginMaxModuleBytes = 8 * 1024 * 1024;
+const pluginMaxIconBytes = 512 * 1024;
 const pluginMaxJsonBytes = 256 * 1024;
 const pluginMaxHostBytes = 128 * 1024;
 const pluginMaxDataBytes = 16 * 1024 * 1024;
@@ -380,17 +381,23 @@ class PluginStoredRecord {
     this.previousVersion,
     this.enabled = false,
     Set<String> grantedPermissions = const {},
+    Set<String> disabledNodeIds = const {},
     this.lastError,
-  }) : grantedPermissions = Set.unmodifiable(grantedPermissions);
+  }) : grantedPermissions = Set.unmodifiable(grantedPermissions),
+       disabledNodeIds = Set.unmodifiable(disabledNodeIds);
+  final Set<String> disabledNodeIds;
   Map<String, dynamic> toJson() => {
     'version': version.toJson(),
     if (previousVersion != null) 'previous': previousVersion!.toJson(),
     'enabled': enabled,
     'granted_permissions': grantedPermissions.toList()..sort(),
+    if (disabledNodeIds.isNotEmpty)
+      'disabled_nodes': disabledNodeIds.toList()..sort(),
     if (lastError != null) 'last_error': lastError,
   };
   factory PluginStoredRecord.fromJson(Map<String, dynamic> value) {
     final grants = value['granted_permissions'];
+    final disabledNodes = value['disabled_nodes'] ?? const <dynamic>[];
     if (value['version'] is! Map<String, dynamic> ||
         (value['previous'] != null &&
             value['previous'] is! Map<String, dynamic>) ||
@@ -398,6 +405,14 @@ class PluginStoredRecord {
         grants is! List ||
         grants.length > 64 ||
         grants.any((key) => key is! String || key.length > 2048) ||
+        disabledNodes is! List ||
+        disabledNodes.length > 128 ||
+        disabledNodes.any(
+          (id) =>
+              id is! String ||
+              !RegExp(r'^[A-Za-z][A-Za-z0-9_.-]{0,127}$').hasMatch(id),
+        ) ||
+        disabledNodes.toSet().length != disabledNodes.length ||
         (value['last_error'] != null && value['last_error'] is! String)) {
       throw const PluginException(
         'Invalid stored plugin record.',
@@ -415,6 +430,7 @@ class PluginStoredRecord {
             ),
       enabled: value['enabled'] as bool,
       grantedPermissions: grants.cast<String>().toSet(),
+      disabledNodeIds: disabledNodes.cast<String>().toSet(),
       lastError: value['last_error'] as String?,
     );
   }
@@ -578,6 +594,17 @@ class PluginStorage {
       );
     }
     return file.path;
+  }
+
+  Future<Uint8List> readPackageFile(
+    PluginStoredVersion version,
+    String relativePath, {
+    int maxBytes = 512 * 1024,
+  }) async {
+    await validateVersion(version);
+    final relative = validatePluginRelativePath(relativePath);
+    final file = await _file('${_versionDirectory(version)}/$relative');
+    return _readBounded(file, maxBytes);
   }
 
   Future<void> removeVersion(PluginStoredVersion version) async =>

@@ -305,8 +305,21 @@ void main() {
           child: const MaterialApp(home: Scaffold(body: ConfigLibraryPage())),
         ),
       );
-      await QuickConfigStorage.loadAll(null);
+      // A separate loadAll call cannot await the page's Future.wait. Yield to
+      // real I/O until its loading indicator disappears before settling frames.
+      final loading = find.byType(CircularProgressIndicator);
+      final wait = Stopwatch()..start();
+      while (loading.evaluate().isNotEmpty &&
+          wait.elapsed < const Duration(seconds: 5)) {
+        await Future<void>.delayed(Duration.zero);
+        await tester.pump();
+      }
     });
+    expect(
+      find.byType(CircularProgressIndicator),
+      findsNothing,
+      reason: 'The library must finish its own initialization I/O',
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Quick Config'));
     await tester.pumpAndSettle();

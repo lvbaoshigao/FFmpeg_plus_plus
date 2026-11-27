@@ -1,0 +1,2436 @@
+{
+  "api_version": 1,
+  "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+  "cases": [
+    {
+      "name": "metadata",
+      "entry": "Basic_info",
+      "request": {},
+      "response": {
+        "Name": "Media Toolkit",
+        "Version": "1.0.0",
+        "IsPreview": true,
+        "Summary": "Three freestanding C/C++ nodes that build controlled FFmpeg filter plans inside the plugin."
+      }
+    },
+    {
+      "name": "all-node-metadata",
+      "entry": "Node_info",
+      "request": {},
+      "response": {
+        "nodes": [
+          {
+            "id": "video_tone",
+            "name": "Video Tone",
+            "fun": "Adjust brightness, contrast and saturation; optionally make grayscale video.",
+            "IsLogic": true,
+            "IO": {
+              "inputs": 1,
+              "outputs": 1
+            },
+            "input_types": [
+              "video"
+            ],
+            "output_type": "video",
+            "schema_version": 1,
+            "fields": [
+              {
+                "key": "brightness",
+                "label": "Brightness",
+                "type": "number",
+                "default": 0,
+                "min": -1,
+                "max": 1
+              },
+              {
+                "key": "contrast",
+                "label": "Contrast",
+                "type": "number",
+                "default": 1,
+                "min": 0,
+                "max": 2
+              },
+              {
+                "key": "saturation",
+                "label": "Saturation",
+                "type": "number",
+                "default": 1,
+                "min": 0,
+                "max": 3
+              },
+              {
+                "key": "grayscale",
+                "label": "Grayscale",
+                "type": "boolean",
+                "default": false
+              }
+            ]
+          },
+          {
+            "id": "audio_normalize",
+            "name": "Audio Normalize",
+            "fun": "Select a loudnorm loudness target for podcast, broadcast or streaming audio.",
+            "IsLogic": true,
+            "IO": {
+              "inputs": 1,
+              "outputs": 1
+            },
+            "input_types": [
+              "audio"
+            ],
+            "output_type": "audio",
+            "schema_version": 1,
+            "fields": [
+              {
+                "key": "profile",
+                "label": "Loudness target",
+                "type": "select",
+                "default": "podcast",
+                "options": [
+                  "podcast",
+                  "broadcast",
+                  "streaming"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "audio_waveform",
+            "name": "Audio Waveform",
+            "fun": "Render audio into one PNG waveform image with a bounded size and palette.",
+            "IsLogic": true,
+            "IO": {
+              "inputs": 1,
+              "outputs": 1
+            },
+            "input_types": [
+              "audio"
+            ],
+            "output_type": "image",
+            "schema_version": 1,
+            "fields": [
+              {
+                "key": "width",
+                "label": "Image width",
+                "type": "integer",
+                "default": 1280,
+                "min": 64,
+                "max": 4096
+              },
+              {
+                "key": "height",
+                "label": "Image height",
+                "type": "integer",
+                "default": 720,
+                "min": 64,
+                "max": 2160
+              },
+              {
+                "key": "color",
+                "label": "Waveform color",
+                "type": "select",
+                "default": "cyan",
+                "options": [
+                  "cyan",
+                  "white",
+                  "orange"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "video_tone-success",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-vf",
+          "eq=brightness=0:contrast=1:saturation=1"
+        ]
+      }
+    },
+    {
+      "name": "video_tone-invalid-params",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 2,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "video_tone: brightness [-1,1], contrast [0,2], saturation [0,3] and boolean grayscale are required"
+      }
+    },
+    {
+      "name": "video_tone-unknown-node",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone_missing",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Unknown node_id"
+      }
+    },
+    {
+      "name": "video_tone-missing-operation",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": []
+        }
+      },
+      "response": {
+        "error": "Host does not support ffmpeg.execute"
+      }
+    },
+    {
+      "name": "video_tone-missing-filter",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": []
+          }
+        }
+      },
+      "response": {
+        "error": "Host does not support required FFmpeg filters or options"
+      }
+    },
+    {
+      "name": "video_tone-legacy-media-fields",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-vf",
+          "eq=brightness=0:contrast=1:saturation=1"
+        ]
+      }
+    },
+    {
+      "name": "video_tone-wrong-input",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "image",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Request media types do not match the node"
+      }
+    },
+    {
+      "name": "video_tone-wrong-output",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "audio",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Request media types do not match the node"
+      }
+    },
+    {
+      "name": "audio_normalize-success",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "podcast"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-af",
+          "loudnorm=I=-16:TP=-1.5:LRA=11"
+        ]
+      }
+    },
+    {
+      "name": "audio_normalize-invalid-params",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "unsafe"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "audio_normalize: profile must be podcast, broadcast or streaming"
+      }
+    },
+    {
+      "name": "audio_normalize-unknown-node",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize_missing",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "podcast"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Unknown node_id"
+      }
+    },
+    {
+      "name": "audio_normalize-missing-operation",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "podcast"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": []
+        }
+      },
+      "response": {
+        "error": "Host does not support ffmpeg.execute"
+      }
+    },
+    {
+      "name": "audio_normalize-missing-filter",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "podcast"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": []
+          }
+        }
+      },
+      "response": {
+        "error": "Host does not support required FFmpeg filters or options"
+      }
+    },
+    {
+      "name": "audio_normalize-legacy-media-fields",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "params": {
+          "profile": "podcast"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-af",
+          "loudnorm=I=-16:TP=-1.5:LRA=11"
+        ]
+      }
+    },
+    {
+      "name": "audio_normalize-wrong-input",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "image",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "podcast"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Request media types do not match the node"
+      }
+    },
+    {
+      "name": "audio_normalize-wrong-output",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "video",
+        "params": {
+          "profile": "podcast"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Request media types do not match the node"
+      }
+    },
+    {
+      "name": "audio_waveform-success",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": 1280,
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-filter_complex",
+          "[0:a]showwavespic=s=1280x720:colors=0x00ccff[v]",
+          "-map",
+          "[v]",
+          "-frames:v",
+          "1",
+          "-c:v",
+          "png"
+        ]
+      }
+    },
+    {
+      "name": "audio_waveform-invalid-params",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": 4097,
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "audio_waveform: integer width [64,4096], height [64,2160] and color cyan, white or orange are required"
+      }
+    },
+    {
+      "name": "audio_waveform-unknown-node",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform_missing",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": 1280,
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Unknown node_id"
+      }
+    },
+    {
+      "name": "audio_waveform-missing-operation",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": 1280,
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": []
+        }
+      },
+      "response": {
+        "error": "Host does not support ffmpeg.execute"
+      }
+    },
+    {
+      "name": "audio_waveform-missing-filter",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": 1280,
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": []
+          }
+        }
+      },
+      "response": {
+        "error": "Host does not support required FFmpeg filters or options"
+      }
+    },
+    {
+      "name": "audio_waveform-legacy-media-fields",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "params": {
+          "width": 1280,
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-filter_complex",
+          "[0:a]showwavespic=s=1280x720:colors=0x00ccff[v]",
+          "-map",
+          "[v]",
+          "-frames:v",
+          "1",
+          "-c:v",
+          "png"
+        ]
+      }
+    },
+    {
+      "name": "audio_waveform-wrong-input",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "image",
+        "output_media_type": "image",
+        "params": {
+          "width": 1280,
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Request media types do not match the node"
+      }
+    },
+    {
+      "name": "audio_waveform-wrong-output",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "video",
+        "params": {
+          "width": 1280,
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Request media types do not match the node"
+      }
+    },
+    {
+      "name": "video_tone-decimal-grayscale",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": -0.125,
+          "contrast": 1.25,
+          "saturation": 1.5,
+          "grayscale": true
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-vf",
+          "eq=brightness=-0.125:contrast=1.25:saturation=1.5,hue=s=0"
+        ]
+      }
+    },
+    {
+      "name": "video_tone-boundaries",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 1,
+          "contrast": 0,
+          "saturation": 3,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-vf",
+          "eq=brightness=1:contrast=0:saturation=3"
+        ]
+      }
+    },
+    {
+      "name": "video_tone-reject-number-string",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": "0.5",
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "video_tone: brightness [-1,1], contrast [0,2], saturation [0,3] and boolean grayscale are required"
+      }
+    },
+    {
+      "name": "video_tone-reject-bool-number",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": 1
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "video_tone: brightness [-1,1], contrast [0,2], saturation [0,3] and boolean grayscale are required"
+      }
+    },
+    {
+      "name": "video_tone-reject-missing-field",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "video_tone: brightness [-1,1], contrast [0,2], saturation [0,3] and boolean grayscale are required"
+      }
+    },
+    {
+      "name": "audio_normalize-broadcast",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "broadcast"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-af",
+          "loudnorm=I=-23:TP=-1.5:LRA=11"
+        ]
+      }
+    },
+    {
+      "name": "audio_normalize-streaming",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "streaming"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-af",
+          "loudnorm=I=-14:TP=-1.5:LRA=11"
+        ]
+      }
+    },
+    {
+      "name": "audio_normalize-reject-injection",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "podcast,amovie=/etc/passwd"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "audio_normalize: profile must be podcast, broadcast or streaming"
+      }
+    },
+    {
+      "name": "audio_waveform-min",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": 64,
+          "height": 64,
+          "color": "orange"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-filter_complex",
+          "[0:a]showwavespic=s=64x64:colors=0xff9900[v]",
+          "-map",
+          "[v]",
+          "-frames:v",
+          "1",
+          "-c:v",
+          "png"
+        ]
+      }
+    },
+    {
+      "name": "audio_waveform-max",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": 4096,
+          "height": 2160,
+          "color": "white"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-filter_complex",
+          "[0:a]showwavespic=s=4096x2160:colors=white[v]",
+          "-map",
+          "[v]",
+          "-frames:v",
+          "1",
+          "-c:v",
+          "png"
+        ]
+      }
+    },
+    {
+      "name": "audio_waveform-reject-fraction",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": 1280.5,
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "audio_waveform: integer width [64,4096], height [64,2160] and color cyan, white or orange are required"
+      }
+    },
+    {
+      "name": "audio_waveform-reject-string",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": "1280",
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "audio_waveform: integer width [64,4096], height [64,2160] and color cyan, white or orange are required"
+      }
+    },
+    {
+      "name": "audio_waveform-reject-palette-injection",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": 1280,
+          "height": 720,
+          "color": "white[v];movie=x"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "audio_waveform: integer width [64,4096], height [64,2160] and color cyan, white or orange are required"
+      }
+    },
+    {
+      "name": "video_tone-operation-only-capabilities",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ]
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-vf",
+          "eq=brightness=0:contrast=1:saturation=1"
+        ]
+      }
+    },
+    {
+      "name": "audio_normalize-operation-only-capabilities",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "podcast"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ]
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-af",
+          "loudnorm=I=-16:TP=-1.5:LRA=11"
+        ]
+      }
+    },
+    {
+      "name": "audio_waveform-operation-only-capabilities",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": 1280,
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ]
+        }
+      },
+      "response": {
+        "operation": "ffmpeg.execute",
+        "arguments": [
+          "-filter_complex",
+          "[0:a]showwavespic=s=1280x720:colors=0x00ccff[v]",
+          "-map",
+          "[v]",
+          "-frames:v",
+          "1",
+          "-c:v",
+          "png"
+        ]
+      }
+    },
+    {
+      "name": "reject-wrong-api",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 2,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Invalid request: expected API v1 and plugin identity"
+      }
+    },
+    {
+      "name": "reject-wrong-plugin",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.other.plugin",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Invalid request: expected API v1 and plugin identity"
+      }
+    },
+    {
+      "name": "reject-plugin-with-nul",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit\u0000suffix",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Invalid request: expected API v1 and plugin identity"
+      }
+    },
+    {
+      "name": "reject-nonstring-node",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": 5,
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Invalid request: expected API v1 and plugin identity"
+      }
+    },
+    {
+      "name": "audio_normalize-reject-nul-prefix",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "podcast\u0000suffix"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Invalid request: expected API v1 and plugin identity"
+      }
+    },
+    {
+      "name": "video_tone-wrong-host-api",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 2,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Host does not support ffmpeg.execute"
+      }
+    },
+    {
+      "name": "video_tone-wrong-ffmpeg-api",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 2,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Host does not support ffmpeg.execute"
+      }
+    },
+    {
+      "name": "video_tone-missing-options",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": 0,
+          "contrast": 1,
+          "saturation": 1,
+          "grayscale": false
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Host does not support required FFmpeg filters or options"
+      }
+    },
+    {
+      "name": "audio_normalize-wrong-host-api",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "podcast"
+        },
+        "host": {
+          "api_version": 2,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Host does not support ffmpeg.execute"
+      }
+    },
+    {
+      "name": "audio_normalize-wrong-ffmpeg-api",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "podcast"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 2,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Host does not support ffmpeg.execute"
+      }
+    },
+    {
+      "name": "audio_normalize-missing-options",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_normalize",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "audio",
+        "params": {
+          "profile": "podcast"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Host does not support required FFmpeg filters or options"
+      }
+    },
+    {
+      "name": "audio_waveform-wrong-host-api",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": 1280,
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 2,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Host does not support ffmpeg.execute"
+      }
+    },
+    {
+      "name": "audio_waveform-wrong-ffmpeg-api",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": 1280,
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 2,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Host does not support ffmpeg.execute"
+      }
+    },
+    {
+      "name": "audio_waveform-missing-options",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "audio_waveform",
+        "media_type": "audio",
+        "input_media_type": "audio",
+        "output_media_type": "image",
+        "params": {
+          "width": 1280,
+          "height": 720,
+          "color": "cyan"
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [],
+            "filters": [
+              "eq",
+              "hue",
+              "loudnorm",
+              "showwavespic"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Host does not support required FFmpeg filters or options"
+      }
+    },
+    {
+      "name": "video_tone-grayscale-needs-hue-capability",
+      "entry": "Node_execute",
+      "request": {
+        "api_version": 1,
+        "plugin_id": "org.ffmpegpp.examples.media-toolkit",
+        "node_id": "video_tone",
+        "media_type": "video",
+        "input_media_type": "video",
+        "output_media_type": "video",
+        "params": {
+          "brightness": -0.125,
+          "contrast": 1.25,
+          "saturation": 1.5,
+          "grayscale": true
+        },
+        "host": {
+          "api_version": 1,
+          "operations": [
+            "ffmpeg.execute"
+          ],
+          "ffmpeg": {
+            "api_version": 1,
+            "options": [
+              "-vf",
+              "-af",
+              "-filter_complex",
+              "-map",
+              "-frames:v",
+              "-c:v"
+            ],
+            "filters": [
+              "eq"
+            ]
+          }
+        }
+      },
+      "response": {
+        "error": "Host does not support required FFmpeg filters or options"
+      }
+    }
+  ]
+}

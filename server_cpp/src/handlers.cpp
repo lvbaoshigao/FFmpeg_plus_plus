@@ -348,7 +348,8 @@ void handleQueryFeatures(const json& req) {
 void runFFmpegProcess(const std::string& task_id,
                       const std::vector<std::string>& cmd,
                       const CancelCheck& isCancelled,
-                      const std::string& output_path) {
+                      const std::string& output_path,
+                      bool probeInput) {
     std::string cmd_str;
     for (auto& a : cmd) { if (!cmd_str.empty()) cmd_str += " "; cmd_str += a; }
     slog("runFFmpeg: cmd=%s", cmd_str.c_str());
@@ -359,7 +360,7 @@ void runFFmpegProcess(const std::string& task_id,
     for (size_t i = 0; i < cmd.size(); ++i) {
         if (cmd[i] == "-f" && i + 1 < cmd.size() && cmd[i + 1] == "concat") { is_concat = true; break; }
     }
-    if (!is_concat) {
+    if (probeInput && !is_concat) {
         for (size_t i = 0; i < cmd.size(); ++i) {
             if (cmd[i] == "-i" && i + 1 < cmd.size()) {
                 try {
@@ -402,6 +403,25 @@ void runFFmpegProcess(const std::string& task_id,
             while (stderr_lines.size() > 200 || stderr_bytes > kDiagnosticBytes) {
                 stderr_bytes -= stderr_lines.front().size();
                 stderr_lines.pop_front();
+            }
+            // Plugin FFmpeg plans skip the separate, uncancellable ffprobe.
+            // Obtain duration from the same controlled child, without changing
+            // ProgressParser semantics for existing actions.
+            if (!probeInput && parser.total_duration <= 0) {
+                const auto position = line.find("Duration:");
+                if (position != std::string::npos) {
+                    try {
+                        static const std::regex durationPattern(
+                            R"(^Duration:\s*([0-9]{1,4}):([0-5][0-9]):([0-5][0-9](?:\.[0-9]{1,6})?))");
+                        const auto candidate = line.substr(position, 128);
+                        std::smatch durationMatch;
+                        if (std::regex_search(candidate, durationMatch, durationPattern)) {
+                            const double duration = std::stod(durationMatch[1].str()) * 3600 +
+                                std::stod(durationMatch[2].str()) * 60 + std::stod(durationMatch[3].str());
+                            if (std::isfinite(duration) && duration > 0) parser.total_duration = duration;
+                        }
+                    } catch (...) {} // Malformed diagnostics never fail a task.
+                }
             }
             parser.feed(line);
             progress_count++;

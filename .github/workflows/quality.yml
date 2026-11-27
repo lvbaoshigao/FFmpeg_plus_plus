@@ -6,10 +6,12 @@ on:
       - '**'
     paths:
       - 'ffmpegpp_gui/**'
+      - 'plugin_sdk/**'
       - '.github/workflows/quality.yml'
   pull_request:
     paths:
       - 'ffmpegpp_gui/**'
+      - 'plugin_sdk/**'
       # PR 改的如果就是这个 workflow 本身，也要跑一次验证语法/行为
       - '.github/workflows/quality.yml'
   workflow_dispatch:
@@ -71,3 +73,6 @@ jobs:
 
       - name: Unit & widget tests
         run: flutter test --reporter expanded
+
+      - name: Plugin SDK export contract
+        run: flutter test --no-pub --reporter expanded ../plugin_sdk/tests/sdk_export_test.dart

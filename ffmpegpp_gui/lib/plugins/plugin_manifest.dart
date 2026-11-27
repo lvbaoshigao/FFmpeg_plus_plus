@@ -6,12 +6,16 @@ class PluginBasicInfo {
   final String version;
   final bool isPreview;
   final String summary;
+  final String? author;
+  final String? iconPath;
 
   const PluginBasicInfo({
     required this.name,
     required this.version,
     required this.isPreview,
     required this.summary,
+    this.author,
+    this.iconPath,
   });
 
   factory PluginBasicInfo.fromJson(Map<String, dynamic> json) {
@@ -20,10 +24,34 @@ class PluginBasicInfo {
       'Version',
       'IsPreview',
       'Summary',
+      'Author',
+      'Icon',
     }, 'Basic_info');
     final name = _text(json['Name'], 'Basic_info.Name', max: 120);
     final version = _text(json['Version'], 'Basic_info.Version', max: 256);
     PluginVersion.parse(version);
+    final authorValue = json['Author'];
+    final author = authorValue == null
+        ? null
+        : _text(
+            authorValue,
+            'Basic_info.Author',
+            max: 120,
+            allowEmpty: true,
+          ).trim();
+    final normalizedAuthor = author == null || author.isEmpty ? null : author;
+    final iconPath = json['Icon'] == null
+        ? null
+        : validatePluginRelativePath(
+            _text(json['Icon'], 'Basic_info.Icon', max: 240),
+          );
+    if (iconPath != null &&
+        !RegExp(
+          r'\.(png|jpe?g|webp|gif)$',
+          caseSensitive: false,
+        ).hasMatch(iconPath)) {
+      _fail('Basic_info.Icon must point to a PNG, JPEG, WebP or GIF file');
+    }
     return PluginBasicInfo(
       name: name,
       version: version,
@@ -34,6 +62,8 @@ class PluginBasicInfo {
         max: 4096,
         allowEmpty: true,
       ),
+      author: normalizedAuthor,
+      iconPath: iconPath,
     );
   }
 
@@ -42,6 +72,8 @@ class PluginBasicInfo {
     'Version': version,
     'IsPreview': isPreview,
     'Summary': summary,
+    if (author != null) 'Author': author,
+    if (iconPath != null) 'Icon': iconPath,
   };
 }
 
@@ -460,6 +492,24 @@ class PluginManifest {
   String get summary => basicInfo.summary;
   String? get module => modulePath;
   List<PluginNodeDefinition> get nodeInfo => nodes;
+
+  /// Creates a display/catalog snapshot with an explicitly filtered node set.
+  PluginManifest withNodes(Iterable<PluginNodeDefinition> value) =>
+      PluginManifest(
+        formatVersion: formatVersion,
+        id: id,
+        apiVersion: apiVersion,
+        appVersion: appVersion,
+        basicInfo: basicInfo,
+        modulePath: modulePath,
+        nodes: List.unmodifiable(value),
+        permissions: permissions,
+        limits: limits,
+        dependencies: dependencies,
+        themes: themes,
+        aiConfigs: aiConfigs,
+      );
+
   PluginVersionConstraint get appVersionConstraint =>
       PluginVersionConstraint.parse(appVersion);
   bool supportsAppVersion(String version) =>

@@ -11,6 +11,8 @@ import 'package:uuid/uuid.dart';
 
 import '../models/models.dart';
 import '../platform/app_platform.dart';
+import '../plugins/plugin_execution.dart';
+import '../plugins/plugin_manager.dart';
 import '../services/android_platform.dart';
 import '../services/audio_visualization.dart';
 import '../services/backend_client.dart';
@@ -24,7 +26,6 @@ import '../services/graph_executor.dart';
 import '../services/island_progress.dart';
 import '../services/native_process.dart';
 import '../services/task_process_runner.dart';
-import '../plugins/plugin_manager.dart';
 
 class AppState extends ChangeNotifier {
   AppState() : _importCacheDirectoryForTest = null;
@@ -52,6 +53,10 @@ class AppState extends ChangeNotifier {
   Directory? _pluginRoot;
   Future<void>? _pluginInitialization;
   PluginManager? get plugins => _plugins;
+  PluginExecutionCapabilities _pluginExecutionCapabilities =
+      const PluginExecutionCapabilities();
+  PluginExecutionCapabilities get pluginExecutionCapabilities =>
+      _pluginExecutionCapabilities;
 
   late final ConfigService configService = ConfigService(
     trace: diagnosticTrace,
@@ -762,6 +767,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _configurePluginRuntimeRoot() async {
+    _pluginExecutionCapabilities = const PluginExecutionCapabilities();
     final root = _pluginRoot;
     if (root == null || !pythonProcess.isRunning) {
       await _plugins?.setFeatureEnabled(false);
@@ -778,6 +784,8 @@ class AppState extends ChangeNotifier {
         return;
       }
       final capabilities = await backend.pluginCapabilities();
+      _pluginExecutionCapabilities =
+          PluginExecutionCapabilities.fromBackendResponse(capabilities);
       final supported = capabilities['success'] == true &&
           capabilities['data']?['available'] == true;
       if (!supported) {
@@ -4189,6 +4197,7 @@ class AppState extends ChangeNotifier {
     if (!config.pluginsEnabled ||
         installed == null ||
         !installed.enabled ||
+        !installed.isNodeEnabled(pluginNodeId) ||
         installed.manifest.version != pluginVersion ||
         schemaVersion is! int ||
         !manager.isActive(pluginId)) {
@@ -4207,6 +4216,7 @@ class AppState extends ChangeNotifier {
       if (!config.pluginsEnabled ||
           !manager.isActive(pluginId, generation: pluginGeneration) ||
           latest == null ||
+          !latest.isNodeEnabled(pluginNodeId) ||
           latest.manifest.version != pluginVersion ||
           !latest.manifest.nodes.any(
             (candidate) =>
@@ -4219,11 +4229,21 @@ class AppState extends ChangeNotifier {
         );
       }
     }
-    final mediaType = call['media_type'];
+    final mediaType = call['input_media_type'] ?? call['media_type'];
+    final outputMediaType = call['output_media_type'] ?? definition.outputType;
     if (mediaType is! String ||
         !definition.inputTypes.contains(mediaType) ||
-        definition.outputType != mediaType) {
+        outputMediaType != definition.outputType ||
+        (call['media_type'] != null && call['media_type'] != mediaType)) {
       return {'success': false, 'error': 'Unsupported plugin media conversion.'};
+    }
+    Future<Map<String, dynamic>> applyOperation(
+      Future<Map<String, dynamic>> Function() execute,
+    ) async {
+      ensurePluginGeneration();
+      final response = await execute();
+      ensurePluginGeneration();
+      return response;
     }
     try {
       ensurePluginGeneration();
@@ -4240,10 +4260,24 @@ class AppState extends ChangeNotifier {
           'schema_version': schemaVersion,
           'params': normalizedValues,
           'media_type': mediaType,
+          'input_media_type': mediaType,
+          'output_media_type': outputMediaType,
+          'host': pluginExecutionCapabilities.toRequestHost(),
         },
         isCancelled: () => run.isCancelled,
       );
       ensurePluginGeneration();
+      if (result.containsKey('error')) {
+        final message = result['error'];
+        if (result.length != 1 ||
+            message is! String ||
+            message.trim().isEmpty ||
+            message.length > 2048 ||
+            message.contains('\u0000')) {
+          throw const FormatException('Invalid plugin error response.');
+        }
+        throw PluginException(message, code: 'guest_error');
+      }
       final operation = result['operation'];
       final input = call['input'];
       final output = call['output'];
@@ -4252,8 +4286,24 @@ class AppState extends ChangeNotifier {
       }
       switch (operation) {
         case 'media.copy':
-          ensurePluginGeneration();
-          return await _runFileCopy({'input': input, 'output': output});
+          if (mediaType != outputMediaType) {
+            throw const FormatException('media.copy cannot change the media type.');
+          }
+          return await applyOperation(
+            () => _runFileCopy({'input': input, 'output': output}),
+          );
+        case 'ffmpeg.execute':
+          final arguments =
+              pluginExecutionCapabilities.validateFfmpegResult(result);
+          return await _runPluginFfmpeg(
+            taskId,
+            input: input,
+            output: output,
+            arguments: arguments,
+            inputType: mediaType,
+            outputType: definition.outputType,
+            checkActive: ensurePluginGeneration,
+          );
         case 'audio.volume':
           final amount = (result['decibels'] as num?)?.toDouble();
           if (mediaType != 'audio' ||
@@ -4264,12 +4314,13 @@ class AppState extends ChangeNotifier {
               amount > 12) {
             throw const FormatException('Invalid audio.volume result.');
           }
-          ensurePluginGeneration();
-          return await backend.transcode(
-            taskId,
-            input: input,
-            output: output,
-            options: {'af_filters': ['volume=${amount}dB'], 'overwrite': true},
+          return await applyOperation(
+            () => backend.transcode(
+              taskId,
+              input: input,
+              output: output,
+              options: {'af_filters': ['volume=${amount}dB'], 'overwrite': true},
+            ),
           );
         case 'video.flip':
           final axis = result['axis'];
@@ -4278,15 +4329,16 @@ class AppState extends ChangeNotifier {
               (axis != 'horizontal' && axis != 'vertical')) {
             throw const FormatException('Invalid video.flip result.');
           }
-          ensurePluginGeneration();
-          return await backend.transcode(
-            taskId,
-            input: input,
-            output: output,
-            options: {
-              'vf_filters': [axis == 'horizontal' ? 'hflip' : 'vflip'],
-              'overwrite': true,
-            },
+          return await applyOperation(
+            () => backend.transcode(
+              taskId,
+              input: input,
+              output: output,
+              options: {
+                'vf_filters': [axis == 'horizontal' ? 'hflip' : 'vflip'],
+                'overwrite': true,
+              },
+            ),
           );
         case 'video.scale':
           final width = result['width'];
@@ -4301,21 +4353,108 @@ class AppState extends ChangeNotifier {
               height > 16384) {
             throw const FormatException('Invalid video.scale result.');
           }
-          ensurePluginGeneration();
-          return await backend.transcode(
-            taskId,
-            input: input,
-            output: output,
-            options: {
-              'vf_filters': ['scale=$width:$height'],
-              'overwrite': true,
-            },
+          return await applyOperation(
+            () => backend.transcode(
+              taskId,
+              input: input,
+              output: output,
+              options: {
+                'vf_filters': ['scale=$width:$height'],
+                'overwrite': true,
+              },
+            ),
           );
         default:
           throw const FormatException('Plugin returned an unsupported operation.');
       }
+    } on TaskProcessCancelled {
+      rethrow;
     } catch (error) {
       return {'success': false, 'error': '$error'};
+    }
+  }
+
+  /// Publishes a plugin result only after native success and a live-state check.
+  Future<Map<String, dynamic>> _runPluginFfmpeg(
+    String taskId, {
+    required String input,
+    required String output,
+    required List<String> arguments,
+    required String inputType,
+    required String outputType,
+    required void Function() checkActive,
+  }) async {
+    checkActive();
+    final requestedTarget = File(output);
+    var target = requestedTarget;
+    if (!target.isAbsolute) {
+      throw const FormatException('Plugin output must be a host-bound absolute path.');
+    }
+    void checkTarget() {
+      final type = FileSystemEntity.typeSync(target.path, followLinks: false);
+      if (type != FileSystemEntityType.notFound &&
+          type != FileSystemEntityType.file) {
+        throw const FormatException('Plugin output must be a regular file.');
+      }
+      if (type == FileSystemEntityType.file &&
+          FileSystemEntity.identicalSync(input, target.path)) {
+        throw const FormatException('Plugin input and output must differ.');
+      }
+    }
+    checkTarget();
+    // This is the compiled host output, never a path supplied by the guest.
+    await target.parent.create(recursive: true);
+    checkActive();
+    final parent = Directory(await target.parent.resolveSymbolicLinks());
+    checkActive();
+    target = File(
+      '${parent.path}${Platform.pathSeparator}${target.uri.pathSegments.last}',
+    );
+    checkTarget();
+    final workspace = await parent.createTemp('.ffmpegpp-plugin-');
+    try {
+      checkActive();
+      // Keeping the basename also preserves the container extension and native
+      // filename checks while confining all partial output to the private dir.
+      final staged = File(
+        '${workspace.path}${Platform.pathSeparator}${target.uri.pathSegments.last}',
+      );
+      final response = await backend.pluginFfmpeg(
+        taskId,
+        input: input,
+        output: staged.path,
+        arguments: arguments,
+        inputType: inputType,
+        outputType: outputType,
+      );
+      checkActive();
+      if (response['success'] != true) return response;
+      if (FileSystemEntity.typeSync(staged.path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        throw const FormatException('FFmpeg did not produce its staged output file.');
+      }
+      if (requestedTarget.parent.resolveSymbolicLinksSync() != parent.path) {
+        throw const FormatException('Plugin output directory changed during execution.');
+      }
+      checkTarget();
+      // No await between the final state check and this same-filesystem commit.
+      // Dart's Windows rename uses MOVEFILE_REPLACE_EXISTING as well.
+      checkActive();
+      staged.renameSync(target.path);
+      final data = response['data'];
+      return {
+        ...response,
+        'data': {
+          if (data is Map<String, dynamic>) ...data,
+          'output_path': output,
+        },
+      };
+    } finally {
+      try {
+        await workspace.delete(recursive: true);
+      } on FileSystemException catch (error) {
+        addLog('插件临时目录清理失败: $error', category: 'warn');
+      }
     }
   }
 

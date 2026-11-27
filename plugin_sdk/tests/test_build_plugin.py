@@ -39,6 +39,31 @@ class PluginSdkTests(unittest.TestCase):
             self.assertEqual(json.loads(archive.read("manifest.json")), manifest)
             self.assertEqual(archive.getinfo("manifest.json").date_time, (2026, 1, 1, 0, 0, 0))
 
+    def test_optional_author_and_icon_are_packaged(self):
+        manifest = build_plugin.read_manifest(ROOT / "examples" / "theme-ai" / "manifest.json")
+        manifest["Basic_info"]["Author"] = "Example Studio"
+        manifest["Basic_info"]["Icon"] = "assets/plugin-icon.png"
+        icon = bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082")
+        data = build_plugin.package_bytes(manifest, icon_bytes=icon)
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            self.assertEqual(sorted(archive.namelist()), ["assets/plugin-icon.png", "manifest.json"])
+            self.assertEqual(archive.read("assets/plugin-icon.png"), icon)
+            self.assertEqual(json.loads(archive.read("manifest.json"))["Basic_info"]["Author"], "Example Studio")
+
+    def test_icon_path_and_bytes_are_validated(self):
+        manifest = build_plugin.read_manifest(ROOT / "examples" / "theme-ai" / "manifest.json")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            for unsafe in ("../icon.png", "/icon.png", "assets/../icon.png", "assets\\icon.png", "icon.svg"):
+                manifest["Basic_info"]["Icon"] = unsafe
+                path.write_text(json.dumps(manifest), encoding="utf-8")
+                with self.subTest(icon=unsafe), self.assertRaises(ValueError):
+                    build_plugin.read_manifest(path)
+        manifest["Basic_info"]["Icon"] = "icon.png"
+        for invalid in (None, b"not an image", b"\x89PNG\r\n\x1a\n" + b"x" * (512 * 1024)):
+            with self.subTest(data=type(invalid).__name__), self.assertRaises(ValueError):
+                build_plugin.package_bytes(manifest, icon_bytes=invalid)
+
     def test_reject_unsafe_module_paths(self):
         manifest = build_plugin.read_manifest(ROOT / "examples" / "audio-gain" / "manifest.json")
         with tempfile.TemporaryDirectory() as directory:

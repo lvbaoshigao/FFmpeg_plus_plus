@@ -29,6 +29,7 @@ set(SHARED_SOURCES
     src/fppx_gzip.cpp
     src/node_registry.cpp
     src/plugin_runtime.cpp
+    src/plugin_ffmpeg.cpp
 )
 
 # vendored miniz（纯 C，仅 gzip 用的 tinfl/tdefl；zip 归档 API 不参与编译）
@@ -107,6 +108,11 @@ endif()
 option(FFMPEGPP_BUILD_TESTS "Build fppx unit tests" OFF)
 if(FFMPEGPP_BUILD_TESTS)
     enable_testing()
+    add_executable(plugin_ffmpeg_test tests/plugin_ffmpeg_test.cpp src/plugin_ffmpeg.cpp)
+    target_include_directories(plugin_ffmpeg_test PRIVATE src include)
+    target_link_libraries(plugin_ffmpeg_test PRIVATE ffmpegpp)
+    add_test(NAME plugin_ffmpeg_test COMMAND plugin_ffmpeg_test)
+    set_tests_properties(plugin_ffmpeg_test PROPERTIES TIMEOUT 20)
     add_executable(fppx_test
         tests/fppx_test.cpp
         src/fppx2.cpp

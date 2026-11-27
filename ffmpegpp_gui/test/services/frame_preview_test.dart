@@ -60,6 +60,10 @@ void main() {
         expect(await FramePreview.generatePreview(input, 0.017, width: 160, trace: trace), paths.first);
         final log = messages.join(' ');
         expect(log, contains('frame.preview.coalesce'));
+        expect(
+          messages.where((line) => line.contains('frame.preview.ffmpeg.start')),
+          hasLength(1),
+        );
         expect(log, contains('frame.preview.cache.hit'));
         expect(log, contains('exitCode=0'));
         expect(log, contains('processMs='));

@@ -60,6 +60,7 @@ void handleFppxLegacyExport(const json& req);
 void runFFmpegProcess(const std::string& task_id,
                       const std::vector<std::string>& cmd,
                       const CancelCheck& isCancelled,
-                      const std::string& output_path);
+                      const std::string& output_path,
+                      bool probeInput = true);
 
 } // namespace ffmpegpp

@@ -47,25 +47,43 @@ const _ai = <String, dynamic>{
   ],
 };
 
-PluginManifest _manifest({bool preview = false, bool contributions = false}) =>
-    PluginManifest.fromJson({
-      'format_version': 1,
-      'id': 'org.example.test',
-      'api_version': 1,
-      'app_version': '>=6.0.0-beta2 <7.0.0',
-      'Basic_info': {
-        'Name': 'Example plugin',
-        'Version': '1.0.0',
-        'IsPreview': preview,
-        'Summary': 'Host integration test',
+PluginManifest _manifest({
+  bool preview = false,
+  bool contributions = false,
+  bool withNode = false,
+}) => PluginManifest.fromJson({
+  'format_version': 1,
+  'id': 'org.example.test',
+  'api_version': 1,
+  'app_version': '>=6.0.0-beta2 <7.0.0',
+  'Basic_info': {
+    'Name': 'Example plugin',
+    'Version': '1.0.0',
+    'IsPreview': preview,
+    'Summary': 'Host integration test',
+  },
+  if (withNode) 'module': 'plugin.wasm',
+  if (withNode)
+    'Node_info': [
+      {
+        'id': 'volume',
+        'name': 'Volume',
+        'fun': 'Adjust audio volume',
+        'IsLogic': true,
+        'IO': {'inputs': 1, 'outputs': 1},
+        'input_types': ['audio'],
+        'output_type': 'audio',
+        'schema_version': 1,
+        'fields': [],
       },
-      'permissions': {
-        'files': {'read': true, 'write': true},
-        'network': ['https://example.org'],
-      },
-      if (contributions) 'themes': [_theme],
-      if (contributions) 'ai_configs': [_ai],
-    });
+    ],
+  'permissions': {
+    'files': {'read': true, 'write': true},
+    'network': ['https://example.org'],
+  },
+  if (contributions) 'themes': [_theme],
+  if (contributions) 'ai_configs': [_ai],
+});
 
 final class _PickedPackage extends PlatformFile {
   final Uint8List bytes = Uint8List.fromList([1, 2, 3]);
@@ -130,11 +148,13 @@ class _Manager extends PluginManager {
       );
   final List<InstalledPlugin> records;
   final calls = <String>[];
+  final nodeToggles = <String, bool>{};
   final inspected = Completer<void>();
   bool acknowledged = false;
+  bool runtimeReady = true;
   Set<String> granted = {};
   @override
-  bool get featureEnabled => true;
+  bool get featureEnabled => runtimeReady;
   @override
   List<InstalledPlugin> get plugins => List.unmodifiable(records);
   @override
@@ -156,6 +176,27 @@ class _Manager extends PluginManager {
       enabled: enabled,
       hasRollback: old.hasRollback,
       grantedPermissions: grantedPermissions,
+    );
+    notifyListeners();
+  }
+
+  @override
+  Future<void> setNodeEnabled(
+    String pluginId,
+    String nodeId,
+    bool enabled,
+  ) async {
+    nodeToggles[nodeId] = enabled;
+    final old = records.single;
+    final enabledNodeIds = Set<String>.of(old.enabledNodeIds);
+    enabled ? enabledNodeIds.add(nodeId) : enabledNodeIds.remove(nodeId);
+    records[0] = InstalledPlugin(
+      manifest: old.manifest,
+      enabled: old.enabled,
+      grantedPermissions: old.grantedPermissions,
+      enabledNodeIds: enabledNodeIds,
+      hasRollback: old.hasRollback,
+      lastError: old.lastError,
     );
     notifyListeners();
   }
@@ -202,6 +243,7 @@ class _PageState extends AppState {
   PluginManager? manager;
   AppConfig fixture = AppConfig()
     ..language = 'en'
+    ..pluginsEnabled = true
     ..cardStyle = 'gray'
     ..menuStyle = 'gray'
     ..pillStyle = 'gray';
@@ -268,6 +310,101 @@ void main() {
     manager.dispose();
   });
 
+  testWidgets('settings-on state is distinct from a runtime that is not ready', (
+    tester,
+  ) async {
+    final manager = _Manager(InstalledPlugin(manifest: _manifest()))
+      ..runtimeReady = false;
+    final state = _PageState(manager);
+    await tester.pumpWidget(_host(state));
+    expect(
+      find.text('Plugin setting is on; runtime is not ready'),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'To use plugins, go to Settings → Experimental features and turn on “Enable plugins”.',
+      ),
+      findsNothing,
+    );
+    final enable = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('plugin_toggle_org.example.test')),
+    );
+    expect(enable.onPressed, isNull);
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+    manager.dispose();
+  });
+
+  testWidgets(
+    'declared nodes can be toggled individually from the plugin card',
+    (tester) async {
+      final manager = _Manager(
+        InstalledPlugin(manifest: _manifest(withNode: true)),
+      );
+      final state = _PageState(manager);
+      await tester.pumpWidget(_host(state));
+      await tester.tap(find.text('Declared nodes'));
+      await tester.pumpAndSettle();
+
+      final nodeSwitch = find.byType(Switch).first;
+      await tester.ensureVisible(nodeSwitch);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Switch>(nodeSwitch).value, isTrue);
+      await tester.tap(nodeSwitch);
+      await tester.pumpAndSettle();
+      expect(manager.nodeToggles['volume'], isFalse);
+      expect(tester.widget<Switch>(find.byType(Switch).first).value, isFalse);
+
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+      manager.dispose();
+    },
+  );
+
+  for (final action in ['Configure nodes', 'View details']) {
+    testWidgets(
+      '$action keeps node switches live while the dialog stays open',
+      (tester) async {
+        final manager = _Manager(
+          InstalledPlugin(manifest: _manifest(withNode: true)),
+        );
+        final state = _PageState(manager);
+        await tester.pumpWidget(_host(state));
+        await tester.tap(find.text(action));
+        await tester.pumpAndSettle();
+
+        final nodeSwitch = find.byType(Switch).last;
+        await tester.ensureVisible(nodeSwitch);
+        expect(tester.widget<Switch>(nodeSwitch).value, isTrue);
+        await tester.tap(nodeSwitch);
+        await tester.pumpAndSettle();
+        expect(manager.nodeToggles['volume'], isFalse);
+        expect(tester.widget<Switch>(nodeSwitch).value, isFalse);
+        expect(tester.widget<Switch>(nodeSwitch).onChanged, isNotNull);
+
+        await tester.tap(nodeSwitch);
+        await tester.pumpAndSettle();
+        expect(manager.nodeToggles['volume'], isTrue);
+        expect(tester.widget<Switch>(nodeSwitch).value, isTrue);
+
+        await manager.setNodeEnabled('org.example.test', 'volume', false);
+        await tester.pumpAndSettle();
+        expect(tester.widget<Switch>(nodeSwitch).value, isFalse);
+        await tester.tap(find.text('Close'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(action));
+        await tester.pumpAndSettle();
+        expect(tester.widget<Switch>(find.byType(Switch).last).value, isFalse);
+        expect(manager.calls, isEmpty);
+
+        await tester.pumpWidget(const SizedBox());
+        state.dispose();
+        manager.dispose();
+      },
+    );
+  }
+
   testWidgets(
     'preview acknowledgement gates enable and permissions start denied',
     (tester) async {
@@ -280,10 +417,17 @@ void main() {
         find.byKey(const ValueKey('plugin_toggle_org.example.test')),
       );
       await tester.pumpAndSettle();
-      final enable = find.widgetWithText(
-        FilledButton,
-        'Enable and verify metadata',
+      expect(
+        find.textContaining('does not security-test or audit plugin code'),
+        findsOneWidget,
       );
+      expect(
+        find.textContaining(
+          'Developers are not responsible for consequences of misuse',
+        ),
+        findsOneWidget,
+      );
+      final enable = find.widgetWithText(FilledButton, 'Confirm and enable');
       expect(tester.widget<FilledButton>(enable).onPressed, isNull);
       expect(
         tester
@@ -291,10 +435,18 @@ void main() {
             .every((tile) => tile.value == false),
         isTrue,
       );
+      await tester.tap(
+        find.text('I have reviewed the source and want to enable this plugin'),
+      );
       await tester.tap(find.text('I understand this preview may be unstable'));
-      await tester.tap(find.text('Read private plugin data'));
+      final readPermission = find.text('Read private plugin data');
+      await tester.ensureVisible(readPermission);
+      await tester.pump();
+      await tester.tap(readPermission);
       await tester.pump();
       expect(tester.widget<FilledButton>(enable).onPressed, isNotNull);
+      await tester.ensureVisible(find.text('Confirm and enable'));
+      await tester.pump();
       await tester.tap(enable);
       await tester.pumpAndSettle();
       expect(manager.acknowledged, isTrue);
@@ -319,7 +471,10 @@ void main() {
       find.byKey(const ValueKey('plugin_toggle_org.example.test')),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Cancel'));
+    final cancel = find.text('Cancel');
+    await tester.ensureVisible(cancel);
+    await tester.pump();
+    await tester.tap(cancel);
     await tester.pumpAndSettle();
     expect(manager.calls, isEmpty);
     await tester.pumpWidget(const SizedBox());

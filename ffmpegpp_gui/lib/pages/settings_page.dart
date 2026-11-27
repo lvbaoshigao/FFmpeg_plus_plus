@@ -6245,34 +6245,8 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
           ),
           const Divider(height: 1),
           const SizedBox(height: 6),
-          ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(
-              Icons.system_update_alt,
-              size: 20,
-              color: scheme.primary,
-            ),
-            title: Text(
-              s.cardUpdate,
-              style: TextStyle(fontSize: 13, color: scheme.onSurface),
-            ),
-            subtitle: Text(
-              s.isZh
-                  ? '点按在线检查新版本；长按直达发布页'
-                  : 'Tap to check online; long-press to open the release page',
-              style: SettingsTypography.description.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            trailing: const Icon(Icons.chevron_right, size: 16),
-            // 移动端也走在线检查：发现新版本弹窗展示（APK 分发，下载动作
-            // 自动降级为浏览器打开发布页/下载链接，见 _showUpdateDialog）
-            onTap: () => _checkForUpdate(ctx, s),
-            onLongPress: () => openExternalUrl(
-              'https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases',
-            ),
-          ),
+          _AboutActions(s: s, mobile: true),
+          const SizedBox(height: 8),
           ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
@@ -6301,21 +6275,7 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
             trailing: const Icon(Icons.open_in_new, size: 16),
             onTap: () => openExternalUrl('https://blog-clstone.netlify.app/'),
           ),
-          ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(
-              Icons.volunteer_activism,
-              size: 20,
-              color: scheme.primary,
-            ),
-            title: Text(
-              s.aboutSponsor,
-              style: TextStyle(fontSize: 13, color: scheme.onSurface),
-            ),
-            trailing: const Icon(Icons.chevron_right, size: 18),
-            onTap: () => _showSponsor(ctx, scheme, s),
-          ),
+
           ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
@@ -6384,29 +6344,7 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
             onChanged: (v) => state.updateConfig((c) => c..autoCheckUpdate = v),
           ),
           const SizedBox(height: 4),
-          Row(
-            children: [
-              Expanded(
-                child: _iosButton(
-                  icon: Icons.volunteer_activism,
-                  label: s.aboutSponsorBtn,
-                  color: scheme.primary,
-                  bg: scheme.primaryContainer,
-                  onTap: () => _showSponsor(ctx, scheme, s),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _iosButton(
-                  icon: Icons.system_update,
-                  label: s.checkUpdate,
-                  color: scheme.onSecondaryContainer,
-                  bg: scheme.secondaryContainer,
-                  onTap: () => _checkForUpdate(ctx, s),
-                ),
-              ),
-            ],
-          ),
+          _AboutActions(s: s),
           const SizedBox(height: 8),
           SizedBox(
             width: double.infinity,
@@ -6453,6 +6391,181 @@ Widget _buildAbout(BuildContext ctx, AppState state) {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [headerCard, const SizedBox(height: 12), infoCard],
   );
+}
+
+/// About-only actions keep their transient state beside the controls.
+class _AboutActions extends StatefulWidget {
+  const _AboutActions({required this.s, this.mobile = false});
+
+  final AppStrings s;
+  final bool mobile;
+
+  @override
+  State<_AboutActions> createState() => _AboutActionsState();
+}
+
+class _AboutActionsState extends State<_AboutActions> {
+  bool _checking = false;
+
+  Future<void> _check() async {
+    if (_checking) return;
+    setState(() => _checking = true);
+    try {
+      await _checkForUpdate(context, widget.s);
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = widget.s;
+    final scheme = Theme.of(context).colorScheme;
+    final update = _AboutActionButton(
+      icon: Icons.system_update_alt_rounded,
+      title: _checking ? s.checking : s.checkUpdate,
+      subtitle: _checking
+          ? (s.isZh ? '正在连接更新服务…' : 'Contacting the update service…')
+          : widget.mobile
+          ? (s.isZh ? '在线检查 · 长按打开发行页' : 'Check online · Hold for releases')
+          : (s.isZh ? '获取最新功能与改进' : 'Get the latest features and fixes'),
+      primary: true,
+      busy: _checking,
+      onPressed: _check,
+      onLongPress: widget.mobile
+          ? () => openExternalUrl(
+              'https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases',
+            )
+          : null,
+    );
+    final sponsor = _AboutActionButton(
+      icon: Icons.volunteer_activism_outlined,
+      title: s.aboutSponsorBtn,
+      subtitle: s.isZh ? '微信 / 支付宝收款码' : 'WeChat / Alipay QR codes',
+      onPressed: () => _showSponsor(context, scheme, s),
+    );
+    return SizedBox(
+      width: double.infinity,
+      child: LayoutBuilder(
+        builder: (context, bounds) {
+          if (bounds.maxWidth < 440 ||
+              MediaQuery.textScalerOf(context).scale(14) > 19) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [update, const SizedBox(height: 10), sponsor],
+            );
+          }
+          return IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: update),
+                const SizedBox(width: 10),
+                Expanded(child: sponsor),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AboutActionButton extends StatelessWidget {
+  const _AboutActionButton({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onPressed,
+    this.onLongPress,
+    this.primary = false,
+    this.busy = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onPressed;
+  final VoidCallback? onLongPress;
+  final bool primary;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final fill = primary
+        ? scheme.primaryContainer.withAlpha(125)
+        : scheme.surface.withAlpha(95);
+    return OutlinedButton(
+      onPressed: busy ? null : onPressed,
+      onLongPress: busy ? null : onLongPress,
+      style: OutlinedButton.styleFrom(
+        backgroundColor: fill,
+        disabledBackgroundColor: fill,
+        foregroundColor: scheme.onSurface,
+        disabledForegroundColor: scheme.onSurfaceVariant,
+        overlayColor: scheme.primary.withAlpha(25),
+        side: BorderSide(
+          color: primary
+              ? scheme.primary.withAlpha(85)
+              : scheme.outlineVariant.withAlpha(120),
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        padding: const EdgeInsets.all(14),
+        minimumSize: const Size(0, 92),
+        alignment: Alignment.centerLeft,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: scheme.primary.withAlpha(primary ? 22 : 12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: busy
+                ? CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: scheme.primary,
+                    semanticsLabel: title,
+                  )
+                : Icon(icon, size: 20, color: scheme.primary),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: SettingsTypography.description.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Icon(
+            primary ? Icons.arrow_forward_rounded : Icons.chevron_right_rounded,
+            size: 18,
+            color: scheme.onSurfaceVariant,
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// 对 AiProfile 应用供应商预设（一键填充端点/模型/上下文）。
@@ -7416,6 +7529,12 @@ void _showSponsor(BuildContext ctx, ColorScheme scheme, AppStrings s) {
         ? AnimationStyle.noAnimation
         : null,
     builder: (dCtx) => AppAlertDialog(
+      scrollable: true,
+      icon: Icon(
+        Icons.volunteer_activism_outlined,
+        color: scheme.primary,
+        size: 30,
+      ),
       title: Text(
         s.aboutSponsor,
         style: TextStyle(
@@ -7431,27 +7550,66 @@ void _showSponsor(BuildContext ctx, ColorScheme scheme, AppStrings s) {
           children: [
             Text(
               s.aboutThanks,
-              style: TextStyle(fontSize: 13, color: scheme.onSurface),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              s.aboutZoomHint,
-              style: SettingsTypography.description.copyWith(
-                color: scheme.onSurfaceVariant,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.5,
+                color: scheme.onSurface,
               ),
             ),
             const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: _qrImage(ctx, 'rele/wx.png', s.aboutWxTitle, scheme),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _qrImage(ctx, 'rele/zfb.jpg', s.aboutZfbTitle, scheme),
-                ),
-              ],
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: scheme.primaryContainer.withAlpha(65),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.zoom_in_rounded, size: 18, color: scheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      s.aboutZoomHint,
+                      style: SettingsTypography.description.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            LayoutBuilder(
+              builder: (context, bounds) {
+                final wechat = _qrImage(
+                  ctx,
+                  'rele/wx.png',
+                  s.aboutWxTitle,
+                  scheme,
+                );
+                final alipay = _qrImage(
+                  ctx,
+                  'rele/zfb.jpg',
+                  s.aboutZfbTitle,
+                  scheme,
+                );
+                if (bounds.maxWidth < 340 ||
+                    MediaQuery.textScalerOf(context).scale(14) > 20) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [wechat, const SizedBox(height: 12), alipay],
+                  );
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: wechat),
+                    const SizedBox(width: 12),
+                    Expanded(child: alipay),
+                  ],
+                );
+              },
             ),
           ],
         ),
@@ -7471,42 +7629,84 @@ Widget _qrImage(
   String asset,
   String label,
   ColorScheme scheme,
-) => GestureDetector(
-  onTap: () => _showFullImage(ctx, asset, scheme),
-  child: Column(
-    children: [
-      Text(
-        label,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: scheme.primary,
-        ),
+) {
+  final s = AppStrings.of(ctx.read<AppState>().config.language);
+  return Tooltip(
+    message: '$label · ${s.aboutZoomHint}',
+    child: OutlinedButton(
+      onPressed: () => _showFullImage(ctx, asset, scheme),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: scheme.surface.withAlpha(130),
+        foregroundColor: scheme.onSurface,
+        overlayColor: scheme.primary.withAlpha(24),
+        side: BorderSide(color: scheme.outlineVariant.withAlpha(140)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        padding: const EdgeInsets.all(12),
       ),
-      const SizedBox(height: 8),
-      ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        // 缩略图固定高 160 逻辑像素，而 wx.png / zfb.jpg 是 1220x1563 / 1170x1755
-        // 的原图 —— 不设 cacheHeight 会按原始分辨率解码（单张约 7~8MB RGBA，
-        // 且 Image.asset 不会自动套 ResizeImage）。全屏查看走 _showFullImage，
-        // 那条路径刻意不设 cap，以保留 InteractiveViewer 4x 缩放的清晰度。
-        child: Image.asset(
-          asset,
-          height: 160,
-          cacheHeight: (160 * MediaQuery.devicePixelRatioOf(ctx)).round(),
-          fit: BoxFit.contain,
-          errorBuilder: (_, _, _) => Container(
-            height: 160,
-            alignment: Alignment.center,
-            child: Text('加载失败', style: TextStyle(color: scheme.outline)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.primary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Icon(
+                Icons.open_in_full_rounded,
+                size: 15,
+                color: scheme.onSurfaceVariant,
+              ),
+            ],
           ),
-        ),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            // Keep thumbnails capped; full-screen viewing retains the original
+            // resolution for InteractiveViewer's existing 4x zoom.
+            child: Image.asset(
+              asset,
+              width: double.infinity,
+              height: 160,
+              cacheHeight: (160 * MediaQuery.devicePixelRatioOf(ctx)).round(),
+              fit: BoxFit.contain,
+              errorBuilder: (_, _, _) => SizedBox(
+                height: 160,
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.broken_image_outlined,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        s.isZh ? '加载失败' : 'Could not load image',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: scheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
-    ],
-  ),
-);
+    ),
+  );
+}
 
 void _showFullImage(BuildContext ctx, String asset, ColorScheme scheme) {
+  final s = AppStrings.of(ctx.read<AppState>().config.language);
   showDialog(
     context: ctx,
     animationStyle: MediaQuery.disableAnimationsOf(ctx)
@@ -7526,7 +7726,10 @@ void _showFullImage(BuildContext ctx, String asset, ColorScheme scheme) {
               fit: BoxFit.contain,
               errorBuilder: (_, _, _) => Container(
                 padding: const EdgeInsets.all(32),
-                child: Text('加载失败', style: TextStyle(color: scheme.outline)),
+                child: Text(
+                  s.isZh ? '加载失败' : 'Could not load image',
+                  style: TextStyle(color: scheme.onSurfaceVariant),
+                ),
               ),
             ),
           ),

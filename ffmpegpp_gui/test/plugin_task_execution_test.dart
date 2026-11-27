@@ -149,6 +149,17 @@ void main() {
           'schema_version': manifest.nodes.single.schemaVersion,
           'params': {'gain': -3},
           'media_type': 'audio',
+          'input_media_type': 'audio',
+          'output_media_type': 'audio',
+          'host': {
+            'api_version': 1,
+            'operations': [
+              'media.copy',
+              'audio.volume',
+              'video.flip',
+              'video.scale',
+            ],
+          },
         },
       ]);
       expect(await output.readAsBytes(), inputBytes);
