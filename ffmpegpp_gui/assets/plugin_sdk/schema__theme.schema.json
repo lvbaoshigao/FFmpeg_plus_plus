@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FFmpeg++ declarative theme v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "id",
+    "name",
+    "values"
+  ],
+  "properties": {
+    "kind": {
+      "const": "ffmpegpp.theme"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "zh": {
+              "type": "string",
+              "minLength": 1
+            },
+            "en": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "values": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Only host-whitelisted AppConfig appearance keys. See contributions documentation for the accepted token list.",
+      "additionalProperties": false,
+      "properties": {
+        "theme_color": {
+          "type": "string",
+          "pattern": "^#[Ff]{2}[0-9A-Fa-f]{6}$"
+        },
+        "theme_color2": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^#[Ff]{2}[0-9A-Fa-f]{6}$"
+        },
+        "use_theme_color": {
+          "type": "boolean"
+        },
+        "glass_follow_theme": {
+          "type": "boolean"
+        },
+        "card_style": {
+          "enum": [
+            "theme",
+            "liquid",
+            "blur",
+            "gray"
+          ]
+        },
+        "nav_style": {
+          "enum": [
+            "theme",
+            "liquid",
+            "blur",
+            "gray"
+          ]
+        },
+        "pill_style": {
+          "enum": [
+            "theme",
+            "liquid",
+            "blur",
+            "gray"
+          ]
+        },
+        "menu_style": {
+          "enum": [
+            "theme",
+            "liquid",
+            "blur",
+            "gray"
+          ]
+        },
+        "card_opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "glass_blur": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "glass_clarity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "glass_highlight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.6
+        },
+        "glass_light_pos": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "glass_edge": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "border_color": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{8}$"
+        },
+        "border_enabled": {
+          "type": "boolean"
+        },
+        "glass_effect": {
+          "enum": [
+            "liquid",
+            "blur",
+            "none"
+          ]
+        },
+        "dropdown_appearance": {
+          "enum": [
+            "theme",
+            "liquid",
+            "frosted",
+            "highlight",
+            "gray"
+          ]
+        },
+        "selection_indicator_style": {
+          "enum": [
+            "theme",
+            "liquid",
+            "blur",
+            "outline"
+          ]
+        },
+        "settings_glass_mode": {
+          "enum": [
+            "follow",
+            "frosted",
+            "solid"
+          ]
+        },
+        "canvas_bg": {
+          "enum": [
+            "global",
+            "gray",
+            "black",
+            "white"
+          ]
+        },
+        "theme_tone": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.8
+        },
+        "border_width": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 4
+        }
+      },
+      "maxProperties": 32
+    }
+  }
+}

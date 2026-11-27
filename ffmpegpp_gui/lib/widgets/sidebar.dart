@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../providers/app_state.dart';
 import '../theme/app_strings.dart';
 import 'glass_panel.dart';
+import 'mobile_bottom_nav.dart'
+    show settingsNavDestination, pluginsNavDestination;
 import 'selection_highlight.dart';
 import 'tabler_icon.dart';
 
@@ -41,11 +44,15 @@ class _SidebarState extends State<Sidebar> {
   void _toggle() => setState(() => _collapsed = !_collapsed);
 
   /// 遮罩拖动结束：吸附到最近的导航项并跳转。
-  void _endMaskDrag(int count, double dragTop) {
-    final idx = ((dragTop + _itemH / 2) / _itemH).floor().clamp(0, count - 1);
+  void _endMaskDrag(List<(int, TablerGlyph, String)> items, double dragTop) {
+    final idx = ((dragTop + _itemH / 2) / _itemH).floor().clamp(
+      0,
+      items.length - 1,
+    );
+    final destination = items[idx].$1;
     _maskDragTop.value = null;
-    if (idx != widget.selectedIndex) {
-      widget.onSelected(idx);
+    if (destination != widget.selectedIndex) {
+      widget.onSelected(destination);
     }
   }
 
@@ -73,18 +80,29 @@ class _SidebarState extends State<Sidebar> {
     final showLogs = context.select<AppState, bool>(
       (state) => state.config.debugMode || state.config.veryVerboseLogs,
     );
-    final items = <(TablerGlyph, String)>[
-      (TablerGlyph.movie, s.navProjects),
-      (TablerGlyph.listDetails, s.navQueue),
-      (TablerGlyph.folders, lang == 'zh' ? '配置库' : 'Configs'),
-      (TablerGlyph.settings, s.navSettings),
-      if (showLogs) (TablerGlyph.fileText, lang == 'zh' ? '日志' : 'Logs'),
+    final pluginsEnabled = context.select<AppState, bool>(
+      (state) => state.config.pluginsEnabled,
+    );
+    final items = <(int, TablerGlyph, String)>[
+      (0, TablerGlyph.movie, s.navProjects),
+      (1, TablerGlyph.listDetails, s.navQueue),
+      (2, TablerGlyph.folders, lang == 'zh' ? '配置库' : 'Configs'),
+      (settingsNavDestination, TablerGlyph.settings, s.navSettings),
+      if (showLogs) (4, TablerGlyph.fileText, lang == 'zh' ? '日志' : 'Logs'),
+      if (pluginsEnabled)
+        (pluginsNavDestination, TablerGlyph.layersIntersect, s.navPlugins),
     ];
+    final selectedItem = items.indexWhere(
+      (item) => item.$1 == widget.selectedIndex,
+    );
+    final selectedPosition = selectedItem < 0
+        ? items.indexWhere((item) => item.$1 == settingsNavDestination)
+        : selectedItem;
 
-    // 日志入口隐藏时，将当前日志页切回设置。
-    if (widget.selectedIndex >= items.length && items.isNotEmpty) {
+    // Optional destinations keep their IDs when another entry is hidden.
+    if (selectedItem < 0) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        widget.onSelected(items.length - 1);
+        if (mounted) widget.onSelected(settingsNavDestination);
       });
     }
 
@@ -145,7 +163,7 @@ class _SidebarState extends State<Sidebar> {
                                 curve: _curve,
                                 top:
                                     (maskDragTop ??
-                                            (widget.selectedIndex.clamp(
+                                            (selectedPosition.clamp(
                                                   0,
                                                   items.length - 1,
                                                 )).toDouble() *
@@ -170,7 +188,6 @@ class _SidebarState extends State<Sidebar> {
                                 scheme,
                                 clr,
                                 items[i],
-                                i,
                                 themedSelection: themedSelection,
                               ),
                           ],
@@ -182,7 +199,7 @@ class _SidebarState extends State<Sidebar> {
                             behavior: HitTestBehavior.translucent,
                             onVerticalDragStart: (d) {
                               _maskDragTop.value =
-                                  (widget.selectedIndex.clamp(
+                                  (selectedPosition.clamp(
                                         0,
                                         items.length - 1,
                                       )).toDouble() *
@@ -195,7 +212,7 @@ class _SidebarState extends State<Sidebar> {
                             },
                             onVerticalDragEnd: (_) {
                               final t = _maskDragTop.value;
-                              if (t != null) _endMaskDrag(items.length, t);
+                              if (t != null) _endMaskDrag(items, t);
                             },
                             onVerticalDragCancel: () =>
                                 _maskDragTop.value = null,
@@ -283,13 +300,13 @@ class _SidebarState extends State<Sidebar> {
   Widget _navItem(
     ColorScheme scheme,
     Color clr,
-    (TablerGlyph, String) item,
-    int i, {
+    (int, TablerGlyph, String) item, {
     required bool themedSelection,
   }) {
-    final sel = i == widget.selectedIndex;
+    final destination = item.$1;
+    final sel = destination == widget.selectedIndex;
     final icon = TablerIcon(
-      item.$1,
+      item.$2,
       size: 20,
       color: sel ? (themedSelection ? scheme.primary : scheme.onSurface) : clr,
     );
@@ -298,7 +315,7 @@ class _SidebarState extends State<Sidebar> {
     // 整个单元在导航项内水平居中，遮罩固定宽度与其一致。
     // LayoutBuilder 依据动画实际宽度显示文字，避免过渡期固定宽内容溢出
     return Semantics(
-      key: ValueKey('sidebar_nav_$i'),
+      key: ValueKey('sidebar_nav_$destination'),
       selected: sel,
       button: true,
       child: SizedBox(
@@ -308,7 +325,7 @@ class _SidebarState extends State<Sidebar> {
           child: InkWell(
             borderRadius: BorderRadius.circular(10),
             hoverColor: Colors.transparent,
-            onTap: () => widget.onSelected(i),
+            onTap: () => widget.onSelected(destination),
             child: LayoutBuilder(
               builder: (ctx, cons) {
                 final showText = cons.maxWidth > 90;
@@ -328,7 +345,7 @@ class _SidebarState extends State<Sidebar> {
                               // Expanded 撑满：文字长短不影响图标起点
                               Expanded(
                                 child: Text(
-                                  item.$2,
+                                  item.$3,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
@@ -353,7 +370,7 @@ class _SidebarState extends State<Sidebar> {
                 // 收起（无文字）时用 tooltip 补上名称
                 return !showText
                     ? Tooltip(
-                        message: item.$2,
+                        message: item.$3,
                         waitDuration: const Duration(milliseconds: 200),
                         child: row,
                       )

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-# C 语言仅用于 vendored miniz（gzip 解压/压缩，fppx_legacy 需要）
+# C 语言用于 vendored miniz 与可选的 WAMR 插件解释器
 project(ffmpegpp_server LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -28,6 +28,7 @@ set(SHARED_SOURCES
     src/fppx_legacy.cpp
     src/fppx_gzip.cpp
     src/node_registry.cpp
+    src/plugin_runtime.cpp
 )
 
 # vendored miniz（纯 C，仅 gzip 用的 tinfl/tdefl；zip 归档 API 不参与编译）
@@ -54,6 +55,15 @@ target_include_directories(ffmpegpp PRIVATE
 target_compile_definitions(ffmpegpp PRIVATE
     FFMPEGPP_BUILDING_DLL
 )
+
+option(FFMPEGPP_ENABLE_PLUGINS "Embed bounded WAMR plugin interpreter" ON)
+if(FFMPEGPP_ENABLE_PLUGINS)
+    add_subdirectory(runtime)
+    target_link_libraries(ffmpegpp PRIVATE ffmpegpp_wamr_runtime)
+    target_compile_definitions(ffmpegpp PRIVATE FFMPEGPP_ENABLE_PLUGINS=1)
+else()
+    target_compile_definitions(ffmpegpp PRIVATE FFMPEGPP_ENABLE_PLUGINS=0)
+endif()
 
 if(WIN32)
     target_link_libraries(ffmpegpp PRIVATE kernel32 user32 bcrypt)
@@ -120,6 +130,15 @@ if(FFMPEGPP_BUILD_TESTS)
         target_compile_options(fppx_test PRIVATE -Wall)
     endif()
     add_test(NAME fppx_test COMMAND fppx_test)
+    if(FFMPEGPP_ENABLE_PLUGINS)
+        add_executable(plugin_runtime_test tests/plugin_runtime_test.cpp)
+        target_include_directories(plugin_runtime_test PRIVATE src include)
+        target_link_libraries(plugin_runtime_test PRIVATE ffmpegpp)
+        add_test(NAME plugin_runtime_test COMMAND plugin_runtime_test
+            "${CMAKE_CURRENT_SOURCE_DIR}/../docs/public/examples/plugin-demo.wasm"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../docs/public/examples/plugin-fixtures/selftest.json")
+        set_tests_properties(plugin_runtime_test PROPERTIES TIMEOUT 30)
+    endif()
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_test(
         NAME generate_fppx_fixtures

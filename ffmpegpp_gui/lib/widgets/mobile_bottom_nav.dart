@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:oc_liquid_glass/oc_liquid_glass.dart';
 import 'package:provider/provider.dart';
+
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../theme/app_neutral_surface.dart';
@@ -10,6 +11,28 @@ import 'app_card.dart' show SurfaceStyle;
 import 'liquid_glass_fallback.dart';
 import 'selection_highlight.dart';
 import 'tabler_icon.dart';
+
+/// Stable destination IDs; optional entries never renumber the existing pages.
+const int settingsNavDestination = 3;
+const int pluginsNavDestination = 5;
+
+/// Shared by the PageView, bottom bar and optional mobile rail.
+List<int> mobileNavOrder({required bool pluginsEnabled}) => pluginsEnabled
+    ? const [0, 1, 2, settingsNavDestination, pluginsNavDestination]
+    : const [0, 1, 2, settingsNavDestination];
+
+(TablerGlyph, String) mobileNavItem(int destination, AppStrings strings) =>
+    switch (destination) {
+      0 => (TablerGlyph.movie, strings.navProjects),
+      1 => (TablerGlyph.listDetails, strings.navQueue),
+      2 => (TablerGlyph.folders, strings.isZh ? '配置库' : 'Configs'),
+      settingsNavDestination => (TablerGlyph.settings, strings.navSettings),
+      pluginsNavDestination => (
+        TablerGlyph.layersIntersect,
+        strings.navPlugins,
+      ),
+      _ => throw ArgumentError.value(destination, 'destination'),
+    };
 
 // ═══════════════════════════════════════════════════════════════
 // 侧边导轨（MobileNavRail）与子页面玻璃切换栏（MobileNavStyleTabBar）
@@ -534,17 +557,16 @@ class _MobileNavRailState extends State<MobileNavRail> {
     final look = navGlassLook(scheme, isDark, pal);
     final style = look.style;
 
-    final items = <(TablerGlyph, String)>[
-      (TablerGlyph.movie, s.navProjects),
-      (TablerGlyph.listDetails, s.navQueue),
-      (TablerGlyph.folders, lang == 'zh' ? '配置库' : 'Configs'),
-      (TablerGlyph.settings, s.navSettings),
+    final pluginsEnabled = context.select<AppState, bool>(
+      (state) => state.config.pluginsEnabled,
+    );
+    final order = mobileNavOrder(pluginsEnabled: pluginsEnabled);
+    final items = [
+      for (final destination in order) mobileNavItem(destination, s),
     ];
-
-    // 页面索引映射：0=项目, 1=队列, 2=配置库, 3=设置
-    const pageToItem = {0: 0, 1: 1, 2: 2, 3: 3};
-    const itemToPage = {0: 0, 1: 1, 2: 2, 3: 3};
-    final itemIdx = pageToItem[widget.selectedIndex] ?? 0;
+    final itemToPage = {for (var i = 0; i < order.length; i++) i: order[i]};
+    final selectedItem = order.indexOf(widget.selectedIndex);
+    final itemIdx = selectedItem < 0 ? 0 : selectedItem;
 
     final itemContentHeight =
         27 + 1 + MediaQuery.textScalerOf(context).scale(9) * 1.1 + 8;
@@ -1004,8 +1026,8 @@ class _MobileNavRailState extends State<MobileNavRail> {
       final pc = widget.pageController;
       final p = (pc != null && pc.hasClients) ? pc.page : null;
       if (p != null) {
-        // PageView 的下标空间与菜单项序号同序（app.dart 的 _kMobileNavOrder
-        // = [0,1,2,3]，正好是 4 个 Tab 的 PageView 下标），故可直接按项宽定位。
+        // PageView and rail use mobileNavOrder, so viewport indices map
+        // directly to item positions even when the plugin entry is enabled.
         followLeft = p.clamp(0.0, itemCount - 1).toDouble() * (itemW + pillGap);
       }
     }
@@ -1095,7 +1117,7 @@ class _MobileNavRailState extends State<MobileNavRail> {
             followTop = dragPos - itemExtent / 2;
           } else if (!_releasedFromDrag && _pageIsScrolling) {
             // 位置来源②：跟随 PageView。PageView 仍是横向翻页，但菜单项序号与
-            // 页序号同序（app.dart 的 _kMobileNavOrder），故可直接按主轴位移映射
+            // 页序号同序（共享 mobileNavOrder），故可直接按主轴位移映射
             // —— 左右拖页面时，竖排导轨的遮罩同样跟着实时位置走。
             final pc = widget.pageController;
             final p = (pc != null && pc.hasClients) ? pc.page : null;

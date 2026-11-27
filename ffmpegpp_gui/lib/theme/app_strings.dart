@@ -14,6 +14,12 @@ class AppStrings {
   String get navProjects => lang == 'zh' ? '项目' : 'Projects';
   String get navQueue => lang == 'zh' ? '处理队列' : 'Queue';
   String get navSettings => lang == 'zh' ? '设置' : 'Settings';
+  String get navPlugins => isZh ? '插件' : 'Plugins';
+  String get experimentalFeatures => isZh ? '实验性功能' : 'Experimental features';
+  String get pluginsEnabledLabel => isZh ? '启用插件系统' : 'Enable plugins';
+  String get pluginsEnabledHint => isZh
+      ? '在侧栏或底栏显示插件，允许加载已启用的插件。关闭后停止插件并隐藏入口。'
+      : 'Show Plugins in navigation and allow enabled plugins to load. Turning this off stops plugins and hides the destination.';
   String get backendConnected => lang == 'zh' ? '后端已连接' : 'Backend connected';
   String get navCollapse => lang == 'zh' ? '收起侧边栏' : 'Collapse sidebar';
   String get navExpand => lang == 'zh' ? '展开侧边栏' : 'Expand sidebar';
@@ -73,6 +79,7 @@ class AppStrings {
   String get qFps => 'FPS';
   String get qBitrate => lang == 'zh' ? '码率' : 'Bitrate';
   String get qSize => lang == 'zh' ? '大小' : 'Size';
+
   /// 数值占位符：中文界面用「—」，避免详情里残留英文 / N/A
   String get qNone => lang == 'zh' ? '—' : 'N/A';
   // ── 队列任务卡展开详情（2026-11-15 重排）──

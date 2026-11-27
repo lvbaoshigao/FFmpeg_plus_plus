@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FFmpeg++ AI configuration catalog v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "bundle_id",
+    "profiles"
+  ],
+  "properties": {
+    "kind": {
+      "const": "ffmpegpp.ai-config"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "bundle_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "zh": {
+              "type": "string",
+              "minLength": 1
+            },
+            "en": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source_id",
+          "profile"
+        ],
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "profile": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "provider",
+              "api_url",
+              "models"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "provider": {
+                "enum": [
+                  "openai",
+                  "anthropic"
+                ]
+              },
+              "api_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "api_path": {
+                "type": "string"
+              },
+              "use_responses_api": {
+                "type": "boolean"
+              },
+              "model": {
+                "type": "string"
+              },
+              "group": {
+                "type": "string"
+              },
+              "context_window": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000000
+              },
+              "max_tokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100000000
+              },
+              "temperature": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "models": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "display_name": {
+                      "type": "string",
+                      "maxLength": 256
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "capabilities": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "enum": [
+                          "chat",
+                          "vision",
+                          "tools",
+                          "embedding",
+                          "reasoning"
+                        ]
+                      },
+                      "minItems": 1,
+                      "maxItems": 5
+                    },
+                    "input_modalities": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "enum": [
+                          "text",
+                          "image",
+                          "voice"
+                        ]
+                      },
+                      "minItems": 1,
+                      "maxItems": 3
+                    },
+                    "output_modalities": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "enum": [
+                          "text",
+                          "image",
+                          "voice"
+                        ]
+                      },
+                      "minItems": 1,
+                      "maxItems": 3
+                    },
+                    "context_window": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 1,
+                      "maximum": 100000000
+                    },
+                    "max_tokens": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 1,
+                      "maximum": 100000000
+                    },
+                    "temperature": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "minimum": 0,
+                      "maximum": 2
+                    },
+                    "top_p": {
+                      "type": [
+                        "number",
+                        "null"
+                      ],
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  }
+                },
+                "maxItems": 1024
+              }
+            }
+          }
+        }
+      },
+      "maxItems": 64
+    }
+  }
+}

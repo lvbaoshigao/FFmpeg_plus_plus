@@ -1029,6 +1029,7 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
         );
       case PipelineStepType.start:
       case PipelineStepType.output:
+      case PipelineStepType.plugin:
       case PipelineStepType.unknown:
         editor = Text(
           _text(

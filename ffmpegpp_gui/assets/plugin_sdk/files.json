@@ -1,0 +1,13 @@
+[
+  "README.md",
+  "LICENSE",
+  "include/ffmpegpp_plugin.h",
+  "schema/manifest.schema.json",
+  "schema/theme.schema.json",
+  "schema/ai-config.schema.json",
+  "tools/build_plugin.py",
+  "tools/self_test.mjs",
+  "examples/audio-gain/manifest.json",
+  "examples/audio-gain/plugin.c",
+  "examples/theme-ai/manifest.json"
+]

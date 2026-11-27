@@ -1,0 +1,80 @@
+{
+  "format_version": 1,
+  "id": "org.ffmpegpp.examples.theme-ai",
+  "api_version": 1,
+  "app_version": ">=6.0.0-beta2 <7.0.0",
+  "Basic_info": {
+    "Name": "Theme and AI Catalog Demo",
+    "Version": "1.0.0",
+    "IsPreview": true,
+    "Summary": "Declarative glass appearance and an offline sample AI provider catalog; no credentials or network calls."
+  },
+  "themes": [
+    {
+      "kind": "ffmpegpp.theme",
+      "schema_version": 1,
+      "id": "demo-glass",
+      "name": {
+        "zh": "示例玻璃主题",
+        "en": "Demo Glass"
+      },
+      "values": {
+        "use_theme_color": true,
+        "theme_color": "#FF3870B8",
+        "theme_color2": null,
+        "card_style": "liquid",
+        "nav_style": "liquid",
+        "pill_style": "liquid",
+        "menu_style": "liquid"
+      }
+    }
+  ],
+  "ai_configs": [
+    {
+      "kind": "ffmpegpp.ai-config",
+      "schema_version": 1,
+      "bundle_id": "org.ffmpegpp.examples.catalog",
+      "name": {
+        "zh": "离线示例模型目录",
+        "en": "Offline Sample Catalog"
+      },
+      "profiles": [
+        {
+          "source_id": "sample-provider",
+          "profile": {
+            "name": "Example Provider (configure before use)",
+            "provider": "openai",
+            "api_url": "https://api.example.org/v1",
+            "api_path": "/chat/completions",
+            "model": "example-chat-model",
+            "models": [
+              {
+                "id": "example-chat-model",
+                "display_name": "Example Chat Model",
+                "capabilities": [
+                  "chat"
+                ],
+                "input_modalities": [
+                  "text"
+                ],
+                "output_modalities": [
+                  "text"
+                ],
+                "context_window": 8192,
+                "max_tokens": 2048
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "permissions": {
+    "files": {
+      "read": false,
+      "write": false
+    },
+    "network": []
+  },
+  "dependencies": []
+}

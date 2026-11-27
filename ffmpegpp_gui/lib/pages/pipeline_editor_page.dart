@@ -21,6 +21,7 @@ import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 import '../models/node_picker_options.dart';
 import '../platform/app_platform.dart';
+import '../plugins/plugin_node_catalog.dart';
 import '../providers/app_state.dart';
 import '../services/ai_chat_attachments.dart';
 import '../services/ai_chat_history.dart';
@@ -103,6 +104,7 @@ import '../widgets/step_editors/image_sharpen_step_editor.dart';
 import '../widgets/step_editors/image_to_video_step_editor.dart';
 import '../widgets/step_editors/logic_block_editor.dart';
 import '../widgets/step_editors/output_step_editor.dart';
+import '../widgets/step_editors/plugin_step_editor.dart';
 import '../widgets/step_editors/speed_step_editor.dart';
 import '../widgets/step_editors/start_step_editor.dart';
 import '../widgets/step_editors/subtitle_step_editor.dart';
@@ -1061,6 +1063,44 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   // ── 节点操作 ──
 
+  String? _addPluginNode(String pluginId, String nodeId, Offset canvasPos, {String? requestedId}) {
+    if (!context.read<AppState>().config.pluginsEnabled) return null;
+    final catalog = PluginNodeCatalog.instance;
+    final manifest = catalog.plugin(pluginId);
+    final definition = catalog.lookup(pluginId, nodeId);
+    if (manifest == null || definition == null) return null;
+    final existing = _nodes.where((node) => node.id == requestedId).firstOrNull;
+    if (existing != null) {
+      return existing.type == PipelineStepType.plugin && existing.pluginId == pluginId &&
+          existing.pluginNodeId == nodeId ? existing.id : null;
+    }
+    final node = PipelineNode(
+      id: requestedId ?? _uuid.v4(), type: PipelineStepType.plugin,
+      x: canvasPos.dx - _totalNodeWFor(PipelineStepType.plugin) / 2,
+      y: canvasPos.dy - _nodeH / 2,
+      params: PipelineNode.pluginParams(
+        pluginId: pluginId, pluginVersion: manifest.version, definition: definition,
+      ),
+    );
+    _pushUndo();
+    setState(() {
+      _nodes.add(node);
+      _selectedNodeIds..clear()..add(node.id);
+      _lastSelectedId = node.id;
+      _mobileToolboxOpen = false;
+    });
+    _commitChange();
+    final key = 'plugin:$pluginId/$nodeId';
+    context.read<AppState>().updateConfig((config) {
+      config.nodeUsageCount[key] = math.max(0, config.nodeUsageCount[key] ?? 0) + 1;
+      config.recentNodeTypes..remove(key)..insert(0, key);
+      if (config.recentNodeTypes.length > AppConfig.recentNodeLimit) {
+        config.recentNodeTypes.removeRange(AppConfig.recentNodeLimit, config.recentNodeTypes.length);
+      }
+      return config;
+    });
+    return node.id;
+  }
   String _addNodeAt(PipelineStepType type, Offset canvasPos) {
     _pushUndo();
     final node = PipelineNode(
@@ -1519,7 +1559,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       // 源端：必须有控制输出能力（逻辑门输出 / 非起始节点的状态输出）
       final fromOk = fromNode.isGate
           ? fromNode.hasGateOutput
-          : (fromNode.type != PipelineStepType.start);
+          : fromNode.hasControlOutput;
       if (!fromOk) {
         showToast(
           context,
@@ -1557,7 +1597,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       } else {
         // 非逻辑节点的红色逻辑输入端（使能端）：接受逻辑门输出或上游节点的状态输出（状态端 → 使能端）。
         // 语义与顶部注释一致：红色端口只传播 1/0，普通节点的状态输出可级联控制下游节点。
-        if (toNode.type == PipelineStepType.start) {
+        if (!toNode.hasControlInput) {
           showToast(
             context,
             zh ? '源节点没有使能输入端' : 'Source node has no enable input',
@@ -1584,6 +1624,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
     // 数据连线验证
     if (!fromNode.hasOutput || !toNode.hasInput) return;
+    if (toNode.type == PipelineStepType.plugin && _connections.any((connection) =>
+        connection.kind == 'data' && connection.toNodeId == toNode.id)) {
+      showToast(context, zh ? '插件节点 v1 仅支持一个数据输入' : 'Plugin v1 nodes accept one data input',
+        type: ToastType.error);
+      return;
+    }
 
     // Container-aware connection check
     if (fromNode.type == PipelineStepType.start &&
@@ -3508,6 +3554,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
     Widget editor;
     switch (node.type) {
+      case PipelineStepType.plugin:
+        return PluginStepEditor(node: node, isZh: isZh, onChanged: onChanged);
       case PipelineStepType.start:
         if (widget.containerInfo != null) {
           final cName = widget.containerInfo!.name;
@@ -4220,6 +4268,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final s = AppStrings.of(
       context.select<AppState, String>((st) => st.config.language),
     );
+    final (pluginsEnabled, _) = context.select<AppState, (bool, int)>((state) =>
+      (state.config.pluginsEnabled, PluginNodeCatalog.instance.revision));
+    if (!pluginsEnabled && _toolboxCategory == NodePickerCategory.plugin) {
+      _toolboxCategory = NodePickerCategory.video;
+    }
     // Snapshot values so resetting or mutating the existing map also refreshes order.
     _nodePickerUsage = context.select<AppState, Map<String, int>>(
       (state) => Map<String, int>.unmodifiable(state.config.nodeUsageCount),
@@ -6397,8 +6450,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           return;
         }
         final statusOut = Offset(rx, dot2Y);
-        if ((canvasPos - statusOut).distance <= hitR &&
-            n.type != PipelineStepType.start) {
+        if ((canvasPos - statusOut).distance <= hitR && n.hasControlOutput) {
           setState(() {
             _probeTooltip = zh ? '状态输出: 1 (成功)' : 'Status out: 1 (success)';
             _probeTooltipPos = statusOut;
@@ -6417,8 +6469,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           return;
         }
         final enableIn = Offset(lx, dot2Y);
-        if ((canvasPos - enableIn).distance <= hitR &&
-            n.type != PipelineStepType.start) {
+        if ((canvasPos - enableIn).distance <= hitR && n.hasControlInput) {
           setState(() {
             _probeTooltip = zh ? '使能输入: 1 (悬空默认)' : 'Enable in: 1 (default)';
             _probeTooltipPos = enableIn;
@@ -7423,7 +7474,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           _hitPortPos(node, isOutput: false, isControl: false),
         ));
       }
-      if (node.type != PipelineStepType.start) {
+      if (node.hasControlOutput) {
         candidates.add((
           'statusOut',
           _hitPortPos(node, isOutput: true, isControl: true),
@@ -7482,11 +7533,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       // 隐藏逻辑模式下不显示红色控制端口
       if (_hideLogic && isControl) return const SizedBox(width: 16, height: 16);
       final hasPort = isControl
-          ? (isOutput
-                ? node.type !=
-                      PipelineStepType
-                          .start // 状态输出：非起始节点
-                : node.type != PipelineStepType.start) // 使能输入：非起始节点
+          ? (isOutput ? node.hasControlOutput : node.hasControlInput)
           : (isOutput ? node.hasOutput : node.hasInput);
       final portKind = isControl
           ? (isOutput ? 'statusOut' : 'enableIn')
@@ -8825,8 +8872,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   }) {
     final categories = [
       for (final category in NodePickerCategory.values)
-        if (category != NodePickerCategory.container ||
-            widget.containerInfo != null)
+        if ((category != NodePickerCategory.container || widget.containerInfo != null) &&
+            (category != NodePickerCategory.plugin || context.read<AppState>().config.pluginsEnabled))
           category,
     ];
     return Column(
@@ -8937,6 +8984,70 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     );
   }
 
+  Widget _buildPluginToolbox(ColorScheme scheme, AppStrings s, {required bool dense, Offset? atCanvas}) {
+    final state = context.read<AppState>();
+    if (!state.config.pluginsEnabled) return const SizedBox.shrink();
+    final query = _toolboxQuery.trim().toLowerCase();
+    final usable = <MediaType>{..._sourceMediaTypes(),
+      for (final node in _nodes) ?node.outputType,
+    };
+    final entries = PluginNodeCatalog.instance.entries.where((entry) {
+      final definition = entry.definition;
+      if (query.isNotEmpty && !'${definition.name} ${definition.fun} ${entry.pluginId} ${definition.id}'
+          .toLowerCase().contains(query)) {
+        return false;
+      }
+      return !_showOnlyAvailable || definition.inputTypes.any((name) => usable.any((kind) => kind.name == name));
+    }).toList();
+    String keyFor(String pluginId, String nodeId) => 'plugin:$pluginId/$nodeId';
+    entries.sort((a, b) {
+      final ak = keyFor(a.pluginId, a.definition.id);
+      final bk = keyFor(b.pluginId, b.definition.id);
+      final af = state.config.favoriteNodeTypes.contains(ak);
+      final bf = state.config.favoriteNodeTypes.contains(bk);
+      if (af != bf) { return af ? -1 : 1; }
+      return compareNodePickerEntries(a.definition.name, b.definition.name,
+        keyA: ak, keyB: bk, sort: _toolboxSort, usageCounts: state.config.nodeUsageCount);
+    });
+    if (entries.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Text(s.isZh ? '暂无已启用且匹配的插件节点，请先在插件页安装并启用。'
+          : 'No matching enabled plugin nodes. Install and enable a plugin first.'),
+      );
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      for (final entry in entries) Padding(
+        padding: EdgeInsets.only(bottom: dense ? 4 : 6),
+        child: Tooltip(message: entry.definition.fun, child: InkWell(
+          key: ValueKey('node-picker-plugin-${entry.pluginId}/${entry.definition.id}'),
+          borderRadius: BorderRadius.circular(8),
+          onTap: () {
+            _addPluginNode(entry.pluginId, entry.definition.id, atCanvas ?? _canvasCenterCanvasPos());
+            if (atCanvas != null) Navigator.pop(context);
+          },
+          onLongPress: () => _togglePluginFavorite(entry.pluginId, entry.definition.id),
+          onSecondaryTap: () => _togglePluginFavorite(entry.pluginId, entry.definition.id),
+          child: _toolboxListRow(
+            label: entry.definition.name,
+            tag: "${entry.definition.inputTypes.join('/')} → ${entry.definition.outputType}",
+            icon: const TablerIcon(TablerGlyph.layersIntersect),
+            accent: scheme.secondaryContainer, scheme: scheme,
+            favorite: state.config.favoriteNodeTypes.contains(keyFor(entry.pluginId, entry.definition.id)),
+          ),
+        )),
+      ),
+    ]);
+  }
+
+  void _togglePluginFavorite(String pluginId, String nodeId) {
+    final key = 'plugin:$pluginId/$nodeId';
+    context.read<AppState>().updateConfig((config) {
+      if (!config.favoriteNodeTypes.remove(key)) config.favoriteNodeTypes.add(key);
+      return config;
+    });
+    setState(() {});
+  }
   /// 当前类别内筛选并排序；收藏单独置顶，保留原有预览与拖拽行为。
   ///
   /// 桌面右面板与移动端弹层原本各写一遍同样的分类列表 —— 加一个区块就得改两处，
@@ -8947,6 +9058,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     required bool dense,
     Offset? atCanvas,
   }) {
+    if (_toolboxCategory == NodePickerCategory.plugin) {
+      return _buildPluginToolbox(scheme, s, dense: dense, atCanvas: atCanvas);
+    }
     final gap = dense ? 4.0 : 6.0;
     final sectionGap = dense ? 8.0 : 10.0;
     final state = context.read<AppState>();
@@ -9926,6 +10040,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     b.write('|');
     b.write(cfg.aiProfiles.length);
     b.write('|$_panelConfigRevision');
+    b.write('|${cfg.pluginsEnabled}|${PluginNodeCatalog.instance.revision}');
     return b.toString();
   }
 
@@ -10083,6 +10198,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         'props': <String, dynamic>{
           if (includeProperties) ...{
             'thumbPath': _thumbPath,
+            if (node?.type == PipelineStepType.plugin) ...{
+              'pluginEditable': cfg.pluginsEnabled && node!.pluginCompatibilityIssue == null,
+              'pluginIssue': node!.pluginUnavailableReason,
+            },
             'outputName': resolvedExt == null
                 ? widget.video.filename
                 : widget.video.filename.replaceAll(
@@ -10149,6 +10268,17 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     addAll(_videoTypes, 'video');
     addAll(_audioTypes, 'audio');
     addAll(_imageTypes, 'image');
+    if (_appState.config.pluginsEnabled) {
+      for (final entry in PluginNodeCatalog.instance.entries) {
+        out.add({
+          'id': 'plugin:${entry.pluginId}/${entry.definition.id}',
+          'kind': 'plugin',
+          'label': entry.definition.name, 'labelEn': entry.definition.name,
+          'tag': "${entry.definition.inputTypes.join('/')} → ${entry.definition.outputType}",
+          'group': 'plugin',
+        });
+      }
+    }
     if (widget.containerInfo != null) addAll(_containerTypes, 'container');
     for (final gate in LogicGateType.values) {
       out.add({
@@ -10204,6 +10334,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           if (nodeId == null || params is! Map) return false;
           final idx = _nodes.indexWhere((n) => n.id == nodeId);
           if (idx < 0) return false;
+          if (_nodes[idx].type == PipelineStepType.plugin) {
+            final current = _nodes[idx];
+            final proposed = PipelineNode(id: current.id, type: current.type,
+              params: Map<String, dynamic>.from(params));
+            if (!_appState.config.pluginsEnabled ||
+                jsonEncode(proposed.pluginEnvelope) != jsonEncode(current.pluginEnvelope) ||
+                proposed.pluginUnavailableReason != null) {
+              return false;
+            }
+          }
           setState(() {
             _nodes[idx].params
               ..clear()
@@ -10342,6 +10482,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 与子窗口后续引用的 id 对不上。
   dynamic _addNodeFromPanel(Map<String, dynamic> args) {
     final typeId = args['typeId'] as String? ?? '';
+    if (typeId.startsWith('plugin:')) {
+      final parts = typeId.substring(7).split('/');
+      if (parts.length != 2) return false;
+      return _addPluginNode(parts[0], parts[1], Offset(
+        (args['x'] as num?)?.toDouble() ?? _spawnCenter.dx,
+        (args['y'] as num?)?.toDouble() ?? _spawnCenter.dy,
+      ), requestedId: args['nodeId'] as String?) ?? false;
+    }
     PipelineStepType? type;
     for (final t in PipelineStepType.values) {
       if (t.name == typeId) {
@@ -10349,7 +10497,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         break;
       }
     }
-    if (type == null || type == PipelineStepType.unknown) return false;
+    if (type == null || type == PipelineStepType.unknown || type == PipelineStepType.plugin) return false;
     final requestedId = args['nodeId'] as String?;
     final existing = _nodes.where((node) => node.id == requestedId).firstOrNull;
     if (existing != null) {

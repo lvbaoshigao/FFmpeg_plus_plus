@@ -1,0 +1,53 @@
+{
+  "format_version": 1,
+  "id": "org.ffmpegpp.examples.audio-gain",
+  "api_version": 1,
+  "app_version": ">=6.0.0-beta2 <7.0.0",
+  "Basic_info": {
+    "Name": "Audio Gain Demo",
+    "Version": "1.0.0",
+    "IsPreview": true,
+    "Summary": "A compiled C/WASM audio gain node using the host audio.volume operation."
+  },
+  "module": "plugin.wasm",
+  "Node_info": [
+    {
+      "id": "audio_gain",
+      "name": "Audio Gain",
+      "fun": "Adjust audio gain in decibels through the existing FFmpeg pipeline.",
+      "IsLogic": true,
+      "IO": {
+        "inputs": 1,
+        "outputs": 1
+      },
+      "input_types": [
+        "audio"
+      ],
+      "output_type": "audio",
+      "schema_version": 1,
+      "fields": [
+        {
+          "key": "decibels",
+          "label": "Gain (dB)",
+          "type": "number",
+          "default": -6,
+          "min": -60,
+          "max": 12
+        }
+      ]
+    }
+  ],
+  "permissions": {
+    "files": {
+      "read": false,
+      "write": false
+    },
+    "network": []
+  },
+  "limits": {
+    "memory_mb": 16,
+    "time_ms": 1000,
+    "fuel": 1000000
+  },
+  "dependencies": []
+}

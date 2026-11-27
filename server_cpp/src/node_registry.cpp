@@ -202,6 +202,10 @@ const NodeTypeSpec kTypes[] = {
      MK_AUDIO, MK_AUDIO, false, 0, {COMMON_KEYS, "bass_db", "mid_db", "treble_db"}},
     {makeTypeId(0x32), "videoFade", nullptr, "视频淡入淡出",
      MK_VIDEO, MK_VIDEO, false, 0, {COMMON_KEYS, "fade_in", "fade_out", "fade_out_start"}},
+    // Stable carrier; plugin identities and private values stay in JSON.
+    {makeTypeId(0x33), "plugin", nullptr, "插件节点",
+     MK_VIDEO | MK_IMAGE | MK_AUDIO, MK_VIDEO | MK_IMAGE | MK_AUDIO,
+     false, 0, {COMMON_KEYS, "_plugin", "values"}},
 };
 
 // ── 结构性节点（源/输出）──────────────────────────────────────

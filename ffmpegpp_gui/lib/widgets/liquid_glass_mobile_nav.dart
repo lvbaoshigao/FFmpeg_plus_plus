@@ -8,7 +8,13 @@ import '../theme/app_neutral_surface.dart';
 import '../theme/app_strings.dart';
 import '../theme/mobile_ui.dart';
 import 'liquid_glass_fallback.dart';
-import 'mobile_bottom_nav.dart' show NavGlassShell, navGlassPalOf, navGlassLook;
+import 'mobile_bottom_nav.dart'
+    show
+        NavGlassShell,
+        navGlassPalOf,
+        navGlassLook,
+        mobileNavOrder,
+        mobileNavItem;
 import 'selection_highlight.dart';
 import 'tabler_icon.dart';
 
@@ -676,20 +682,19 @@ class LiquidGlassMobileNav extends StatelessWidget {
   final ValueChanged<int> onSelected;
   final bool hidden;
 
-  static const _pageOrder = [0, 1, 2, 3];
-
   @override
   Widget build(BuildContext context) {
     final language = context.select<AppState, String>(
       (state) => state.config.language,
     );
     final strings = AppStrings.of(language);
-    final index = _pageOrder.indexOf(selectedIndex);
-    final items = <(TablerGlyph, String)>[
-      (TablerGlyph.movie, strings.navProjects),
-      (TablerGlyph.listDetails, strings.navQueue),
-      (TablerGlyph.folders, language == 'zh' ? '配置库' : 'Configs'),
-      (TablerGlyph.settings, strings.navSettings),
+    final pluginsEnabled = context.select<AppState, bool>(
+      (state) => state.config.pluginsEnabled,
+    );
+    final pageOrder = mobileNavOrder(pluginsEnabled: pluginsEnabled);
+    final index = pageOrder.indexOf(selectedIndex);
+    final items = [
+      for (final destination in pageOrder) mobileNavItem(destination, strings),
     ];
 
     // 菜单样式跟随设置（设置→外观→菜单样式）：liquid 走 AppLiquidTabBar，
@@ -702,7 +707,7 @@ class LiquidGlassMobileNav extends StatelessWidget {
     if (isMobilePlatform || navStyle == 'liquid') {
       bar = AppLiquidTabBar(
         currentIndex: index < 0 ? 0 : index,
-        onTap: (tabIndex) => onSelected(_pageOrder[tabIndex]),
+        onTap: (tabIndex) => onSelected(pageOrder[tabIndex]),
         items: [
           for (final (glyph, label) in items)
             LiquidGlassTabItem(icon: TablerIcon(glyph), label: label),
@@ -736,7 +741,7 @@ class LiquidGlassMobileNav extends StatelessWidget {
             ),
             child: _FlatNavBar(
               selectedIndex: index < 0 ? 0 : index,
-              onTap: (tabIndex) => onSelected(_pageOrder[tabIndex]),
+              onTap: (tabIndex) => onSelected(pageOrder[tabIndex]),
               items: items,
             ),
           ),

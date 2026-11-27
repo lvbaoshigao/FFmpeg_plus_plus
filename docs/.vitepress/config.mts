@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitepress'
 
 // 让 Markdown 构建与客户端路由把教程下载识别为文件，而不是 HTML 页面。
-process.env.VITE_EXTRA_EXTENSIONS = [process.env.VITE_EXTRA_EXTENSIONS, 'fppx', 'py']
+process.env.VITE_EXTRA_EXTENSIONS = [process.env.VITE_EXTRA_EXTENSIONS, 'fppx', 'fppplugin', 'wasm', 'py']
   .filter(Boolean).join(',')
 
 // 仓库 Pages 默认使用子路径；自定义域名可设置 VITEPRESS_BASE=/。
@@ -20,6 +20,7 @@ export default defineConfig({
       { text: '从这里开始', link: '/guide/introduction' },
       { text: '节点编辑器', link: '/nodes/' },
       { text: '编写节点文件', link: '/node-files/' },
+      { text: '开发插件', link: '/plugins/' },
       { text: '构建软件', link: '/build/' }
     ],
     sidebar: [
@@ -218,7 +219,18 @@ export default defineConfig({
         ]
     },
     {
-        "text": "6 附录与站点维护",
+        "text": "6 插件系统（实验性）",
+        "collapsed": true,
+        "items": [
+            { "text": "插件系统入门", "link": "/plugins/" },
+            { "text": "编译、导入并运行示例", "link": "/plugins/getting-started" },
+            { "text": "清单与 API", "link": "/plugins/api" },
+            { "text": "主题与 AI 配置", "link": "/plugins/contributions" },
+            { "text": "安全与兼容性", "link": "/plugins/security" }
+        ]
+    },
+    {
+        "text": "7 附录与站点维护",
         "collapsed": true,
         "items": [
             {
