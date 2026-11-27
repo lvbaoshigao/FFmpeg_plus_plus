@@ -11,13 +11,15 @@ import 'app_press_feedback.dart';
 import 'app_semantic_colors.dart';
 
 class AppTheme {
+  static const int defaultSeedColor = 0xFF5E6AD2;
+
   static final String monoFont = Platform.isWindows ? 'Consolas' : 'monospace';
 
   /// seedColor 为用户自定义主题色；dynamicSeed 非空时（Android Monet
   /// 动态取色）覆盖它作为种子色，使用与系统 Material You 一致的
   /// tonalSpot 方案生成整套配色。
   static ThemeData dark({
-    int seedColor = 0xFF5E6AD2,
+    int seedColor = defaultSeedColor,
     String fontFamily = '',
     double fontSize = 14.0,
     int fontWeight = 400,
@@ -26,12 +28,11 @@ class AppTheme {
     bool predictiveBack = true,
     String glassEffect = 'liquid',
   }) {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: Color(useThemeColor ? (dynamicSeed ?? seedColor) : 0xFF777777),
+    final scheme = _colorScheme(
       brightness: Brightness.dark,
-      dynamicSchemeVariant: useThemeColor
-          ? DynamicSchemeVariant.tonalSpot
-          : DynamicSchemeVariant.monochrome,
+      seedColor: seedColor,
+      dynamicSeed: dynamicSeed,
+      useThemeColor: useThemeColor,
     );
     return _build(
       scheme,
@@ -44,7 +45,7 @@ class AppTheme {
   }
 
   static ThemeData light({
-    int seedColor = 0xFF5E6AD2,
+    int seedColor = defaultSeedColor,
     String fontFamily = '',
     double fontSize = 14.0,
     int fontWeight = 400,
@@ -53,12 +54,11 @@ class AppTheme {
     bool predictiveBack = true,
     String glassEffect = 'liquid',
   }) {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: Color(useThemeColor ? (dynamicSeed ?? seedColor) : 0xFF777777),
+    final scheme = _colorScheme(
       brightness: Brightness.light,
-      dynamicSchemeVariant: useThemeColor
-          ? DynamicSchemeVariant.tonalSpot
-          : DynamicSchemeVariant.monochrome,
+      seedColor: seedColor,
+      dynamicSeed: dynamicSeed,
+      useThemeColor: useThemeColor,
     );
     return _build(
       scheme,
@@ -67,6 +67,58 @@ class AppTheme {
       fontWeight,
       predictiveBack: predictiveBack,
       glassEffect: glassEffect,
+    );
+  }
+
+  static ColorScheme _colorScheme({
+    required Brightness brightness,
+    required int seedColor,
+    required int? dynamicSeed,
+    required bool useThemeColor,
+  }) {
+    final accent = ColorScheme.fromSeed(
+      seedColor: Color(
+        useThemeColor ? (dynamicSeed ?? seedColor) : defaultSeedColor,
+      ),
+      brightness: brightness,
+      dynamicSchemeVariant: DynamicSchemeVariant.tonalSpot,
+    );
+    if (useThemeColor) return accent;
+
+    // 关闭的是自定义/动态主题色，不是操作与选中态的颜色。强调色回退到
+    // 应用默认配色；只让表面、正文与描边保持中性，避免整站（含节点编辑器）
+    // 被 monochrome 一起去色。保留成对的 on* 与 fixed 色，确保控件对比度。
+    final neutral = ColorScheme.fromSeed(
+      seedColor: const Color(0xFF777777),
+      brightness: brightness,
+      dynamicSchemeVariant: DynamicSchemeVariant.monochrome,
+    );
+    return neutral.copyWith(
+      primary: accent.primary,
+      onPrimary: accent.onPrimary,
+      primaryContainer: accent.primaryContainer,
+      onPrimaryContainer: accent.onPrimaryContainer,
+      primaryFixed: accent.primaryFixed,
+      primaryFixedDim: accent.primaryFixedDim,
+      onPrimaryFixed: accent.onPrimaryFixed,
+      onPrimaryFixedVariant: accent.onPrimaryFixedVariant,
+      secondary: accent.secondary,
+      onSecondary: accent.onSecondary,
+      secondaryContainer: accent.secondaryContainer,
+      onSecondaryContainer: accent.onSecondaryContainer,
+      secondaryFixed: accent.secondaryFixed,
+      secondaryFixedDim: accent.secondaryFixedDim,
+      onSecondaryFixed: accent.onSecondaryFixed,
+      onSecondaryFixedVariant: accent.onSecondaryFixedVariant,
+      tertiary: accent.tertiary,
+      onTertiary: accent.onTertiary,
+      tertiaryContainer: accent.tertiaryContainer,
+      onTertiaryContainer: accent.onTertiaryContainer,
+      tertiaryFixed: accent.tertiaryFixed,
+      tertiaryFixedDim: accent.tertiaryFixedDim,
+      onTertiaryFixed: accent.onTertiaryFixed,
+      onTertiaryFixedVariant: accent.onTertiaryFixedVariant,
+      inversePrimary: accent.inversePrimary,
     );
   }
 
@@ -527,7 +579,7 @@ class AppTheme {
       // 语义色（成功/警告/危险/信息/中性）：见 theme/app_semantic_colors.dart。
       // 注入到主题层后，所有 `scheme.sem.xxx` 与
       // `Theme.of(context).extension<AppSemantic>()` 都拿到同一份实例，
-      // 其内部按「主色 + 明暗」做进程级缓存，主题未变时零开销。
+      // 其内部按完整 ColorScheme 做进程级缓存，主题未变时直接复用。
       extensions: <ThemeExtension<dynamic>>[AppSemantic.ofScheme(scheme)],
     );
   }

@@ -124,18 +124,17 @@ class AppSemantic extends ThemeExtension<AppSemantic> {
   // ── 缓存 ──────────────────────────────────────────────────────────────
 
   /// 进程级缓存：`ColorScheme.fromSeed` 内部要做 HCT 量化，单次约 1~3ms，
-  /// 四次调用不能让它在每帧的热路径上跑。缓存键是「主色 + 明暗」——
-  /// 语义色只依赖这两个输入（字号/字体/玻璃模式都不影响它）。
-  static final Map<int, AppSemantic> _cache = <int, AppSemantic>{};
+  /// 不能让它在每帧的热路径上跑。按完整配色缓存：默认主题与关闭自定义色
+  /// 后的主题可共享主色，但中性表面不同，错误色等语义角色也可能被覆盖。
+  static final Map<ColorScheme, AppSemantic> _cache = {};
 
   /// 按 [scheme] 生成语义色（带缓存）。
   static AppSemantic ofScheme(ColorScheme scheme) {
-    final key = Object.hash(scheme.primary.toARGB32(), scheme.brightness);
-    final cached = _cache[key];
+    final cached = _cache[scheme];
     if (cached != null) return cached;
     final built = _build(scheme);
     // 主题色切换是低频操作，缓存规模天然有界（不同种子数），无需淘汰。
-    _cache[key] = built;
+    _cache[scheme] = built;
     return built;
   }
 

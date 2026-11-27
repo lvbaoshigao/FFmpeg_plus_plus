@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:ffmpegpp_gui/pages/pipeline_editor_page.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
+import 'package:ffmpegpp_gui/services/ai_chat_history.dart';
 import 'package:ffmpegpp_gui/theme/app_strings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -27,6 +28,7 @@ class _AiServer {
     final ready = _outputReady[request] ??= Completer<void>();
     if (!ready.isCompleted) ready.complete();
   }
+
   bool hold = false;
   bool tools = false;
   bool continuation = false;
@@ -221,7 +223,9 @@ Future<void> _send(WidgetTester tester, _AiServer server) async {
   // Start the callback in the real async zone so loopback HTTP can advance.
   await tester.runAsync(() async {
     tester.widget<TextField>(input).onSubmitted!('PRIVATE_PROMPT');
-    await server.waitForOutput(requestNumber).timeout(const Duration(seconds: 30));
+    await server
+        .waitForOutput(requestNumber)
+        .timeout(const Duration(seconds: 30));
     await Future<void>.delayed(const Duration(milliseconds: 20));
   });
   await tester.pump();
@@ -234,6 +238,7 @@ void main() {
   late AppState state;
 
   setUp(() async {
+    expect(AiChatHistory.directoryOverride, isNotNull);
     server = _AiServer(await HttpServer.bind(InternetAddress.loopbackIPv4, 0));
     server.server.listen((request) => unawaited(server.handle(request)));
     state = AppState();
@@ -264,6 +269,30 @@ void main() {
         tester,
         () => find.byTooltip('Stop generating').evaluate().isEmpty,
       );
+      // Completion autosaves the seeded PRIVATE_HISTORY message. Wait for real
+      // IO and assert it stays in the directory installed by test config.
+      final saved = await tester.runAsync(() async {
+        final directory = AiChatHistory.directoryOverride!;
+        final watch = Stopwatch()..start();
+        while (watch.elapsed < const Duration(seconds: 10)) {
+          final files = await directory
+              .list()
+              .where((entry) => entry is File && entry.path.endsWith('.json'))
+              .toList();
+          if (files.isNotEmpty) {
+            expect(files, hasLength(1));
+            final session = await AiChatHistory.loadSession(files.single.path);
+            expect(await AiChatHistory.listSessions(), isEmpty);
+            return session;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        fail('The diagnostic fixture was not autosaved to its test directory');
+      });
+      expect(saved?['title'], 'PRIVATE_HISTORY');
+      expect(saved?['provider'], 'PRIVATE_PROVIDER');
+      expect(saved?['model'], 'PRIVATE_MODEL');
+      expect(saved?['messages'], hasLength(4));
       final logs = _trace(state);
       expect(
         logs,

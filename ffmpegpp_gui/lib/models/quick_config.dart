@@ -162,8 +162,8 @@ class QuickConfig {
     'updated_at': updatedAt.toIso8601String(),
     'items': items.map((i) => i.toJson()).toList(),
     if (nodes != null) 'nodes': nodes!.map((node) => node.toJson()).toList(),
-    if (nodes != null) 'input_params': inputParams,
-    if (nodes != null) 'output_params': outputParams,
+    'input_params': inputParams,
+    'output_params': outputParams,
   };
 
   factory QuickConfig.fromJson(Map<String, dynamic> json) {

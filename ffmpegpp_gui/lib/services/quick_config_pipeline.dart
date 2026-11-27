@@ -41,6 +41,7 @@ PipelineNode _node(PipelineStepType type, Map<String, dynamic> params, int i) {
 
 PipelineGraph _chain(
   List<PipelineNode> middles, {
+  required QuickFileType fileType,
   Map<String, dynamic>? inputParams,
   Map<String, dynamic>? outputParams,
 }) {
@@ -48,7 +49,7 @@ PipelineGraph _chain(
   final start = PipelineNode(
     id: 'qs_${_uuid.v4()}',
     type: PipelineStepType.start,
-    params: inputParams,
+    params: {...?inputParams, 'file_media_type': fileType.name},
     x: 60,
     y: 160,
   );
@@ -110,10 +111,8 @@ QuickPipelineResult buildGraphFromQuickConfig(
     }
     final graph = _chain(
       nodes,
-      inputParams: {
-        ...PipelineNode.deepCopyMap(cfg.inputParams),
-        'file_media_type': cfg.fileType.name,
-      },
+      fileType: cfg.fileType,
+      inputParams: PipelineNode.deepCopyMap(cfg.inputParams),
       outputParams: PipelineNode.deepCopyMap(cfg.outputParams),
     );
     final graphErrors = GraphExecutor.validateGraph(graph);
@@ -265,7 +264,16 @@ QuickPipelineResult buildGraphFromQuickConfig(
           );
         }
       }
-      return QuickPipelineResult(_chain(middle), applied, skipped);
+      return QuickPipelineResult(
+        _chain(
+          middle,
+          fileType: cfg.fileType,
+          inputParams: PipelineNode.deepCopyMap(cfg.inputParams),
+          outputParams: PipelineNode.deepCopyMap(cfg.outputParams),
+        ),
+        applied,
+        skipped,
+      );
 
     // ═══════════════════ 图片 ═══════════════════
     case QuickFileType.image:
@@ -342,7 +350,16 @@ QuickPipelineResult buildGraphFromQuickConfig(
               : 'Watermark needs manual editing (node editor)',
         );
       }
-      return QuickPipelineResult(_chain(middle), applied, skipped);
+      return QuickPipelineResult(
+        _chain(
+          middle,
+          fileType: cfg.fileType,
+          inputParams: PipelineNode.deepCopyMap(cfg.inputParams),
+          outputParams: PipelineNode.deepCopyMap(cfg.outputParams),
+        ),
+        applied,
+        skipped,
+      );
 
     // ═══════════════════ 音频 ═══════════════════
     case QuickFileType.audio:
@@ -414,8 +431,36 @@ QuickPipelineResult buildGraphFromQuickConfig(
           );
         }
       }
-      return QuickPipelineResult(_chain(middle), applied, skipped);
+      return QuickPipelineResult(
+        _chain(
+          middle,
+          fileType: cfg.fileType,
+          inputParams: PipelineNode.deepCopyMap(cfg.inputParams),
+          outputParams: PipelineNode.deepCopyMap(cfg.outputParams),
+        ),
+        applied,
+        skipped,
+      );
   }
+}
+
+/// 导出与应用共用完整映射，避免把不完整预设导出成另一条可执行流程。
+PipelineGraph buildApplicableQuickConfigGraph(
+  QuickConfig config, {
+  required bool isZh,
+}) {
+  final result = buildGraphFromQuickConfig(config, isZh: isZh);
+  final errors = [...result.skippedNotes];
+  if (result.isEmpty) {
+    errors.add(
+      isZh
+          ? '快捷配置没有可应用的处理节点'
+          : 'Quick configuration has no applicable processing nodes',
+    );
+  }
+  errors.addAll(GraphExecutor.validateGraph(result.graph));
+  if (errors.isNotEmpty) throw FormatException(errors.join('; '));
+  return result.graph;
 }
 
 String _normImgFmt(dynamic f) {

@@ -3000,8 +3000,8 @@ Widget _buildTheme(BuildContext ctx, AppState state) {
           ),
           subtitle: Text(
             s.isZh
-                ? '关闭后使用中性灰配色，已选颜色会保留'
-                : 'Use neutral colors; your selected colors are preserved',
+                ? '关闭后恢复默认强调色，已选颜色会保留'
+                : 'Use default accent colors; your selected colors are preserved',
             style: SettingsTypography.description.copyWith(
               color: scheme.onSurfaceVariant,
             ),

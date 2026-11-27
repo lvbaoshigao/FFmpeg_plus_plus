@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +13,7 @@ import '../models/models.dart';
 import '../platform/app_platform.dart';
 import '../providers/app_state.dart';
 import '../services/fppx2_service.dart';
+import '../services/quick_config_json_codec.dart';
 import '../services/quick_config_pipeline.dart';
 import '../services/quick_config_storage.dart';
 import '../theme/app_semantic_colors.dart';
@@ -244,6 +247,126 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     _openEditor(entry);
   }
 
+  Future<void> _importQuickConfigJson(
+    PlatformFile file, {
+    required bool zh,
+  }) async {
+    final codec = QuickConfigJsonCodec(
+      FppxService(context.read<AppState>().backend),
+    );
+    try {
+      final source = utf8.decode(await file.readAsBytes());
+      if (!mounted) return;
+      // Importing never overwrites a local preset with the same ID.
+      final id = _uuid.v4();
+      QuickConfig? config;
+      try {
+        config = await codec.decode(source, id: id);
+      } on QuickConfigJsonPasswordRequired {
+        if (!mounted) return;
+        final password = await showDialog<String>(
+          context: context,
+          barrierDismissible: false,
+          animationStyle: MediaQuery.disableAnimationsOf(context)
+              ? AnimationStyle.noAnimation
+              : null,
+          builder: (_) => FppxPasswordDialog(
+            zh: zh,
+            attempt: (password) async {
+              try {
+                config = await codec.decode(source, password: password, id: id);
+                return null;
+              } on QuickConfigJsonPasswordException {
+                return zh
+                    ? '口令错误，或文件已损坏 / 被篡改'
+                    : 'Wrong password, or the file is corrupted';
+              } on FormatException catch (error) {
+                return error.message;
+              }
+            },
+          ),
+        );
+        if (!mounted) return;
+        if (password == null) {
+          showToast(context, zh ? '已取消' : 'Cancelled', type: ToastType.info);
+          return;
+        }
+      }
+      final imported = config;
+      if (imported == null) return;
+      if (imported.name.isEmpty) {
+        imported.name = file.name.replaceFirst(
+          RegExp(r'\.json$', caseSensitive: false),
+          '',
+        );
+      }
+      await QuickConfigStorage.save(imported);
+      if (!mounted) return;
+      setState(() {
+        _quickConfigs.insert(0, imported);
+        _tabIndex = 1;
+      });
+      showToast(
+        context,
+        zh
+            ? '已导入快捷配置: ${imported.name}'
+            : 'Imported quick config: ${imported.name}',
+        type: ToastType.success,
+      );
+    } catch (error) {
+      if (mounted) {
+        _showImportErrors(zh ? '导入失败' : 'Import Failed', [
+          error is FormatException
+              ? error.message
+              : (zh
+                    ? '无法读取或保存快捷配置'
+                    : 'Could not read or save quick configuration'),
+        ]);
+      }
+    }
+  }
+
+  Future<void> _exportQuickConfigJson(
+    QuickConfig config,
+    _ExportOptions opts, {
+    required bool zh,
+  }) async {
+    final codec = QuickConfigJsonCodec(
+      FppxService(context.read<AppState>().backend),
+    );
+    try {
+      final encoded = await codec.encode(
+        config,
+        encrypted: opts.encrypted,
+        password: opts.password,
+        encryptAlgo: opts.algo,
+      );
+      if (!mounted) return;
+      final saved = await FilePicker.saveFile(
+        dialogTitle: zh ? '保存快捷配置 JSON' : 'Save Quick Config JSON',
+        fileName: '${config.name}.json',
+        mimeType: 'application/json',
+        bytes: Uint8List.fromList(utf8.encode(encoded)),
+      );
+      if (saved == null || !mounted) return;
+      showToast(
+        context,
+        zh ? '已导出快捷配置 JSON' : 'Quick config JSON exported',
+        type: ToastType.success,
+      );
+    } catch (error) {
+      if (mounted) {
+        _showImportErrors(zh ? '导出失败' : 'Export Failed', [
+          error is FormatException
+              ? error.message
+              : (zh
+                    ? '无法导出快捷配置 JSON'
+                    : 'Could not export quick configuration JSON'),
+        ]);
+      }
+    }
+  }
+
   Future<void> _importFppx({bool force = false}) async {
     final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
     final scheme = Theme.of(context).colorScheme;
@@ -253,18 +376,23 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       type: FileType.any,
       dialogTitle: zh ? '导入配置' : 'Import Config',
     );
-    if (picked?.path == null) return;
-    final name = picked!.name;
-    if (!name.endsWith('.fppx')) {
+    if (picked == null) return;
+    final name = picked.name;
+    if (name.toLowerCase().endsWith('.json')) {
+      if (mounted) await _importQuickConfigJson(picked, zh: zh);
+      return;
+    }
+    if (!name.toLowerCase().endsWith('.fppx')) {
       if (mounted) {
         showToast(
           context,
-          zh ? '请选择 .fppx 文件' : 'Please select a .fppx file',
+          zh ? '请选择 .fppx 或 .json 文件' : 'Please select a .fppx or .json file',
           type: ToastType.warning,
         );
       }
       return;
     }
+    if (picked.path == null) return;
     final path = picked.path!;
     if (!mounted) return; // pickFile 异步间隙后的首个 context 使用点
     final state = context.read<AppState>();
@@ -732,12 +860,14 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     required String title,
     required String initialDescription,
     required bool allowEncryption,
+    bool quickFormats = false,
   }) async {
     final scheme = Theme.of(context).colorScheme;
     final descCtrl = TextEditingController(text: initialDescription);
     final pwdCtrl = TextEditingController();
     final pwd2Ctrl = TextEditingController();
     var encrypt = false;
+    var jsonFormat = quickFormats;
     var algo = FppxService.algoAes256Cbc;
     String? err;
 
@@ -768,6 +898,19 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (quickFormats) ...[
+                      OptionMenuBar<bool>(
+                        value: jsonFormat,
+                        label: zh ? '文件格式' : 'File format',
+                        items: const [
+                          OptionItem(true, 'JSON (.json)'),
+                          OptionItem(false, 'FPPX (.fppx)'),
+                        ],
+                        onChanged: (value) =>
+                            setDialogState(() => jsonFormat = value),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     TextField(
                       controller: descCtrl,
                       maxLines: 3,
@@ -894,6 +1037,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                       encrypted: allowEncryption && encrypt,
                       password: allowEncryption && encrypt ? pwdCtrl.text : '',
                       algo: algo,
+                      jsonFormat: jsonFormat,
                     ),
                   );
                 },
@@ -916,7 +1060,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     return '${dir.path}${Platform.pathSeparator}export_$name';
   }
 
-  /// 快捷配置导出为新版 .fppx（0x02：逻辑块无节点 ID，只存命令参数）
+  /// JSON 保留完整编辑配置；FPPX 使用带媒体类型、可快速编辑的串行图。
   Future<void> _exportQuickConfig(QuickConfig cfg) async {
     final zh = AppStrings.of(context.read<AppState>().config.language).isZh;
     final opts = await _askExportOptions(
@@ -924,14 +1068,15 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       title: zh ? '导出快捷配置' : 'Export Quick Config',
       initialDescription: cfg.description,
       allowEncryption: true,
+      quickFormats: true,
     );
     if (opts == null || !mounted) return;
-    cfg.description = opts.description;
+    cfg = cfg.deepCopy()..description = opts.description;
+    if (opts.jsonFormat) {
+      await _exportQuickConfigJson(cfg, opts, zh: zh);
+      return;
+    }
     final state = context.read<AppState>();
-    final items = [
-      for (final i in cfg.items)
-        {'key': i.key, 'params': i.params, 'enabled': i.enabled},
-    ];
     String? result;
     String? tmpPath;
     try {
@@ -939,25 +1084,18 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
       // 桌面/移动统一为「先写临时文件 → 读回字节 → saveFile 落盘」。
       tmpPath = await _tempExportPath('${cfg.name}.fppx');
       final service = FppxService(state.backend);
-      // Serial nodes preserve repeats and ordering in the existing graph format.
-      final exportRes = cfg.nodes != null
-          ? await service.exportGraph(
-              buildGraphFromQuickConfig(cfg, isZh: zh).graph,
-              tmpPath,
-              description: cfg.description,
-              newFormat: true,
-              encrypted: opts.encrypted,
-              password: opts.password,
-              encryptAlgo: opts.algo,
-            )
-          : await service.exportQuickItems(
-              tmpPath,
-              description: cfg.description,
-              items: items,
-              encrypted: opts.encrypted,
-              password: opts.password,
-              encryptAlgo: opts.algo,
-            );
+      // Legacy quick_items omit file_type (e.g. audio bitrate-only presets are
+      // inferred as video on import). Preserve source media and the executable
+      // sequence as a serial graph that can reopen in the quick editor.
+      final exportRes = await service.exportGraph(
+        buildApplicableQuickConfigGraph(cfg, isZh: zh),
+        tmpPath,
+        description: cfg.description,
+        newFormat: true,
+        encrypted: opts.encrypted,
+        password: opts.password,
+        encryptAlgo: opts.algo,
+      );
       if (!mounted) return;
       if (!exportRes.success) {
         _showImportErrors(
@@ -1154,8 +1292,8 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
             // _buildQuickEmptyState 完全同款的文案指路，不再单开一个异类按钮。
             Text(
               zh
-                  ? '或点上栏「⬇」导入 .fppx 文件'
-                  : 'Or use ⬇ in the top bar to import a .fppx',
+                  ? '或点上栏「⬇」导入 .fppx / .json 文件'
+                  : 'Or use ⬇ in the top bar to import .fppx / .json',
               style: TextStyle(
                 color: scheme.outline.withAlpha(120),
                 fontSize: 12,
@@ -1283,7 +1421,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
               size: 18,
               color: scheme.outline,
             ),
-            tooltip: zh ? '导出为新版文件 (Beta)' : 'Export as new-format file (Beta)',
+            tooltip: zh
+                ? '导出快捷配置 (JSON / FPPX)'
+                : 'Export quick config (JSON / FPPX)',
             onPressed: () => _exportQuickConfig(cfg),
           ),
           IconButton(
@@ -1296,14 +1436,15 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     );
 
     // 卡片样式由「主题→样式→卡片样式」（AppConfig.cardStyle）接管
-    final cardStyle = context.select<AppState, String>(
-      (s) => s.config.cardStyle,
-    );
-    return AppCard(
-      style: cardStyle,
-      radius: 16,
-      margin: const EdgeInsets.only(bottom: 8),
+    return Selector<AppState, String>(
+      selector: (_, state) => state.config.cardStyle,
       child: content,
+      builder: (_, cardStyle, child) => AppCard(
+        style: cardStyle,
+        radius: 16,
+        margin: const EdgeInsets.only(bottom: 8),
+        child: child!,
+      ),
     );
   }
 
@@ -1434,7 +1575,9 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
                         _buildTabSelector(scheme, zh, compact: compact),
                         Expanded(
                           child: !_loaded
-                              ? const Center(child: AppCircularProgressIndicator())
+                              ? const Center(
+                                  child: AppCircularProgressIndicator(),
+                                )
                               : ListView(
                                   // 开窗卡所在列表必须关（见 app_card 的
                                   // _WallpaperWindowPainter）
@@ -1515,7 +1658,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
         onPressed: _importFppx,
         style: secondaryStyle,
         icon: const Icon(Icons.file_download_outlined, size: 20),
-        label: Text(zh ? '导入 .fppx' : 'Import .fppx'),
+        label: Text(zh ? '导入配置' : 'Import Config'),
       ),
     ];
   }
@@ -1644,7 +1787,7 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     return [
       MobileGlassPillAction(
         icon: Icons.file_download_outlined,
-        tooltip: zh ? '导入 .fppx' : 'Import .fppx',
+        tooltip: zh ? '导入配置' : 'Import Config',
         color: scheme.onSurface,
         showDisk: false,
         onTap: _importFppx,
@@ -1850,15 +1993,16 @@ class _ConfigLibraryPageState extends State<ConfigLibraryPage> {
     );
 
     // 卡片样式由「主题→样式→卡片样式」（AppConfig.cardStyle）接管
-    final cardStyle = context.select<AppState, String>(
-      (s) => s.config.cardStyle,
-    );
-    return AppCard(
-      style: cardStyle,
-      radius: 16,
-      margin: const EdgeInsets.only(bottom: 8),
-      onTap: () => _openEditor(entry),
+    return Selector<AppState, String>(
+      selector: (_, state) => state.config.cardStyle,
       child: content,
+      builder: (_, cardStyle, child) => AppCard(
+        style: cardStyle,
+        radius: 16,
+        margin: const EdgeInsets.only(bottom: 8),
+        onTap: () => _openEditor(entry),
+        child: child!,
+      ),
     );
   }
 }
@@ -1869,10 +2013,12 @@ class _ExportOptions {
     required this.encrypted,
     required this.password,
     required this.algo,
+    this.jsonFormat = false,
   });
 
   final String description;
   final bool encrypted;
   final String password;
   final int algo;
+  final bool jsonFormat;
 }

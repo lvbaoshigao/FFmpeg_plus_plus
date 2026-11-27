@@ -1,30 +1,29 @@
 import 'package:ffmpegpp_gui/models/models.dart';
+import 'package:ffmpegpp_gui/platform/app_platform.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/widgets/mobile_glass_pill.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ffmpegpp_gui/platform/app_platform.dart';
 import 'package:provider/provider.dart';
 
 void main() {
-  test('disabled accents are achromatic with dynamic colors in both modes', () {
-    for (final theme in [
-      AppTheme.light(useThemeColor: false, dynamicSeed: 0xFFFF0088),
-      AppTheme.dark(useThemeColor: false, dynamicSeed: 0xFF0088FF),
+  test('disabled custom accents keep default accents and neutral surfaces', () {
+    for (final (theme, defaults) in [
+      (
+        AppTheme.light(useThemeColor: false, dynamicSeed: 0xFFFF0088),
+        AppTheme.light(),
+      ),
+      (
+        AppTheme.dark(useThemeColor: false, dynamicSeed: 0xFF0088FF),
+        AppTheme.dark(),
+      ),
     ]) {
       final s = theme.colorScheme;
-      for (final color in [
-        s.primary,
-        s.primaryContainer,
-        s.secondary,
-        s.secondaryContainer,
-        s.tertiary,
-        s.tertiaryContainer,
-        s.surface,
-        s.surfaceContainerHighest,
-        s.outline,
-      ]) {
+      expect(s.primary, defaults.colorScheme.primary);
+      expect(s.secondary, defaults.colorScheme.secondary);
+      expect(s.tertiary, defaults.colorScheme.tertiary);
+      for (final color in [s.surface, s.surfaceContainerHighest, s.outline]) {
         expect(color.r, closeTo(color.g, 1 / 255));
         expect(color.g, closeTo(color.b, 1 / 255));
       }
@@ -85,7 +84,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(taps, 0);
       expect(tester.element(paint), same(element));
-      expect((tester.widget<CustomPaint>(paint).foregroundPainter as dynamic).amount, 0);
+      expect(
+        (tester.widget<CustomPaint>(paint).foregroundPainter as dynamic).amount,
+        0,
+      );
       await tester.tap(pill);
       await tester.pumpAndSettle();
       expect(taps, 1);
@@ -95,9 +97,7 @@ void main() {
     },
   );
 
-  testWidgets('mobile liquid pill compresses to 0.96 on press', (
-    tester,
-  ) async {
+  testWidgets('mobile liquid pill compresses to 0.96 on press', (tester) async {
     debugIsMobilePlatformOverride = true;
     addTearDown(() => debugIsMobilePlatformOverride = null);
     final state = AppState()..config.pillStyle = 'liquid';

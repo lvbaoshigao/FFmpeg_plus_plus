@@ -228,6 +228,15 @@ class MultiWindowService {
 
   static bool get supported => !isMobilePlatform;
 
+  @visibleForTesting
+  static Future<String?> Function(
+    DetachedPanel panel,
+    String lang,
+    double width,
+    double height,
+  )?
+  debugOpenPanelOverride;
+
   /// Linux runner 独立面板进程读取 stdin 后调用；认证 token 不放在 argv 中。
   static void configureLinuxGuest({
     required String socketPath,
@@ -396,6 +405,10 @@ class MultiWindowService {
     double height = 0,
   }) async {
     if (!supported) return null;
+    final openPanelOverride = debugOpenPanelOverride;
+    if (openPanelOverride != null) {
+      return openPanelOverride(panel, lang, width, height);
+    }
     if (Platform.isLinux) {
       return _openLinuxPanel(panel, lang: lang, width: width, height: height);
     }

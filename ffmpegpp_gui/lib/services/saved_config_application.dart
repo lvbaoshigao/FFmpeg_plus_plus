@@ -30,12 +30,7 @@ class SavedConfigChoice {
       if (preset.fileType.name != file.fileMediaType.name) {
         throw const FormatException('Media type does not match');
       }
-      final result = buildGraphFromQuickConfig(preset, isZh: isZh);
-      // Applying only part of a saved preset would silently change its meaning.
-      if (result.isEmpty || result.skippedNotes.isNotEmpty) {
-        throw const FormatException('Preset needs editing before application');
-      }
-      source = result.graph;
+      source = buildApplicableQuickConfigGraph(preset, isZh: isZh);
     } else {
       source = graph!;
     }

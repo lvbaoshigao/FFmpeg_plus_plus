@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+
 import 'app_neutral_surface.dart';
+import 'app_semantic_colors.dart';
 
 /// Flutter-native, Miuix-inspired roles, not a pixel replica or Compose port.
 /// Reference: https://github.com/Xocio/ZeroUI/blob/main/kit/src/main/java/com/zeroui/kit/theme/ZeroTokens.kt
@@ -34,16 +36,17 @@ class MobileVisualTheme extends ThemeExtension<MobileVisualTheme> {
     final modalSurface = cardHigh.withValues(
       alpha: base.dialogTheme.backgroundColor?.a ?? 1,
     );
+    final neutralScheme = scheme.copyWith(
+      surface: page,
+      surfaceContainer: card,
+      surfaceContainerLow: page,
+      // High / Highest 必须分两档：对话框取 High、输入框填充取 Highest，
+      // 同色会让浮层与卡片糊成一片（暗色下只剩描边可辨）。
+      surfaceContainerHigh: card,
+      surfaceContainerHighest: cardHigh,
+    );
     return base.copyWith(
-      colorScheme: scheme.copyWith(
-        surface: page,
-        surfaceContainer: card,
-        surfaceContainerLow: page,
-        // High / Highest 必须分两档：对话框取 High、输入框填充取 Highest，
-        // 同色会让浮层与卡片糊成一片（暗色下只剩描边可辨）。
-        surfaceContainerHigh: card,
-        surfaceContainerHighest: cardHigh,
-      ),
+      colorScheme: neutralScheme,
       // 下面这几个主题的底色是**在 AppTheme 构建时**用 fromSeed 的 scheme
       // 烘死的，只改 colorScheme 不会让它们跟着变（典型症状：Miuix 下卡片已经
       // 是中性灰，对话框/弹出菜单却还是带主题色调的旧色）。
@@ -58,7 +61,12 @@ class MobileVisualTheme extends ThemeExtension<MobileVisualTheme> {
       popupMenuTheme: base.popupMenuTheme.copyWith(color: cardHigh),
       bottomSheetTheme: base.bottomSheetTheme.copyWith(backgroundColor: card),
       extensions: [
-        ...base.extensions.values.where((e) => e is! MobileVisualTheme),
+        ...base.extensions.values.where(
+          (e) => e is! MobileVisualTheme && e is! AppSemantic,
+        ),
+        // 语义中性容器也依赖表面配色，不能继续携带替换前的旧实例。
+        if (base.extension<AppSemantic>() != null)
+          AppSemantic.ofScheme(neutralScheme),
         this,
       ],
     );
