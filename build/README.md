@@ -1,7 +1,7 @@
-# FFmpeg++ 统一构建目录（三端一键编译）
+# FFmpeg++ 统一构建脚本
 
-本目录集中管理 **Windows 桌面端 / Linux 桌面端 / Android 移动端** 的构建脚本，
-遵循「代码在工作区、缓存/工具链在 sdb2」的约定，所有脚本均可通过环境变量覆盖路径。
+本目录集中管理 **Windows 桌面端 / Linux 桌面端 / Android 移动端** 的构建脚本。
+默认开发环境将代码放在工作区，将缓存与工具链放在 sdb2；相关路径可通过环境变量配置。
 
 ## 目录结构
 
@@ -40,7 +40,7 @@ build/android/build_ffmpeg.sh
 build/android/build_apk.sh
 ```
 
-## 目录与路径约定（可覆盖）
+## 目录与路径配置
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
@@ -50,15 +50,15 @@ build/android/build_apk.sh
 | `ANDROID_HOME` | sdb2 `android-sdk` | Android SDK |
 | `GRADLE_USER_HOME` | sdb2 `gradle-home` | Gradle 缓存（转 SSD 时用符号链接保持路径） |
 | `PUB_CACHE` | 保留现有环境值，否则 sdb2 `dart-pub-cache` | pub 依赖缓存；`FFMPEGPP_PUB_CACHE` 可显式覆盖 |
-| `FFMPEGPP_MAVEN_CENTRAL_MIRROR` | Google 托管的 Maven Central 镜像 | 可覆盖为信任的 HTTPS 镜像，官方仓库仍保留 |
+| `FFMPEGPP_MAVEN_CENTRAL_MIRROR` | Google 托管的 Maven Central 镜像 | 可配置为可信的 HTTPS 镜像，同时保留官方仓库 |
 | `FFMPEGPP_RETRY_MAX_ATTEMPTS` | `5` | Gradle 暂时性失败的总尝试次数，上限 10 |
 | `FFMPEGPP_RETRY_BASE_DELAY` | `20` | 指数退避初值（秒），最多等待 180 秒 |
 | `NDK_HOME` | sdb2 `reversing/tools/ndk/android-ndk-r26d` | NDK（r26d） |
 
-> 注意：本机 sdb2 只有 20G，Gradle 的
-> `caches/9.1.0/{transforms,generated-gradle-jars}` 已物理迁移到
-> `/media/lvbaoshigao/SSD/ffmpegpp-build-cache/` 并以符号链接回填
-> `GRADLE_USER_HOME/caches/9.1.0/` 下的原路径，脚本无需感知。
+> 开发环境的 sdb2 容量为 20G。该环境中，Gradle 的
+> `caches/9.1.0/{transforms,generated-gradle-jars}` 已迁移至
+> `/media/lvbaoshigao/SSD/ffmpegpp-build-cache/`，并在
+> `GRADLE_USER_HOME/caches/9.1.0/` 的原路径建立符号链接。此配置无需修改脚本，其他环境应按实际存储布局设置。
 
 ## 构建产物
 
@@ -88,6 +88,6 @@ pwsh -NoProfile -File ./build/windows/test_build_backend.ps1
   编译/配置错误立即返回真实失败码，最后一次失败后不会再等待。
 - Windows 后端缓存同时绑定编译器路径/版本、SDK、生成器与源码路径。runner
   更新 MSVC 后不会恢复另一工具链的对象；脚本还会检查旧 CMakeCache 并仅清理已识别的构建目录。
-- 不要修改 `org.gradle.configuration-cache` 相关属性（会导致构建失败）。
-- 桌面端更新机制/安装器不适用于移动端；GPU 硬编码器在 Android 上不可用，
-  自动回退 CPU 编码。
+- 应保持 `org.gradle.configuration-cache` 相关属性不变，以避免构建失败。
+- 桌面端更新机制与安装器不适用于移动端。Android 提供 H.264 / HEVC MediaCodec 编码选项，
+  实际可用性取决于设备、FFmpeg 构建与参数。

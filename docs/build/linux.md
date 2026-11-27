@@ -1,6 +1,6 @@
 # 4.3 在 Linux 上构建
 
-Linux 这条路线相对直接：Flutter 的 Linux 工程已经接入 C++ 后端，不需要先手动编译一份再猜放哪里。
+Flutter 的 Linux 工程已集成 C++ 后端，因此通常无需先单独编译后端再手动确定其放置位置。
 
 ## 1. 安装系统依赖
 
@@ -13,7 +13,7 @@ sudo apt install cmake g++ clang libgtk-3-dev pkg-config ninja-build \
   gstreamer1.0-plugins-good
 ```
 
-准备 Git、curl、unzip、xz 等 Flutter 安装所需工具，确认 `flutter doctor -v` 的 Linux 桌面项目正常。libsecret 也涉及应用的密钥存储，不能只因为“没用 AI”就假定它无关。
+请准备 Git、curl、unzip、xz 等 Flutter 安装所需工具，并通过 `flutter doctor -v` 确认 Linux 桌面工具链正常。libsecret 也用于应用的密钥存储，因此即使未使用 AI 功能，也不能据此排除该依赖。
 
 ## 2. 构建
 
@@ -33,7 +33,7 @@ flutter pub get
 flutter build linux --release
 ```
 
-这两种方式选一种即可，不必为了“更完整”连续构建两遍。
+以上两种方式任选其一即可，无需重复构建。
 
 ## 3. 检查产物
 
@@ -51,16 +51,16 @@ test -f ffmpegpp_gui/build/linux/x64/release/bundle/lib/libffmpegpp.so
 
 第一条成功时通常没有输出，退出码为 0。共享库应该在 bundle 的 lib 下；运行目录也要保留 data 和其他依赖。
 
-## ARM64 不是给命令换个名字
+## ARM64 构建要求
 
-当前发布流程在 ARM64 runner 上原生构建 ARM64。不要在 x64 主机上把产物目录改成 arm64，就以为得到了跨架构应用。Flutter SDK、插件与原生库都需要对应的目标支持。
+当前发布流程在 ARM64 runner 上原生构建 ARM64。仅在 x64 主机上将产物目录改名为 arm64，不会生成跨架构应用。Flutter SDK、插件和原生库均须支持相应目标架构。
 
-## 运行环境还要注意什么？
+## 运行环境注意事项
 
-- 桌面文件选择器、D-Bus、密钥存储服务等属于实际桌面环境的一部分；裸容器或最小化远程环境可能缺失。
-- GPU / 渲染问题先看日志和驱动，不要直接把高内存或软件渲染当作转码故障。
+- 桌面文件选择器、D-Bus、密钥存储服务等属于桌面运行环境的一部分；精简容器或最小化远程环境可能未提供这些组件。
+- 遇到 GPU 或渲染问题时，应先检查日志和驱动；高内存占用或软件渲染本身不能直接证明存在转码故障。
 - ffmpeg / ffprobe 仍需安装或由应用安装助手准备。
 
-制作 deb 的目录布局、依赖和架构字段可以参照发布工作流的 Linux 打包阶段。先验证 bundle，再做系统安装包。
+制作 deb 时，可参照发布工作流 Linux 打包阶段的目录布局、依赖和架构字段。请先验证 bundle，再制作系统安装包。
 
 依据：[Linux CMake 集成](https://github.com/lvbaoshigao/FFmpeg_plus_plus/blob/main/ffmpegpp_gui/linux/CMakeLists.txt)、[桌面构建脚本](https://github.com/lvbaoshigao/FFmpeg_plus_plus/blob/main/build/build_desktop.sh)。

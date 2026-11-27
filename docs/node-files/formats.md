@@ -1,8 +1,8 @@
 # 5.6 格式、版本与兼容性
 
-同样是 `.fppx` 后缀，里面可能是两套不同结构。先认文件头，比凭文件名猜版本可靠。
+`.fppx` 文件可能采用两种不同结构。应根据文件头识别格式版本，不应仅依据文件名判断。
 
-## 旧版：本章手写路线用的封装
+## 旧版：手动编写时使用的封装
 
 所有多字节长度字段使用**大端序**，长度按字节计，不按中文字符数计。
 
@@ -19,19 +19,19 @@
 | 11 + D | 4 | 压缩数据字节数 L | 无符号整数 |
 | 15 + D | L | 图数据 | gzip 压缩的 UTF-8 JSON |
 
-相当于：
+字段序列可概括为：
 
 ```text
 FPPX + 01 02 03 02 01 + 描述长度 + 描述 + 压缩长度 + gzip(图 JSON)
 ```
 
-::: warning 不要拿应用版本号直接填头字段
-当前界面版本是 6.0.0-beta2，但旧格式实现保留的内部兼容值仍为 `5`，默认范围为 `3～5`。它来自旧格式兼容常量，不按界面显示版本自动增长。不要“顺手改成 6”，否则可能生成导入器拒绝的文件。
+::: warning 不要将应用版本号用作文件头字段
+当前界面版本为 6.0.0-beta2，但旧格式实现保留的内部兼容值仍为 `5`，默认范围为 `3～5`。该值来自旧格式兼容常量，不会随界面显示版本自动增长。若将其改为 `6`，可能生成导入器拒绝的文件。
 :::
 
-旧版没有新版的模块索引和 AES 加密开关。gzip 是压缩，不是加密；知道格式的人可以读回 JSON。
+旧版没有新版的模块索引和 AES 加密开关。gzip 仅提供压缩，不提供加密；图 JSON 可通过解压恢复。
 
-## 新版 (Beta)：由应用负责写入
+## 新版 (Beta)：由应用写入
 
 新版起始 6 字节是：
 
@@ -40,7 +40,7 @@ FPPX + 01 02 03 02 01 + 描述长度 + 描述 + 压缩长度 + gzip(图 JSON)
 46 50 50 58 FF 02   快速模式
 ```
 
-第 5 字节（从 1 开始计数）是 `FF`，用于和旧版区分；它不是你自己递增的文件修订号。
+第 5 字节（从 1 开始计数）为 `FF`，用于区分旧版格式，不是可自行递增的文件修订号。
 
 之后是模块序列，每个模块有 1 字节 ID、4 字节大端载荷长度和载荷。当前写出路径使用索引、介绍、加密信息、数据、校验与结束模块；加密时还有认证标签。
 
@@ -56,16 +56,16 @@ FPPX + 01 02 03 02 01 + 描述长度 + 描述 + 压缩长度 + gzip(图 JSON)
 
 节点图的数据也不是把根 JSON 原样塞进去：节点类型使用注册表中的 **16 字节类型 ID**，连线改用文件内数字 ID 引用，并保存节点属性与逻辑块。内层索引的偏移含义还涉及明文/密文位置。手工改字节时，需要同时维护长度、索引、校验；只替换看得见的参数文字会破坏文件。
 
-要做新版或加密配置，建议这样走：**手写 JSON → 本章工具封装旧版 → 应用导入并检查 → 由应用导出新版**。这条路线不用自己重写二进制编码器和密码学实现。
+创建新版或加密配置时，建议采用以下流程：**手写 JSON → 使用工具封装旧版 → 由应用导入并检查 → 由应用导出新版**。该流程无需自行实现二进制编码器和密码学功能。
 
-## 加密与“强制导入”各管什么？
+## 加密与“强制导入”的作用
 
 - 当前实现支持 AES-128-CBC、AES-256-CBC，并结合 HMAC-SHA256；默认导出选择 AES-256-CBC。预留的 GCM 常量不代表已经实现。
-- 介绍和定位所需信息仍可为明文。别把口令、密钥或私密说明放进介绍。
+- 介绍和定位所需信息仍可为明文。不要将口令、密钥或私密说明写入介绍。
 - CRC32 检查完整性，不是口令保护，也不能替代认证。
-- 强制导入用于保留未知节点的结构，不会凭空获得该节点的处理能力。当前手动保存仍可能被图校验拦截；未知节点不能执行，必要时只能按新版往返保留。
+- 强制导入用于保留未知节点的结构，不会使应用获得处理该节点的能力。当前手动保存仍可能被图校验拦截；未知节点不能执行，必要时只能按新版往返保留。
 
-## 兼容性怎么选？
+## 兼容性建议
 
 | 目标 | 建议 |
 | --- | --- |
@@ -75,6 +75,6 @@ FPPX + 01 02 03 02 01 + 描述长度 + 描述 + 压缩长度 + gzip(图 JSON)
 | 分享给较旧的软件 | 先核对接收端支持的节点与格式，不能仅靠选择旧封装保证兼容 |
 | 快捷配置文件 | 使用配置库的快速模式入口，不能当节点图直接导入画布 |
 
-## 想进一步研究实现？
+## 实现参考
 
-优先读当前代码：[旧版头常量](https://github.com/lvbaoshigao/FFmpeg_plus_plus/blob/main/server_cpp/src/fppx_legacy.h)、[旧版编解码](https://github.com/lvbaoshigao/FFmpeg_plus_plus/blob/main/server_cpp/src/fppx_legacy.cpp)、[新版结构定义](https://github.com/lvbaoshigao/FFmpeg_plus_plus/blob/main/server_cpp/src/fppx2_format.h)、[新版编解码](https://github.com/lvbaoshigao/FFmpeg_plus_plus/blob/main/server_cpp/src/fppx2.cpp)和[类型注册表](https://github.com/lvbaoshigao/FFmpeg_plus_plus/blob/main/server_cpp/src/node_registry.cpp)。仓库中的设计草稿可能记录较早阶段，不应覆盖实际实现。
+实现细节应以当前代码为准：[旧版头常量](https://github.com/lvbaoshigao/FFmpeg_plus_plus/blob/main/server_cpp/src/fppx_legacy.h)、[旧版编解码](https://github.com/lvbaoshigao/FFmpeg_plus_plus/blob/main/server_cpp/src/fppx_legacy.cpp)、[新版结构定义](https://github.com/lvbaoshigao/FFmpeg_plus_plus/blob/main/server_cpp/src/fppx2_format.h)、[新版编解码](https://github.com/lvbaoshigao/FFmpeg_plus_plus/blob/main/server_cpp/src/fppx2.cpp)和[类型注册表](https://github.com/lvbaoshigao/FFmpeg_plus_plus/blob/main/server_cpp/src/node_registry.cpp)。仓库中的设计草稿可能记录较早阶段，不应覆盖实际实现。

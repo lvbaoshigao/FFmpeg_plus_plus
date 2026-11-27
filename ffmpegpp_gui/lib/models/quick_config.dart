@@ -66,13 +66,6 @@ class QuickConfigItem {
     this.enabled = true,
   }) : params = params ?? {};
 
-  /// 按当前语言返回标题；缺省时回退到 [title]。
-  String titleFor(bool isZh) {
-    if (isZh && titleZh.isNotEmpty) return titleZh;
-    if (!isZh && titleEn.isNotEmpty) return titleEn;
-    return title;
-  }
-
   Map<String, dynamic> toJson() => {
     'key': key,
     'title': title,
@@ -212,113 +205,6 @@ class QuickConfig {
     );
   }
 }
-
-/// 各文件类型的默认配置项模板（新建快捷配置时预填）。
-/// 每一项含 key、中英标题与合理的默认参数。
-List<QuickConfigItem> quickDefaultsFor(QuickFileType type) => switch (type) {
-  QuickFileType.video => [
-    QuickConfigItem(
-      key: 'bitrate',
-      titleZh: '码率控制',
-      titleEn: 'Bitrate',
-      params: {'bitrate': '4M', 'crf': 23},
-    ),
-    QuickConfigItem(
-      key: 'subtitle',
-      titleZh: '字幕',
-      titleEn: 'Subtitle',
-      params: {'subtitle_path': '', 'burn': true},
-    ),
-    QuickConfigItem(
-      key: 'crop',
-      titleZh: '裁剪',
-      titleEn: 'Crop',
-      params: {'w': 1920, 'h': 1080, 'x': 0, 'y': 0},
-    ),
-    QuickConfigItem(
-      key: 'rotate',
-      titleZh: '旋转',
-      titleEn: 'Rotate',
-      params: {'angle': 90},
-    ),
-    QuickConfigItem(
-      key: 'watermark',
-      titleZh: '水印',
-      titleEn: 'Watermark',
-      params: {'image': '', 'position': 'bottom_right'},
-    ),
-    QuickConfigItem(
-      key: 'compress',
-      titleZh: '压缩',
-      titleEn: 'Compress',
-      params: {'codec': 'h264', 'preset': 'medium'},
-    ),
-  ],
-  QuickFileType.image => [
-    QuickConfigItem(
-      key: 'resize',
-      titleZh: '缩放',
-      titleEn: 'Resize',
-      params: {'w': 1920, 'h': 1080, 'fit': 'contain'},
-    ),
-    QuickConfigItem(
-      key: 'compress',
-      titleZh: '压缩',
-      titleEn: 'Compress',
-      params: {'quality': 85, 'format': 'jpg'},
-    ),
-    QuickConfigItem(
-      key: 'watermark',
-      titleZh: '水印',
-      titleEn: 'Watermark',
-      params: {'image': '', 'position': 'bottom_right'},
-    ),
-    QuickConfigItem(
-      key: 'convert_format',
-      titleZh: '格式转换',
-      titleEn: 'Convert Format',
-      params: {'format': 'png'},
-    ),
-    QuickConfigItem(
-      key: 'filters',
-      titleZh: '滤镜',
-      titleEn: 'Filters',
-      params: {'brightness': 0, 'contrast': 1.0, 'saturation': 1.0},
-    ),
-  ],
-  QuickFileType.audio => [
-    QuickConfigItem(
-      key: 'bitrate',
-      titleZh: '码率',
-      titleEn: 'Bitrate',
-      params: {'bitrate': '192k'},
-    ),
-    QuickConfigItem(
-      key: 'sample_rate',
-      titleZh: '采样率',
-      titleEn: 'Sample Rate',
-      params: {'rate': 44100},
-    ),
-    QuickConfigItem(
-      key: 'channels',
-      titleZh: '声道',
-      titleEn: 'Channels',
-      params: {'count': 2},
-    ),
-    QuickConfigItem(
-      key: 'normalize',
-      titleZh: '音量归一化',
-      titleEn: 'Normalize',
-      params: {'level': -14},
-    ),
-    QuickConfigItem(
-      key: 'convert_format',
-      titleZh: '格式转换',
-      titleEn: 'Convert Format',
-      params: {'format': 'mp3'},
-    ),
-  ],
-};
 
 /// 从快捷配置项推断文件类型。
 ///

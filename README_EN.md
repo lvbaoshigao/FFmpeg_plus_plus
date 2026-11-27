@@ -1,8 +1,8 @@
-# 🎬 FFmpeg++
+# FFmpeg++
 
 <div align="center">
 
-**Blueprint-style node-based audio/video processing for desktop — complex FFmpeg as a workflow you can see**
+**Cross-platform audio, video, and image processing with visual node workflows**
 
 [![Platform](https://img.shields.io/badge/platform-Windows%20|%20Linux%20|%20macOS-blue?logo=flutter)](https://flutter.dev)
 [![Flutter](https://img.shields.io/badge/Flutter-3.44+-02569B?logo=flutter)](https://flutter.dev)
@@ -12,70 +12,69 @@
 
 English | [简体中文](README.md)
 
->  **This project is design by human and wrote by AI **
+> **Development approach:** Most code is developed with AI assistance; project direction, design decisions, and acceptance remain under human oversight.
 
 </div>
 
 ---
 
-## 📖 Overview
+## Overview
 
-**FFmpeg++** is a cross-platform video / image / audio processing tool that replaces the burden of
-memorizing command-line flags with a **blueprint-style node editor**: place `Start → Process → Output`
-nodes on an infinite canvas, wire them together, and the app validates the graph and generates the
-matching `ffmpeg` command for you.
+**FFmpeg++** is a cross-platform video, image, and audio processing application with a
+**node editor**. Create and connect `Start → Process → Output` nodes on an infinite canvas;
+the application validates the graph and generates the corresponding `ffmpeg` calls.
 
-The interface is built with **Flutter** and Material Design 3; the processing core is a **C++17**
-shared library loaded through Dart FFI. The actual encoding and decoding is still done by
-**FFmpeg / ffprobe** — so you keep FFmpeg's power without having to read the manual.
+The interface uses **Flutter** and Material Design 3. A **C++17** shared library provides the
+native backend through Dart FFI. **FFmpeg** performs media processing, while **ffprobe**
+provides media information.
 
-### What it solves
+### Use cases
 
-- **Commands get long**: filters, encoders, stream mapping and subtitle burn-in combine into dozens
-  of flags that are easy to get wrong by hand.
-- **Repetitive work**: the same processing chain across many files usually means maintaining scripts.
-- **Opaque pipelines**: a single long command does not show what happens first and what happens next.
+- **Parameter configuration**: configure filters, encoders, stream mapping, and subtitle burn-in
+  through nodes and parameter panels.
+- **Batch processing**: reuse the same processing chain across multiple files.
+- **Workflow inspection**: review processing relationships in the graph and inspect generated commands.
 
-With nodes, a processing chain becomes a graph you can see, save, reuse, and share.
+Node graphs can be inspected, saved, reused, and shared.
 
-### Two ways to work
+### Processing modes
 
-| Mode | Best for |
+| Mode | Intended use |
 |------|----------|
-| 🧩 **Node Editor** | Complex multi-step, multi-branch pipelines: transcode + filters + subtitles + audio in one graph |
-| 🎚 **Quick Config** | Fast single-file work: pick parameters from presets and send straight to the queue |
+| **Node Editor** | Define multi-step processing relationships for transcoding, filters, subtitles, and audio in one graph |
+| **Quick Config** | Configure preset parameters for a single file and submit the task to the queue |
 
 ---
 
-## 📸 Software Preview
+## Interface
 
 ### Main Window
 
 The Projects page is the entry point: the sidebar switches between Projects / Queue /
 Config Library / Settings. Media appears as cards with drag-and-drop import, thumbnail previews and
 automatic ffprobe detection (codec, resolution, duration, bitrate). From a selected file you can open
-the node editor, apply a quick-config preset, and every processing job lands in the shared queue.
+the node editor or apply a quick-config preset. Processing tasks use the shared queue.
 Use a file card’s **More → Apply saved configuration** menu to reuse a compatible node or quick-config
-preset for video, audio or images. Applying changes only that file’s pipeline; enqueue it separately when ready.
+preset for video, audio, or images. Applying a configuration updates only that file’s pipeline; enqueue the file separately to execute it.
 
 ### Node Editor
 
 <img src="make/2.png" alt="FFmpeg++ node editor" width="100%">
 
-The node editor is the core workspace: the top toolbar handles save, undo, redo, auto-layout and the
-debug view; the center is an infinite canvas where nodes are wired port to port and right-click adds
-or removes them; the right panel shows the parameters of the selected node. Every step on the canvas
-is translated into a real ffmpeg invocation, validated before anything runs.
+The node editor is the main workflow workspace. The top toolbar provides save, undo, redo,
+auto-layout, and debug-view controls. The central canvas connects nodes through ports; context
+menus provide creation and deletion actions. The right panel displays the selected node’s parameters.
+The application validates the graph before executing the generated FFmpeg calls.
 
 ---
 
-## 🧩 The Node Editor: How It Works
+## Node editor workflow
 
-The whole idea is three steps: **place nodes → connect them → run**.
+The basic workflow is **create nodes → connect nodes → execute the task**.
 
 ### Step 1 — Place nodes
 
-Drop processing nodes from the toolbar or the right-click menu. Every pipeline starts with a **Start**
+Add processing nodes through the toolbar or context menu. Every pipeline starts with a **Start**
 node and ends with an **Output** node; processing nodes go in between:
 
 - **Transcode & filters**: video transcode (codec / bitrate / CRF / resolution / frame rate), video
@@ -102,44 +101,42 @@ favorites are preserved.
 
 ### Step 2 — Connect them into a graph
 
-Drag from a port to wire "the output of this step" into "the input of the next". The editor keeps
-validating the graph:
+Connect an output port to the next node’s input port. The editor checks graph validity and
+constructs the execution plan:
 
 - cycle detection, connection type conflicts, dangling nodes, missing Start / Output nodes;
 - duration constraints (for example when a clip duration is incompatible with a downstream node);
-- adjacent nodes that can be collapsed are automatically merged into a **single ffmpeg command**
-  instead of re-encoding several times.
+- compatible adjacent nodes can be combined into a **single ffmpeg command** to reduce repeated encoding.
 
-**Logic blocks and logic gates** turn the graph into more than a straight line: loop blocks repeat a
-sub-chain by count or condition, while AND / OR / NOT / NAND / NOR / XOR / XNOR gates, constant 1 / 0
-and a time trigger act as enable/status inputs that decide whether a processing node runs — giving
-your pipeline conditional branching.
+**Logic blocks and logic gates** provide repetition and conditional execution. Loop blocks repeat
+a sub-chain by count or condition. AND / OR / NOT / NAND / NOR / XOR / XNOR gates, constant 1 / 0,
+and a time trigger participate in enable/status connections that control whether a processing node runs.
 
 ### Step 3 — Run and reuse
 
-Each **source node** becomes an independent task, so one graph can be applied to many files at once.
-Tasks run sequentially in the processing queue with live progress, speed and remaining time.
+Each **source node** corresponds to an independent task, allowing one graph to be applied to
+multiple files. The processing queue displays progress, processing speed, and estimated remaining time.
 
-Once a graph works, store it in the **Config Library** and export it as a `.fppx` project file to share.
-Importing one validates it against your app version and media type.
+Save a validated graph to the **Config Library**, or export it as a `.fppx` configuration file for exchange.
+Import checks compatibility with the application version and media type; successful execution must
+still be verified with the intended media.
 
 ---
 
-## 🚀 Additional Features
+## Additional features
 
-### 🤖 AI Assistant
+### AI Assistant
 
-A built-in AI chat panel lets you describe what you want in natural language (for example, "make this
-video smaller and add a watermark") and have the AI create or modify nodes and parameters on the
-canvas for you.
+The built-in AI chat panel accepts natural-language requests, such as compressing a video and
+adding a watermark. The configured model can generate or modify nodes and parameters on the canvas.
 
 Both the **OpenAI** and **Anthropic** protocols are supported, with multiple model profiles and
 multi-API-key rotation. Keys are encrypted locally.
 
-### 🔌 MCP Server (Model Context Protocol)
+### MCP Server (Model Context Protocol)
 
-FFmpeg++ embeds an MCP HTTP server (**off by default**) so AI clients and automation workflows can
-drive the whole application:
+FFmpeg++ includes an MCP HTTP server (**off by default**) that exposes the following interfaces
+to compatible AI clients and automation workflows:
 
 - **Endpoint**: `http://127.0.0.1:<port>/`, JSON-RPC 2.0 over HTTP POST, with batch requests and
   protocol version negotiation;
@@ -156,10 +153,9 @@ drive the whole application:
   then enforces an access token (`x-mcp-token` header or `Authorization: Bearer <token>`, shown in
   Settings).
 
-> Mainstream desktop MCP clients speak stdio. Bridge with an HTTP ↔ stdio proxy such as `mcp-proxy`
-> if you want to connect one directly.
+> Clients that use stdio transport can connect through an HTTP ↔ stdio bridge such as `mcp-proxy`.
 
-### 📱 Android
+### Android
 
 The same codebase also builds for Android (arm64-v8a, Android 8.0+) with touch adaptations:
 
@@ -167,9 +163,9 @@ The same codebase also builds for Android (arm64-v8a, Android 8.0+) with touch a
 - Android 8.1+ supports Monet dynamic color, deriving a Material You palette from the wallpaper;
 - **ffmpeg / ffprobe are bundled** as static arm64 executables inside the APK — no external
   dependency to install;
-- GPU hardware encoders are unavailable and automatically fall back to CPU encoding.
+- H.264 / HEVC MediaCodec encoding options are available; actual support depends on the device, FFmpeg build, and parameters.
 
-### 🛠 Other Details
+### Interface and runtime management
 
 - **Interface**: dark / light themes, accent colors, background images, multiple surface styles
   (liquid glass / blur / solid), fonts and text scale, customizable keyboard shortcuts, Chinese and
@@ -184,9 +180,9 @@ The same codebase also builds for Android (arm64-v8a, Android 8.0+) with touch a
 
 ---
 
-## 📦 Download & Installation
+## Download and installation
 
-FFmpeg++ is available for the following clients:
+The repository defines release packages for the following platforms:
 
 | Platform | Architecture | Package |
 |----------|--------------|---------|
@@ -196,21 +192,21 @@ FFmpeg++ is available for the following clients:
 | **macOS** | Universal (Intel + Apple Silicon) | `FFmpeg++_v*_macOS.dmg` |
 | **Android** | arm64-v8a | `app-release.apk` |
 
-### ⬇️ Get it now
+### Release packages
 
-**➡️ [GitHub Releases (all platform installers)](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases)**
+**[GitHub Releases (available installers)](https://github.com/lvbaoshigao/FFmpeg_plus_plus/releases)**
 
 Pick the matching file from the **Assets** section of the release. The Windows installer ships with
 Simplified Chinese, Traditional Chinese and English setup wizards; the `.deb` packages install with
 `sudo dpkg -i` or `sudo apt install ./*.deb`.
 
-> **About the FFmpeg dependency**: on desktop, if `ffmpeg` / `ffprobe` are not found at first launch
-> the app walks you through a one-click install (winget / apt / dnf / pacman / Homebrew) or lets you
-> import an existing archive. The Android build bundles everything, so nothing is required.
+> **FFmpeg dependency:** If `ffmpeg` / `ffprobe` are not detected at first launch on desktop,
+> the application provides installation guidance (winget / apt / dnf / pacman / Homebrew) or archive import.
+> The Android package includes these executables.
 
 ---
 
-## ⭐ Star History
+## Star history
 
 <a href="https://star-history.com/#lvbaoshigao/FFmpeg_plus_plus&Date">
   <picture>
@@ -222,10 +218,10 @@ Simplified Chinese, Traditional Chinese and English setup wizards; the `.deb` pa
 
 ---
 
-## 🔧 Building From Source
+## Building from source
 
 <details>
-<summary>Expand for requirements, build steps and tech stack</summary>
+<summary>Requirements, build procedure, and technology stack</summary>
 
 ### Architecture
 
@@ -267,9 +263,9 @@ flutter pub get
 flutter run -d linux            # or -d windows / -d macos
 ```
 
-### One-shot build scripts
+### Build scripts
 
-Build scripts live in `build/` — see [`build/README.md`](build/README.md):
+Build scripts are maintained in `build/`; see [`build/README.md`](build/README.md):
 
 ```bash
 build/build_all.sh all          # desktop + Android APK
@@ -296,7 +292,7 @@ FFmpeg_plus_plus/
 └── .github/          # GitHub Actions release pipeline
 ```
 
-### Tech stack
+### Technology stack
 
 | Layer | Technology |
 |-------|------------|
@@ -314,8 +310,8 @@ FFmpeg_plus_plus/
 
 <div align="center">
 
-<sub>  AI-Wrote code and desion by human — Built with Flutter + C++ + FFmpeg</sub>
+<sub>Flutter · C++17 · FFmpeg · Code developed with AI assistance and human design and review</sub>
 
-MIT License — 详见 [LICENSE](LICENSE)
+MIT License — see [LICENSE](LICENSE)
 
 </div>

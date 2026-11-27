@@ -1,8 +1,8 @@
 # 4.1 构建前准备
 
-想自己编译，先分清两件事：**编译应用**和**给应用安装 FFmpeg**。桌面 GUI 能编译出来，并不代表运行时已经有 ffmpeg / ffprobe。
+本地构建前应区分两个任务：**编译应用**与**为应用准备 FFmpeg**。桌面 GUI 构建成功，并不表示运行环境中已具备 ffmpeg / ffprobe。
 
-## 仓库里各部分负责什么？
+## 仓库各部分的职责
 
 | 位置 | 作用 |
 | --- | --- |
@@ -14,9 +14,9 @@
 
 后端经 FFI 与界面通信，再调用 FFmpeg / ffprobe 完成处理。Linux 的 Flutter CMake 工程会一起构建并打包后端；Windows 与 macOS 则需要把后端库放到最终应用查找的位置。
 
-## 先核对工具链
+## 工具链要求
 
-当前发布工作流锁定 **Flutter 3.50.0**；Dart 约束在 GUI 的 pubspec 中为 `^3.12.1`。建议先与工作流使用同一 Flutter 版本，再做本地环境调整。
+当前发布工作流固定使用 **Flutter 3.50.0**；GUI 的 pubspec 中 Dart 约束为 `^3.12.1`。建议本地首先使用与工作流相同的 Flutter 版本，再根据需要调整环境。
 
 ```sh
 flutter --version
@@ -33,9 +33,9 @@ C++ 后端要求 CMake 3.20+ 与 C++17 编译器。各平台还需要：
 | macOS | macOS、Xcode 及其命令行工具，按 Flutter doctor 处理插件工具链要求 |
 | Android arm64 | 本仓库原生脚本使用 Linux x86_64 主机、Android SDK、NDK、JDK 与 Flutter |
 
-## 哪些命令在哪个目录运行？
+## 命令执行目录
 
-本章除非特别注明，命令都从**仓库根目录**执行。`cd ffmpegpp_gui` 之后再运行 Flutter 命令。这里不会要求你照搬开发者本机磁盘路径；Android 的路径通过环境变量设置。
+除非另有说明，本章命令均从**仓库根目录**执行。运行 Flutter 命令前，先执行 `cd ffmpegpp_gui`。Android 路径通过环境变量设置，无需沿用开发者本机的绝对路径。
 
 初次获取代码：
 
@@ -44,17 +44,17 @@ git clone https://github.com/lvbaoshigao/FFmpeg_plus_plus.git
 cd FFmpeg_plus_plus
 ```
 
-确保依赖所用的 `third_party/` 内容完整。GUI 中有本地 path 依赖，不要只复制 lib 目录来尝试构建。
+请确保依赖所需的 `third_party/` 内容完整。GUI 包含本地 path 依赖，因此仅复制 lib 目录不足以完成构建。
 
-## 选一条路线
+## 平台构建指南
 
 - [Windows 构建](./windows.md)
 - [Linux 构建](./linux.md)
 - [macOS 构建](./macos.md)
 - [Android 构建](./android.md)
 
-仓库也有 `build/build_all.sh desktop|android|all` 入口。不过 `all` 的含义是“当前宿主桌面端加 Android”，不是在一台机器上跨编译所有桌面系统；Android 的原生依赖还要先准备。
+仓库还提供 `build/build_all.sh desktop|android|all` 入口。其中 `all` 表示“当前宿主桌面端加 Android”，不表示在一台机器上交叉编译所有桌面平台；构建 Android 前仍须准备原生依赖。
 
-::: info 这些步骤的核对范围
-本章依据当前仓库脚本和发布工作流编写。帮助站构建成功，不代表这里列出的所有系统都在本次文档工作中重新编译过。遇到工具链变化，先看命令的第一处实际错误，再对照[构建排障](./troubleshooting.md)。
+::: info 构建步骤与验证范围
+上述构建说明依据当前仓库脚本和发布工作流整理。帮助站构建成功不代表所有列出的目标平台均已验证构建通过。工具链发生变化时，应先检查命令输出中的首个实际错误，再参照[构建排障](./troubleshooting.md)。
 :::

@@ -17,7 +17,7 @@ export default defineConfig({
   themeConfig: {
     siteTitle: 'FFmpeg++ 使用手册',
     nav: [
-      { text: '从这里开始', link: '/guide/introduction' },
+      { text: '入门指南', link: '/guide/introduction' },
       { text: '节点编辑器', link: '/nodes/' },
       { text: '编写节点文件', link: '/node-files/' },
       { text: '开发插件', link: '/plugins/' },
@@ -193,11 +193,11 @@ export default defineConfig({
         "collapsed": true,
         "items": [
             {
-                "text": "先分清图和文件",
+                "text": "节点图与文件格式",
                 "link": "/node-files/"
             },
             {
-                "text": "写出第一张节点图",
+                "text": "编写第一张节点图",
                 "link": "/node-files/first-file"
             },
             {
@@ -260,15 +260,15 @@ export default defineConfig({
         ]
     }
 ],
-    outline: { level: [2, 3], label: '这一页讲什么' },
-    docFooter: { prev: '上一篇', next: '接着看' },
+    outline: { level: [2, 3], label: '本页目录' },
+    docFooter: { prev: '上一篇', next: '下一篇' },
     lastUpdated: { text: '最后更新' },
     darkModeSwitchLabel: '外观',
     sidebarMenuLabel: '章节目录',
     returnToTopLabel: '回到顶部',
-    notFound: { title: '这一页暂时找不到', quote: '可以回到首页，或用搜索找一找。', linkText: '返回首页', linkLabel: '返回首页' },
+    notFound: { title: '页面未找到', quote: '请返回首页或使用搜索查找相关内容。', linkText: '返回首页', linkLabel: '返回首页' },
     socialLinks: [{ icon: 'github', link: 'https://github.com/lvbaoshigao/FFmpeg_plus_plus' }],
-    editLink: { pattern: 'https://github.com/lvbaoshigao/FFmpeg_plus_plus/edit/main/docs/:path', text: '在 GitHub 上改进这一页' },
+    editLink: { pattern: 'https://github.com/lvbaoshigao/FFmpeg_plus_plus/edit/main/docs/:path', text: '在 GitHub 上编辑本页' },
     search: {
       provider: 'local',
       options: {
@@ -283,7 +283,7 @@ export default defineConfig({
         },
         locales: { root: { translations: {
           button: { buttonText: '搜索手册', buttonAriaLabel: '搜索手册' },
-          modal: { displayDetails: '显示详细列表', resetButtonTitle: '清空搜索', backButtonTitle: '返回', noResultsText: '没有找到，换个关键词试试', footer: { selectText: '选择', navigateText: '切换', closeText: '关闭' } }
+          modal: { displayDetails: '显示详细列表', resetButtonTitle: '清空搜索', backButtonTitle: '返回', noResultsText: '未找到匹配结果，请尝试其他关键词', footer: { selectText: '选择', navigateText: '切换', closeText: '关闭' } }
         } } }
       }
     },
