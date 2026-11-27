@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 /// AI 聊天历史记录持久化服务。
@@ -11,7 +12,13 @@ class AiChatHistory {
 
   static final String _sep = Platform.pathSeparator;
 
+  /// Tests inject an isolated history directory, including widget autosaves.
+  @visibleForTesting
+  static Directory? directoryOverride;
+
   static Future<String> _historyDir() async {
+    final override = directoryOverride;
+    if (override != null) return override.path;
     final base = await _baseDir();
     return '$base${_sep}ai_history';
   }
@@ -44,14 +51,6 @@ class AiChatHistory {
         'FFmpeg++';
   }
 
-  /// 确保历史目录存在。
-  static Future<void> _ensureDir() async {
-    final dir = Directory(await _historyDir());
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
-    }
-  }
-
   /// 保存一次会话。返回保存的文件路径，失败返回 null。
   ///
   /// 原子写（不再直接覆盖目标文件）：先序列化到内存，再写同目录的
@@ -75,11 +74,12 @@ class AiChatHistory {
     final ts = DateTime.now().millisecondsSinceEpoch;
     File? tmp;
     try {
-      await _ensureDir();
-      final dir = await _historyDir();
+      // Capture the directory once so an in-flight save keeps its destination.
+      final dir = Directory(await _historyDir());
+      if (!await dir.exists()) await dir.create(recursive: true);
       final file = filePath != null && filePath.isNotEmpty
           ? File(filePath)
-          : File('$dir${_sep}session_$ts.json');
+          : File('${dir.path}${_sep}session_$ts.json');
       final data = {
         'title': title,
         'provider': provider,
@@ -186,6 +186,10 @@ class AiChatHistory {
             parser.add(chunk);
           }
           final summary = parser.finish();
+          if (_isDiagnosticFixture(summary) &&
+              await _hasDiagnosticMessages(f)) {
+            continue;
+          }
           summary['_file'] = f.path;
           result.add(summary);
         } catch (_) {}
@@ -193,6 +197,56 @@ class AiChatHistory {
       return (isCancelled?.call() ?? false) ? [] : result;
     } catch (_) {
       return [];
+    }
+  }
+
+  // Metadata is only a candidate signature; verify the seeded messages too.
+  // Keep the legacy title typo compatible without matching custom PRIVATE_* names.
+  static bool _isDiagnosticFixture(Map<String, dynamic> summary) {
+    final title = summary['title'];
+    return (title == 'PRIVATE_HISTORY' || title == 'PRIVITE_HISTORY') &&
+        summary['provider'] == 'PRIVATE_PROVIDER' &&
+        summary['model'] == 'PRIVATE_MODEL';
+  }
+
+  static Future<bool> _hasDiagnosticMessages(File file) async {
+    try {
+      // The diagnostic fixture is small. Bound candidate reads too, so a large
+      // user conversation with identical metadata stays visible and lightweight.
+      const maxFixtureBytes = 64 * 1024;
+      final bytes = await file.openRead(0, maxFixtureBytes + 1).fold<List<int>>(
+        <int>[],
+        (bytes, chunk) => bytes..addAll(chunk),
+      );
+      if (bytes.length > maxFixtureBytes) return false;
+      final data = jsonDecode(utf8.decode(bytes));
+      if (data is! Map) return false;
+      final messages = data['messages'];
+      if (messages is! List || messages.length < 2) return false;
+      final user = messages[0];
+      final assistant = messages[1];
+      if (user is! Map ||
+          user['role'] != 'user' ||
+          user['content'] != 'PRIVATE_HISTORY' ||
+          assistant is! Map ||
+          assistant['role'] != 'assistant' ||
+          assistant['content'] != 'PRIVATE_ANSWER') {
+        return false;
+      }
+      final blocks = user['blocks'];
+      return blocks is List &&
+          blocks.length == 1 &&
+          blocks.single is Map &&
+          mapEquals(blocks.single, const {
+            'type': 'attachment',
+            'name': 'PRIVATE_FILE',
+            'path': 'PRIVATE_PATH',
+            'size': 12,
+            'mimeType': 'application/octet-stream',
+          });
+    } catch (_) {
+      // An uncertain match must not hide a user's history entry.
+      return false;
     }
   }
 
@@ -243,7 +297,12 @@ class _SessionSummaryParser {
   // Bound damaged/hand-edited keys and metadata independently of body size.
   static const _maxFieldChars = 8 * 1024;
   static const _keys = {
-    'title', 'provider', 'model', 'saved_at', 'total_in', 'total_out',
+    'title',
+    'provider',
+    'model',
+    'saved_at',
+    'total_in',
+    'total_out',
   };
   final _summary = <String, dynamic>{};
   final _containers = <int>[];
@@ -286,7 +345,8 @@ class _SessionSummaryParser {
         }
         if (c == 58 && _readingKey) {
           final key = jsonDecode(_field.toString());
-          if (key is! String) throw const FormatException('Invalid history key');
+          if (key is! String)
+            throw const FormatException('Invalid history key');
           _readingKey = false;
           _keepValue = _keys.contains(key);
           if (_keepValue) {
@@ -338,8 +398,8 @@ class _SessionSummaryParser {
     } else {
       if (!_hasValue) throw const FormatException('Missing history value');
       if (_keepValue) {
-        final value = jsonDecode('{${_field.toString()}}')
-            as Map<String, dynamic>;
+        final value =
+            jsonDecode('{${_field.toString()}}') as Map<String, dynamic>;
         for (final entry in value.entries) {
           final numeric = entry.key == 'total_in' || entry.key == 'total_out';
           if (numeric ? entry.value is num : entry.value is String) {

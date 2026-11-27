@@ -24,6 +24,7 @@ import '../widgets/app_dropdown.dart';
 import '../widgets/app_slider.dart';
 import '../widgets/desktop_resize_scope.dart';
 import '../widgets/gate_symbol_painter.dart';
+import '../widgets/node_category_filter.dart';
 import '../widgets/node_icons.dart';
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
 import '../widgets/step_editors/audio_convert_step_editor.dart';
@@ -148,10 +149,9 @@ class PanelWindowStore extends ChangeNotifier {
 
   /// 向主窗口报到并取首份快照。
   Future<void> bootstrap() async {
-    final snap = await send(
-      PanelMethod.ready,
-      <String, dynamic>{'panel': args.panel.id},
-    );
+    final snap = await send(PanelMethod.ready, <String, dynamic>{
+      'panel': args.panel.id,
+    });
     if (snap is Map) hydrate(Map<String, dynamic>.from(snap));
     _ready = true;
     notifyListeners();
@@ -289,12 +289,11 @@ class PanelWindowStore extends ChangeNotifier {
   ///
   /// AI 面板的对话必须跟着回去：本窗口一销毁，_AiPanelViewState 里的消息就没了，
   /// 而主窗口的抽屉会重新挂载，只能靠这份消息把对话续上。
-  Future<void> dockBack() =>
-      send(PanelMethod.dockBack, <String, dynamic>{
-        'panel': args.panel.id,
-        if (args.panel == DetachedPanel.ai)
-          'messages': aiApi?.exportMessages() ?? aiSeed,
-      });
+  Future<void> dockBack() => send(PanelMethod.dockBack, <String, dynamic>{
+    'panel': args.panel.id,
+    if (args.panel == DetachedPanel.ai)
+      'messages': aiApi?.exportMessages() ?? aiSeed,
+  });
 
   /// 某个节点的参数变了（编辑器是**原地改 map** 的，所以直接整份回传）。
   Future<void> pushParams(PipelineNode node) => send(
@@ -314,11 +313,10 @@ class PanelWindowStore extends ChangeNotifier {
   }
 
   /// Asks the host to add a logic gate; its connections remain canvas actions.
-  Future<void> addGate(LogicGateType gate) =>
-      send(PanelMethod.graphAddGate, <String, dynamic>{
-        'gate': gate.name,
-        'nodeId': const Uuid().v4(),
-      });
+  Future<void> addGate(LogicGateType gate) => send(
+    PanelMethod.graphAddGate,
+    <String, dynamic>{'gate': gate.name, 'nodeId': const Uuid().v4()},
+  );
 }
 
 /// 由 main.dart 在检测到「本进程是面板窗口」时调用。
@@ -706,7 +704,8 @@ class _DetachedNodeToolboxState extends State<DetachedNodeToolbox> {
         _ => NodePickerCategory.video,
       };
       final chosenCategory = _category;
-      final category = chosenCategory != null && categories.contains(chosenCategory)
+      final category =
+          chosenCategory != null && categories.contains(chosenCategory)
           ? chosenCategory
           : sourceCategory;
       final query = _search.text.trim().toLowerCase();
@@ -722,37 +721,37 @@ class _DetachedNodeToolboxState extends State<DetachedNodeToolbox> {
         usageCounts: store.config.nodeUsageCount,
       );
       final gatesByName = LogicGateType.values.asNameMap();
-      final gates = <LogicGateType>{
-        if (category == NodePickerCategory.control)
-          for (final entry in store.toolbox)
-            if (entry['kind'] == 'gate')
-              if (gatesByName[entry['gateType']] case final gate?)
-                if (query.isEmpty ||
-                    '${gate.name} ${gate.symbol(true)} ${gate.symbol(false)}'
-                        .toLowerCase().contains(query))
-                  gate,
-      }.toList()..sort((a, b) => compareNodePickerEntries(
-        a.name, b.name,
-        keyA: nodePickerGateUsageKey(a.name),
-        keyB: nodePickerGateUsageKey(b.name),
-        sort: _sort,
-        usageCounts: store.config.nodeUsageCount,
-      ));
+      final gates =
+          <LogicGateType>{
+            if (category == NodePickerCategory.control)
+              for (final entry in store.toolbox)
+                if (entry['kind'] == 'gate')
+                  if (gatesByName[entry['gateType']] case final gate?)
+                    if (query.isEmpty ||
+                        '${gate.name} ${gate.symbol(true)} ${gate.symbol(false)}'
+                            .toLowerCase()
+                            .contains(query))
+                      gate,
+          }.toList()..sort(
+            (a, b) => compareNodePickerEntries(
+              a.name,
+              b.name,
+              keyA: nodePickerGateUsageKey(a.name),
+              keyB: nodePickerGateUsageKey(b.name),
+              sort: _sort,
+              usageCounts: store.config.nodeUsageCount,
+            ),
+          );
       final favourites = store.config.favoriteNodeTypes.toSet();
       final pinned = types.where((type) => favourites.contains(type.name));
       final others = types.where((type) => !favourites.contains(type.name));
       final listLayout = store.config.nodeEditorElementLayout == 'list';
-      final categoryDropdown = AppDropdown<NodePickerCategory>(
+      final categoryFilter = NodeCategoryFilter(
         key: const ValueKey('detached-node-category'),
-        label: s.isZh ? '类型' : 'Category',
+        categories: categories,
         value: category,
-        items: [
-          for (final option in categories)
-            AppDropdownItem(
-              option,
-              nodePickerCategoryLabel(option, isZh: s.isZh),
-            ),
-        ],
+        isZh: s.isZh,
+        keyPrefix: 'detached-node-category',
         onChanged: (value) {
           if (value == category) return;
           setState(() {
@@ -770,10 +769,7 @@ class _DetachedNodeToolboxState extends State<DetachedNodeToolbox> {
             NodePickerSort.name,
             s.isZh ? '名称 A–Z（英文名）' : 'Name A–Z',
           ),
-          AppDropdownItem(
-            NodePickerSort.usage,
-            s.isZh ? '使用频次' : 'Most used',
-          ),
+          AppDropdownItem(NodePickerSort.usage, s.isZh ? '使用频次' : 'Most used'),
         ],
         onChanged: (value) => setState(() => _sort = value),
       );
@@ -783,29 +779,9 @@ class _DetachedNodeToolboxState extends State<DetachedNodeToolbox> {
         primary: false,
         padding: const EdgeInsets.all(8),
         children: [
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
-              if (constraints.maxWidth < 315 * textScale) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    categoryDropdown,
-                    const SizedBox(height: 8),
-                    sortDropdown,
-                  ],
-                );
-              }
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: categoryDropdown),
-                  const SizedBox(width: 8),
-                  Expanded(child: sortDropdown),
-                ],
-              );
-            },
-          ),
+          categoryFilter,
+          const SizedBox(height: 8),
+          sortDropdown,
           const SizedBox(height: 8),
           TextField(
             key: const ValueKey('detached-node-query'),
@@ -841,7 +817,9 @@ class _DetachedNodeToolboxState extends State<DetachedNodeToolbox> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
               child: Text(
-                s.isZh ? '此类型中没有匹配的元素' : 'No matching elements in this category',
+                s.isZh
+                    ? '此类型中没有匹配的元素'
+                    : 'No matching elements in this category',
                 style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
               ),
             ),
@@ -1030,7 +1008,10 @@ class _PropsWindowState extends State<_PropsWindow> {
                       );
                       return Column(
                         children: [
-                          SizedBox(height: topH, child: DetachedNodeToolbox(store: store)),
+                          SizedBox(
+                            height: topH,
+                            child: DetachedNodeToolbox(store: store),
+                          ),
                           MouseRegion(
                             cursor: SystemMouseCursors.resizeRow,
                             child: GestureDetector(
@@ -1161,30 +1142,57 @@ Widget _buildDetachedConditionGate(
   bool isZh,
 ) {
   final gate = node.gate!;
-  final probability = ((node.params['probability'] as num?)?.toDouble() ?? 50).clamp(0, 100).toDouble();
+  final probability = ((node.params['probability'] as num?)?.toDouble() ?? 50)
+      .clamp(0, 100)
+      .toDouble();
   final label = switch (gate) {
     LogicGateType.random => isZh ? '命中概率 (%)' : 'Probability (%)',
     LogicGateType.filenameMatch => isZh ? '文本包含' : 'Text contains',
     LogicGateType.extensionMatch => isZh ? '文本后缀' : 'Text suffix',
     _ => '',
   };
-  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    Text(label, style: Theme.of(context).textTheme.labelMedium),
-    if (gate == LogicGateType.random)
-      AppSlider(value: probability, min: 0, max: 100, divisions: 100,
-        onChanged: (value) { node.params['probability'] = value; store.pushParams(node); })
-    else ...[
-      TextFormField(initialValue: node.params['text'] as String? ?? '',
-        decoration: InputDecoration(hintText: isZh ? '待测文本' : 'Text to test'),
-        onChanged: (value) { node.params['text'] = value; store.pushParams(node); }),
-      TextFormField(initialValue: node.params['pattern'] as String? ?? '',
-        decoration: InputDecoration(hintText: isZh ? '匹配文本' : 'Match pattern'),
-        onChanged: (value) { node.params['pattern'] = value; store.pushParams(node); }),
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: Theme.of(context).textTheme.labelMedium),
+      if (gate == LogicGateType.random)
+        AppSlider(
+          value: probability,
+          min: 0,
+          max: 100,
+          divisions: 100,
+          onChanged: (value) {
+            node.params['probability'] = value;
+            store.pushParams(node);
+          },
+        )
+      else ...[
+        TextFormField(
+          initialValue: node.params['text'] as String? ?? '',
+          decoration: InputDecoration(hintText: isZh ? '待测文本' : 'Text to test'),
+          onChanged: (value) {
+            node.params['text'] = value;
+            store.pushParams(node);
+          },
+        ),
+        TextFormField(
+          initialValue: node.params['pattern'] as String? ?? '',
+          decoration: InputDecoration(
+            hintText: isZh ? '匹配文本' : 'Match pattern',
+          ),
+          onChanged: (value) {
+            node.params['pattern'] = value;
+            store.pushParams(node);
+          },
+        ),
+      ],
+      const SizedBox(height: 6),
+      Text(
+        isZh ? '连接到步骤的使能端' : 'Connect to a step enable input',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
     ],
-    const SizedBox(height: 6),
-    Text(isZh ? '连接到步骤的使能端' : 'Connect to a step enable input',
-      style: Theme.of(context).textTheme.bodySmall),
-  ]);
+  );
 }
 
 Widget buildDetachedNodeEditor(PanelWindowStore store, PipelineNode node) {
@@ -1908,9 +1916,21 @@ Widget _buildDetachedGateInfo(
           : 'Outputs 1 while the system clock is inside the configured window',
       const [],
     ),
-    LogicGateType.random => (zh ? '随机门' : 'Random Gate', zh ? '按概率输出' : 'Outputs according to configured probability', const []),
-    LogicGateType.filenameMatch => (zh ? '文本包含' : 'Text Contains', zh ? '待测文本包含匹配文本时输出 1' : 'Outputs 1 when text contains the pattern', const []),
-    LogicGateType.extensionMatch => (zh ? '文本后缀' : 'Text Suffix', zh ? '待测文本以匹配文本结尾时输出 1' : 'Outputs 1 when text ends with the pattern', const []),
+    LogicGateType.random => (
+      zh ? '随机门' : 'Random Gate',
+      zh ? '按概率输出' : 'Outputs according to configured probability',
+      const [],
+    ),
+    LogicGateType.filenameMatch => (
+      zh ? '文本包含' : 'Text Contains',
+      zh ? '待测文本包含匹配文本时输出 1' : 'Outputs 1 when text contains the pattern',
+      const [],
+    ),
+    LogicGateType.extensionMatch => (
+      zh ? '文本后缀' : 'Text Suffix',
+      zh ? '待测文本以匹配文本结尾时输出 1' : 'Outputs 1 when text ends with the pattern',
+      const [],
+    ),
   };
 
   return SingleChildScrollView(

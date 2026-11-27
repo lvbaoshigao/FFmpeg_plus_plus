@@ -35,123 +35,143 @@ class _HistoryDirectory implements Directory {
 }
 
 void main() {
-  test('saveSession overwrites the same file for incremental autosave', () async {
-    final dir = await Directory.systemTemp.createTemp('ai_history_');
-    addTearDown(() => dir.delete(recursive: true));
-    final file = File('${dir.path}/session.json');
-    final first = await AiChatHistory.saveSession(
-      title: 'First',
-      provider: 'openai',
-      model: 'gpt-4o',
-      messages: const [
-        {'role': 'user', 'content': 'one'},
-      ],
-      filePath: file.path,
-    );
-    final second = await AiChatHistory.saveSession(
-      title: 'First',
-      provider: 'openai',
-      model: 'gpt-4o',
-      messages: const [
-        {'role': 'user', 'content': 'one'},
-        {'role': 'assistant', 'content': 'two'},
-      ],
-      filePath: file.path,
-    );
-    expect(first, file.path);
-    expect(second, file.path);
-    final decoded = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-    expect((decoded['messages'] as List).length, 2);
-  });
+  test(
+    'saveSession overwrites the same file for incremental autosave',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('ai_history_');
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File('${dir.path}/session.json');
+      final first = await AiChatHistory.saveSession(
+        title: 'First',
+        provider: 'openai',
+        model: 'gpt-4o',
+        messages: const [
+          {'role': 'user', 'content': 'one'},
+        ],
+        filePath: file.path,
+      );
+      final second = await AiChatHistory.saveSession(
+        title: 'First',
+        provider: 'openai',
+        model: 'gpt-4o',
+        messages: const [
+          {'role': 'user', 'content': 'one'},
+          {'role': 'assistant', 'content': 'two'},
+        ],
+        filePath: file.path,
+      );
+      expect(first, file.path);
+      expect(second, file.path);
+      final decoded =
+          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      expect((decoded['messages'] as List).length, 2);
+    },
+  );
 
-  test('listing streams large old bodies and returns only scalar summaries', () async {
-    var chunksRead = 0;
-    final bodyChunk = utf8.encode('x' * (64 * 1024));
-    final file = _StreamOnlyFile('history/session_2.json', () async* {
-      // Old files may put metadata after messages. Nested misleading metadata
-      // and escaped braces/quotes must not become summary fields.
-      yield utf8.encode('{"messages":[{"role":"assistant","content":"');
-      for (var i = 0; i < 256; i++) {
-        chunksRead++;
-        yield bodyChunk;
-      }
-      final blocks = jsonEncode([{'title': 'nested', 'text': r'} \" ['}]);
-      yield utf8.encode('","blocks":$blocks}],');
-      final metadata = jsonEncode({
+  test(
+    'listing streams large old bodies and returns only scalar summaries',
+    () async {
+      var chunksRead = 0;
+      final bodyChunk = utf8.encode('x' * (64 * 1024));
+      final file = _StreamOnlyFile('history/session_2.json', () async* {
+        // Old files may put metadata after messages. Nested misleading metadata
+        // and escaped braces/quotes must not become summary fields.
+        yield utf8.encode('{"messages":[{"role":"assistant","content":"');
+        for (var i = 0; i < 256; i++) {
+          chunksRead++;
+          yield bodyChunk;
+        }
+        final blocks = jsonEncode([
+          {'title': 'nested', 'text': r'} \" ['},
+        ]);
+        yield utf8.encode('","blocks":$blocks}],');
+        final metadata = jsonEncode({
+          'title': r'旧会话 "标题" \ path',
+          'provider': 'openai',
+          'model': 'model-a',
+          'saved_at': '2026-01-02T03:04:05',
+          'total_in': 123,
+          'total_out': 456,
+        });
+        // Split UTF-8 code points and JSON escapes across stream chunks.
+        for (final byte in utf8.encode(metadata.substring(1))) {
+          yield [byte];
+        }
+      });
+      final sessions = await AiChatHistory.listSessions(
+        directory: _HistoryDirectory([file]),
+      );
+      expect(chunksRead, 256); // 16 MiB body without any full-file read API.
+      expect(sessions, hasLength(1));
+      expect(sessions.single, {
         'title': r'旧会话 "标题" \ path',
         'provider': 'openai',
         'model': 'model-a',
         'saved_at': '2026-01-02T03:04:05',
         'total_in': 123,
         'total_out': 456,
+        '_file': file.path,
       });
-      // Split UTF-8 code points and JSON escapes across stream chunks.
-      for (final byte in utf8.encode(metadata.substring(1))) {
-        yield [byte];
-      }
-    });
-    final sessions = await AiChatHistory.listSessions(
-      directory: _HistoryDirectory([file]),
-    );
-    expect(chunksRead, 256); // 16 MiB body without any full-file read API.
-    expect(sessions, hasLength(1));
-    expect(sessions.single, {
-      'title': r'旧会话 "标题" \ path',
-      'provider': 'openai',
-      'model': 'model-a',
-      'saved_at': '2026-01-02T03:04:05',
-      'total_in': 123,
-      'total_out': 456,
-      '_file': file.path,
-    });
-    expect(jsonEncode(sessions).length, lessThan(512));
-  });
+      expect(jsonEncode(sessions).length, lessThan(512));
+    },
+  );
 
-  test('listing skips temporary and truncated files and sorts newest first', () async {
-    File session(String name, String json) => _StreamOnlyFile(
-      'history/$name', () => Stream.value(utf8.encode(json)),
-    );
-    final sessions = await AiChatHistory.listSessions(
-      directory: _HistoryDirectory([
-        session('session_1.json', '{"title":"old","messages":[]}'),
-        session('session_3.json', '{"messages":[],"title":"new"}'),
-        session('session_4.json.tmp', '{"title":"temporary"}'),
-        session('session_5.json.bak', '{"title":"backup"}'),
-        session('session_6.json', '{"title":"broken","messages":['),
-        session('session_7.json', '{"messages":[}'),
-      ]),
-    );
-    expect(sessions.map((entry) => entry['title']), ['new', 'old']);
-    expect(sessions.every((entry) => !entry.containsKey('messages')), isTrue);
-  });
+  test(
+    'listing skips temporary and truncated files and sorts newest first',
+    () async {
+      File session(String name, String json) => _StreamOnlyFile(
+        'history/$name',
+        () => Stream.value(utf8.encode(json)),
+      );
+      final sessions = await AiChatHistory.listSessions(
+        directory: _HistoryDirectory([
+          session('session_1.json', '{"title":"old","messages":[]}'),
+          session('session_3.json', '{"messages":[],"title":"new"}'),
+          session('session_4.json.tmp', '{"title":"temporary"}'),
+          session('session_5.json.bak', '{"title":"backup"}'),
+          session('session_6.json', '{"title":"broken","messages":['),
+          session('session_7.json', '{"messages":[}'),
+        ]),
+      );
+      expect(sessions.map((entry) => entry['title']), ['new', 'old']);
+      expect(sessions.every((entry) => !entry.containsKey('messages')), isTrue);
+    },
+  );
 
-  test('cancelling a listing closes the stream and discards partial results', () async {
-    var cancelled = false;
-    var closed = false;
-    var chunksRead = 0;
-    final file = _StreamOnlyFile('history/session.json', () async* {
-      try {
-        chunksRead++;
-        yield utf8.encode('{"title":"old","messages":[');
-        cancelled = true;
-        chunksRead++;
-        yield utf8.encode(']}');
-        fail('The cancelled file stream must not be drained');
-      } finally {
-        closed = true;
-      }
-    });
-    expect(await AiChatHistory.listSessions(
-      directory: _HistoryDirectory([file]),
-      isCancelled: () => cancelled,
-    ), isEmpty);
-    expect(chunksRead, 2);
-    expect(closed, isTrue);
-  });
+  test(
+    'cancelling a listing closes the stream and discards partial results',
+    () async {
+      var cancelled = false;
+      var closed = false;
+      var chunksRead = 0;
+      final file = _StreamOnlyFile('history/session.json', () async* {
+        try {
+          chunksRead++;
+          yield utf8.encode('{"title":"old","messages":[');
+          cancelled = true;
+          chunksRead++;
+          yield utf8.encode(']}');
+          fail('The cancelled file stream must not be drained');
+        } finally {
+          closed = true;
+        }
+      });
+      expect(
+        await AiChatHistory.listSessions(
+          directory: _HistoryDirectory([file]),
+          isCancelled: () => cancelled,
+        ),
+        isEmpty,
+      );
+      expect(chunksRead, 2);
+      expect(closed, isTrue);
+    },
+  );
 
   test('oversized metadata and keys cannot grow a summary buffer', () async {
     File session(String name, String text) => _StreamOnlyFile(
-      'history/$name.json', () => Stream.value(utf8.encode(text)),
+      'history/$name.json',
+      () => Stream.value(utf8.encode(text)),
     );
     final sessions = await AiChatHistory.listSessions(
       directory: _HistoryDirectory([
@@ -163,20 +183,127 @@ void main() {
     expect(sessions.map((entry) => entry['title']), ['valid']);
   });
 
-  test('loadSession keeps messages, blocks and cumulative tokens on demand', () async {
-    final dir = await Directory.systemTemp.createTemp('ai_history_load_');
-    addTearDown(() => dir.delete(recursive: true));
-    final file = File('${dir.path}/session.json');
-    final data = {
-      'title': 'Saved', 'provider': 'openai', 'model': 'model-a',
-      'total_in': 901, 'total_out': 902,
-      'messages': [
-        {'role': 'assistant', 'content': 'answer', 'in': 1, 'out': 2,
-          'blocks': [{'type': 'thinking', 'thinking': 'reasoning'}]},
-      ],
-    };
-    await file.writeAsString(jsonEncode(data));
-    expect(await AiChatHistory.loadSession(file.path), {...data, '_file': file.path});
-    expect(await AiChatHistory.loadSession('${dir.path}/missing.json'), isNull);
-  });
+  test(
+    'listing hides only diagnostic sentinel combinations and preserves files',
+    () async {
+      final directory = AiChatHistory.directoryOverride!;
+      final records = <Map<String, dynamic>>[
+        {
+          'title': 'PRIVATE_HISTORY',
+          'provider': 'PRIVATE_PROVIDER',
+          'model': 'PRIVATE_MODEL',
+        },
+        {
+          'title': 'PRIVITE_HISTORY',
+          'provider': 'PRIVATE_PROVIDER',
+          'model': 'PRIVATE_MODEL',
+        },
+        {'title': 'PRIVATE_HISTORY', 'provider': 'openai', 'model': 'gpt-4o'},
+        {'title': 'PRIVITE_HISTORY', 'provider': 'openai', 'model': 'gpt-4o'},
+        {
+          'title': 'PRIVATE_NOTES',
+          'provider': 'PRIVATE_PROVIDER',
+          'model': 'PRIVATE_MODEL',
+        },
+        {
+          'title': 'PRIVATE_HISTORY',
+          'provider': 'openai',
+          'model': 'PRIVATE_MODEL',
+        },
+        {
+          'title': 'PRIVATE_HISTORY',
+          'provider': 'PRIVATE_PROVIDER',
+          'model': 'gpt-4o',
+        },
+        {
+          'title': 'PRIVATE_HISTORY notes',
+          'provider': 'PRIVATE_PROVIDER',
+          'model': 'PRIVATE_MODEL',
+        },
+        {
+          'title': 'private_history',
+          'provider': 'PRIVATE_PROVIDER',
+          'model': 'PRIVATE_MODEL',
+        },
+        {'title': 'PRIVATE_HISTORY', 'provider': 'PRIVATE_PROVIDER'},
+        {'title': 'PRIVATE_HISTORY', 'model': 'PRIVATE_MODEL'},
+      ];
+      final originalFiles = <String, String>{};
+      for (var index = 0; index < records.length; index++) {
+        final file = File('${directory.path}/session_$index.json');
+        final text = jsonEncode({
+          ...records[index],
+          // Seeded messages from ai_diagnostic_trace_test.dart; metadata alone
+          // is insufficient to identify a polluted session.
+          'messages': [
+            {
+              'role': 'user',
+              'content': 'PRIVATE_HISTORY',
+              'blocks': [
+                {
+                  'type': 'attachment',
+                  'name': 'PRIVATE_FILE',
+                  'path': 'PRIVATE_PATH',
+                  'size': 12,
+                  'mimeType': 'application/octet-stream',
+                },
+              ],
+            },
+            {'role': 'assistant', 'content': 'PRIVATE_ANSWER'},
+          ],
+        });
+        await file.writeAsString(text);
+        originalFiles[file.path] = text;
+      }
+
+      final summaries = await AiChatHistory.listSessions();
+      expect(
+        summaries.map((summary) => summary['_file']),
+        unorderedEquals(originalFiles.keys.skip(2)),
+      );
+      for (final entry in originalFiles.entries) {
+        expect(await File(entry.key).readAsString(), entry.value);
+        expect(await AiChatHistory.loadSession(entry.key), {
+          ...jsonDecode(entry.value) as Map<String, dynamic>,
+          '_file': entry.key,
+        });
+      }
+    },
+  );
+
+  test(
+    'loadSession keeps messages, blocks and cumulative tokens on demand',
+    () async {
+      final dir = await Directory.systemTemp.createTemp('ai_history_load_');
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File('${dir.path}/session.json');
+      final data = {
+        'title': 'Saved',
+        'provider': 'openai',
+        'model': 'model-a',
+        'total_in': 901,
+        'total_out': 902,
+        'messages': [
+          {
+            'role': 'assistant',
+            'content': 'answer',
+            'in': 1,
+            'out': 2,
+            'blocks': [
+              {'type': 'thinking', 'thinking': 'reasoning'},
+            ],
+          },
+        ],
+      };
+      await file.writeAsString(jsonEncode(data));
+      expect(await AiChatHistory.loadSession(file.path), {
+        ...data,
+        '_file': file.path,
+      });
+      expect(
+        await AiChatHistory.loadSession('${dir.path}/missing.json'),
+        isNull,
+      );
+    },
+  );
 }

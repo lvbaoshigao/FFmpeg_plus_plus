@@ -6,8 +6,8 @@ import 'package:ffmpegpp_gui/pages/detached_window_page.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
 import 'package:ffmpegpp_gui/services/multi_window.dart';
 import 'package:ffmpegpp_gui/theme/app_theme.dart';
-import 'package:ffmpegpp_gui/widgets/app_dropdown.dart';
 import 'package:ffmpegpp_gui/widgets/app_slider.dart';
+import 'package:ffmpegpp_gui/widgets/node_category_filter.dart';
 import 'package:ffmpegpp_gui/widgets/option_menu_bar.dart';
 import 'package:ffmpegpp_gui/widgets/step_editors/audio_equalizer_step_editor.dart';
 import 'package:ffmpegpp_gui/widgets/step_editors/audio_reverse_step_editor.dart';
@@ -126,11 +126,11 @@ void main() {
         tester.getTopLeft(_item(PipelineStepType.audioEqualizer)).dy,
         lessThan(tester.getTopLeft(_item(PipelineStepType.audioWaveform)).dy),
       );
-      final category = tester.widget<AppDropdown<NodePickerCategory>>(
+      final category = tester.widget<NodeCategoryFilter>(
         find.byKey(const ValueKey('detached-node-category')),
       );
       expect(
-        category.items.map((item) => item.value),
+        category.categories,
         isNot(contains(NodePickerCategory.container)),
       );
       await _choose<NodePickerSort>(tester, 'detached-node-sort', 'Most used');
@@ -146,11 +146,10 @@ void main() {
       expect(_item(PipelineStepType.audioReverse), findsOneWidget);
       expect(_item(PipelineStepType.audioSpectrum), findsNothing);
       expect(_item(PipelineStepType.videoReverse), findsNothing);
-      await _choose<NodePickerCategory>(
-        tester,
-        'detached-node-category',
-        'Video',
+      await tester.tap(
+        find.byKey(const ValueKey('detached-node-category-video')),
       );
+      await tester.pumpAndSettle();
       expect(
         tester
             .widget<TextField>(
@@ -195,11 +194,10 @@ void main() {
           usageCounts: {'gate:or': 20, 'gate:and': 1},
         );
         await _mount(tester, store, DetachedNodeToolbox(store: store));
-        await _choose<NodePickerCategory>(
-          tester,
-          'detached-node-category',
-          'Control & logic',
+        await tester.tap(
+          find.byKey(const ValueKey('detached-node-category-control')),
         );
+        await tester.pumpAndSettle();
         final gate = find.byKey(const ValueKey('detached-gate-and'));
         expect(gate, findsOneWidget);
         final orGate = find.byKey(const ValueKey('detached-gate-or'));
