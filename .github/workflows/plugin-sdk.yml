@@ -1,0 +1,45 @@
+name: Plugin SDK and Runtime
+
+on:
+  push:
+    paths:
+      - 'plugin_sdk/**'
+      - 'server_cpp/**'
+      - 'ffmpegpp_gui/assets/plugin_sdk/**'
+      - 'docs/public/examples/**'
+      - '.github/workflows/plugin-sdk.yml'
+  pull_request:
+    paths:
+      - 'plugin_sdk/**'
+      - 'server_cpp/**'
+      - 'ffmpegpp_gui/assets/plugin_sdk/**'
+      - 'docs/public/examples/**'
+      - '.github/workflows/plugin-sdk.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: plugin-sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sdk-and-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install build and media tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld cmake ninja-build ffmpeg
+      - name: Verify embedded SDK assets
+        run: python3 plugin_sdk/tools/sync_assets.py --check
+      - name: Compile and test SDK examples and helpers
+        run: python3 -m unittest discover -s plugin_sdk/tests -p 'test_*.py' -v
+      - name: Configure native plugin tests
+        run: cmake -S server_cpp -B /tmp/ffmpegpp-plugin-sdk -G Ninja -DCMAKE_BUILD_TYPE=Debug -DFFMPEGPP_BUILD_TESTS=ON
+      - name: Build native plugin tests
+        run: cmake --build /tmp/ffmpegpp-plugin-sdk --parallel 2
+      - name: Test native plugin execution
+        run: ctest --test-dir /tmp/ffmpegpp-plugin-sdk --output-on-failure
+      - name: Test compiled SDK nodes through WAMR and FFmpeg
+        run: python3 plugin_sdk/tests/native_integration.py --library /tmp/ffmpegpp-plugin-sdk/libffmpegpp.so --ffmpeg /usr/bin/ffmpeg

@@ -28,6 +28,8 @@ The interface uses **Flutter** and Material Design 3. A **C++17** shared library
 native backend through Dart FFI. **FFmpeg** performs media processing, while **ffprobe**
 provides media information.
 
+The experimental plugin system can package C/C++ node logic as constrained WebAssembly modules; the host validates and schedules their supported media operations. See the [plugin developer guide](docs/plugins/index.md).
+
 ### Use cases
 
 - **Parameter configuration**: configure filters, encoders, stream mapping, and subtitle burn-in

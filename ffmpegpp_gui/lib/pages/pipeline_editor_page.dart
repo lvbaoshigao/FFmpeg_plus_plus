@@ -67,6 +67,7 @@ import '../widgets/mobile_top_bar.dart';
 import '../widgets/mobile_ui.dart';
 // 节点图标/配色表：与独立面板窗口共用（见该文件顶部说明）
 import '../widgets/node_category_filter.dart';
+import '../widgets/node_editor_chrome.dart';
 import '../widgets/node_icons.dart';
 import '../widgets/option_menu_bar.dart';
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
@@ -150,12 +151,12 @@ const _kMiniMapH = 106.0;
 /// 面板「拖出主界面」= 变为应用内自由浮动的小窗（与 PS 的面板拖出同一种交互）：
 /// 自带标题栏、可最小化、可隐藏、可吸附回主栏。真正脱离应用的独立系统窗口需要
 /// 额外引入多窗口插件（独立引擎 + 跨窗口状态同步），见提交说明。
-const double _kFloatPanelW = 320.0;
-const double _kFloatPanelH = 440.0;
+const double _kFloatPanelW = 360.0;
+const double _kFloatPanelH = 560.0;
 const double _kFloatAiW = 360.0;
 
 /// 最小化后剩下的高度（标题栏 + 外边距）
-const double _kFloatTitleH = 40.0;
+const double _kFloatTitleH = 48.0;
 
 double _nodeWFor(PipelineStepType type) =>
     (type == PipelineStepType.start || type == PipelineStepType.output)
@@ -236,23 +237,45 @@ class EditorPanelLayout {
     required double maxHeight,
     required double elementsFraction,
     required double dividerHeight,
+    bool elementsExpanded = true,
+    bool propertiesExpanded = true,
+    double headerHeight = 44,
+    double minimumExpandedHeight = 140,
   }) {
     final totalHeight = math.max(0.0, maxHeight).toDouble();
-    final visibleDivider =
-        (showDivider ? math.min(dividerHeight, totalHeight) : 0.0).toDouble();
-    final usableHeight = math.max(0.0, totalHeight - visibleDivider).toDouble();
-    if (showDivider) {
-      final fraction = elementsFraction.clamp(0.0, 1.0).toDouble();
+    if (!showDivider) {
       return (
-        elements: usableHeight * fraction,
-        properties: usableHeight * (1 - fraction),
-        divider: visibleDivider,
+        elements: elementsVisible
+            ? (elementsExpanded
+                  ? totalHeight
+                  : math.min(headerHeight, totalHeight))
+            : 0.0,
+        properties: propertiesVisible
+            ? (propertiesExpanded
+                  ? totalHeight
+                  : math.min(headerHeight, totalHeight))
+            : 0.0,
+        divider: 0.0,
       );
     }
+    final header = math.min(headerHeight, totalHeight / 2);
+    if (!elementsExpanded || !propertiesExpanded) {
+      return (
+        elements: !elementsExpanded ? header : totalHeight - header,
+        properties: !propertiesExpanded ? header : totalHeight - header,
+        divider: 0.0,
+      );
+    }
+    final divider = math.min(dividerHeight, totalHeight).toDouble();
+    final usableHeight = math.max(0.0, totalHeight - divider).toDouble();
+    final minimum = math.min(minimumExpandedHeight, usableHeight / 2);
+    final elements = (usableHeight * elementsFraction.clamp(0.0, 1.0))
+        .clamp(minimum, usableHeight - minimum)
+        .toDouble();
     return (
-      elements: elementsVisible ? usableHeight : 0.0,
-      properties: propertiesVisible ? usableHeight : 0.0,
-      divider: 0.0,
+      elements: elements,
+      properties: usableHeight - elements,
+      divider: divider,
     );
   }
 }
@@ -468,6 +491,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   /// 浮动面板左上角（相对画布视口）；null = 拖出时按默认位置摆放。
   Offset? _panelFloatPos;
+  double _panelFloatWidth = _kFloatPanelW;
+  final double _panelFloatHeight = _kFloatPanelH;
+  final GlobalKey _panelViewportKey = GlobalKey(
+    debugLabel: 'editor-panel-viewport',
+  );
+  final GlobalKey _rightPanelKey = GlobalKey(debugLabel: 'editor-right-panel');
 
   /// PC 端 AI 面板：拖出为浮动小窗 / 最小化。
   bool _aiDetached = false;
@@ -513,6 +542,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 小窗标题栏的拖动累计量：元素/属性面板与 AI 面板共用
   /// （同一时刻只可能有一个标题栏在被拖）
   Offset _winDragAccum = Offset.zero;
+  Offset _winDragOrigin = Offset.zero;
 
   /// 移动端属性卡片被手动关闭时记下「当时选中的对象 id」：
   /// 换选别的节点时卡片自动回来，选回同一个对象则保持关闭
@@ -1063,7 +1093,12 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   // ── 节点操作 ──
 
-  String? _addPluginNode(String pluginId, String nodeId, Offset canvasPos, {String? requestedId}) {
+  String? _addPluginNode(
+    String pluginId,
+    String nodeId,
+    Offset canvasPos, {
+    String? requestedId,
+  }) {
     if (!context.read<AppState>().config.pluginsEnabled) return null;
     final catalog = PluginNodeCatalog.instance;
     final manifest = catalog.plugin(pluginId);
@@ -1071,36 +1106,51 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     if (manifest == null || definition == null) return null;
     final existing = _nodes.where((node) => node.id == requestedId).firstOrNull;
     if (existing != null) {
-      return existing.type == PipelineStepType.plugin && existing.pluginId == pluginId &&
-          existing.pluginNodeId == nodeId ? existing.id : null;
+      return existing.type == PipelineStepType.plugin &&
+              existing.pluginId == pluginId &&
+              existing.pluginNodeId == nodeId
+          ? existing.id
+          : null;
     }
     final node = PipelineNode(
-      id: requestedId ?? _uuid.v4(), type: PipelineStepType.plugin,
+      id: requestedId ?? _uuid.v4(),
+      type: PipelineStepType.plugin,
       x: canvasPos.dx - _totalNodeWFor(PipelineStepType.plugin) / 2,
       y: canvasPos.dy - _nodeH / 2,
       params: PipelineNode.pluginParams(
-        pluginId: pluginId, pluginVersion: manifest.version, definition: definition,
+        pluginId: pluginId,
+        pluginVersion: manifest.version,
+        definition: definition,
       ),
     );
     _pushUndo();
     setState(() {
       _nodes.add(node);
-      _selectedNodeIds..clear()..add(node.id);
+      _selectedNodeIds
+        ..clear()
+        ..add(node.id);
       _lastSelectedId = node.id;
       _mobileToolboxOpen = false;
     });
     _commitChange();
     final key = 'plugin:$pluginId/$nodeId';
     context.read<AppState>().updateConfig((config) {
-      config.nodeUsageCount[key] = math.max(0, config.nodeUsageCount[key] ?? 0) + 1;
-      config.recentNodeTypes..remove(key)..insert(0, key);
+      config.nodeUsageCount[key] =
+          math.max(0, config.nodeUsageCount[key] ?? 0) + 1;
+      config.recentNodeTypes
+        ..remove(key)
+        ..insert(0, key);
       if (config.recentNodeTypes.length > AppConfig.recentNodeLimit) {
-        config.recentNodeTypes.removeRange(AppConfig.recentNodeLimit, config.recentNodeTypes.length);
+        config.recentNodeTypes.removeRange(
+          AppConfig.recentNodeLimit,
+          config.recentNodeTypes.length,
+        );
       }
       return config;
     });
     return node.id;
   }
+
   String _addNodeAt(PipelineStepType type, Offset canvasPos) {
     _pushUndo();
     final node = PipelineNode(
@@ -1624,10 +1674,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
     // 数据连线验证
     if (!fromNode.hasOutput || !toNode.hasInput) return;
-    if (toNode.type == PipelineStepType.plugin && _connections.any((connection) =>
-        connection.kind == 'data' && connection.toNodeId == toNode.id)) {
-      showToast(context, zh ? '插件节点 v1 仅支持一个数据输入' : 'Plugin v1 nodes accept one data input',
-        type: ToastType.error);
+    if (toNode.type == PipelineStepType.plugin &&
+        _connections.any(
+          (connection) =>
+              connection.kind == 'data' && connection.toNodeId == toNode.id,
+        )) {
+      showToast(
+        context,
+        zh ? '插件节点 v1 仅支持一个数据输入' : 'Plugin v1 nodes accept one data input',
+        type: ToastType.error,
+      );
       return;
     }
 
@@ -4268,8 +4324,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final s = AppStrings.of(
       context.select<AppState, String>((st) => st.config.language),
     );
-    final (pluginsEnabled, _) = context.select<AppState, (bool, int)>((state) =>
-      (state.config.pluginsEnabled, PluginNodeCatalog.instance.revision));
+    final (pluginsEnabled, _) = context.select<AppState, (bool, int)>(
+      (state) =>
+          (state.config.pluginsEnabled, PluginNodeCatalog.instance.revision),
+    );
     if (!pluginsEnabled && _toolboxCategory == NodePickerCategory.plugin) {
       _toolboxCategory = NodePickerCategory.video;
     }
@@ -4747,12 +4805,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     //    一次就会出现「双重 36px」顶部空白，并把 AI 抽屉/右侧面板的可视高度
     //    压掉 36px。Windows/macOS 用系统标题栏，同样不需要内边距 ——
     //    旧实现里 macOS 也误垫了 36px，这里一并修正。
-    final mobileSafeTop = isMobilePlatform && !_isLandscape
-        ? MediaQuery.paddingOf(context).top
-        : 0.0;
-    final mobileSafeBottom = isMobilePlatform && !_isLandscape
-        ? MediaQuery.paddingOf(context).bottom
-        : 0.0;
+    // Landscape can still report cutouts and gesture insets in immersive mode.
+    // Apply them to chrome only; the canvas keeps the full available width.
+    final mobileSafe = isMobilePlatform
+        ? MediaQuery.paddingOf(context)
+        : EdgeInsets.zero;
+    final mobileSafeTop = mobileSafe.top;
+    final mobileSafeBottom = mobileSafe.bottom;
     final mobileToolbarInset = mobileSafeTop + _mobileToolbarHeight() + 16;
     final content = Padding(
       padding: EdgeInsets.zero,
@@ -4770,6 +4829,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                   // 移动端（横竖屏通用）：画布 + 贴右边界的窄竖直 sidebar，
                   // 元素工具箱与属性面板收纳为右侧边栏，宽度约屏幕 1/2。
                   if (isMobilePlatform) {
+                    final safeWidth = math.max(
+                      0.0,
+                      cons.maxWidth - mobileSafe.horizontal,
+                    );
+                    final zoomScale = _mobileZoomBarScale(safeWidth);
+                    final zoomWidth =
+                        3 * _kMobileZoomBtnBox * math.min(zoomScale, 1.2) +
+                        4 * zoomScale;
                     // 移动端全画布布局：顶部/底部浮动菜单栏，工具箱/属性为弹出层
                     return Stack(
                       children: [
@@ -4777,8 +4844,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         // 顶部浮动菜单栏（默认收起 → 上滑出屏 + 透明；右下角"≡"按钮展开）
                         Positioned(
                           top: mobileSafeTop,
-                          left: 0,
-                          right: 0,
+                          left: mobileSafe.left + 8,
+                          right: mobileSafe.right + 8,
                           child: AnimatedSlide(
                             duration: MediaQuery.disableAnimationsOf(context)
                                 ? Duration.zero
@@ -4799,9 +4866,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                                   child: Center(
                                     child: ConstrainedBox(
                                       constraints: BoxConstraints(
-                                        maxWidth:
-                                            MediaQuery.sizeOf(context).width -
-                                            16,
+                                        maxWidth: math.max(0.0, safeWidth - 16),
                                       ),
                                       child: _buildMobileTopBar(scheme, s),
                                     ),
@@ -4813,31 +4878,38 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         ),
                         // 左下：缩放药丸（唯一保留的底部药丸）
                         Positioned(
-                          left: 8,
+                          left: mobileSafe.left + 8,
                           bottom: mobileSafeBottom + 6,
-                          child: _buildMobileBottomLeftBar(scheme, s),
+                          child: _buildMobileBottomLeftBar(
+                            scheme,
+                            s,
+                            scale: zoomScale,
+                          ),
                         ),
                         // 右下角：节点/文件信息改成**淡文字**，不再占一条药丸，
                         // 也就不会和左下药丸挤在同一行（用户要求「在角落里以淡
                         // 文字显示，不要撞到药丸里」）。
                         Positioned(
-                          right: 12,
+                          right: mobileSafe.right + 12,
                           bottom:
                               mobileSafeBottom +
                               8 +
                               math.max(
                                 0.0,
-                                _kMobileZoomBarHeight *
-                                    (_mobileZoomBarScale() - 1.0),
+                                _kMobileZoomBarHeight * (zoomScale - 1.0),
                               ),
-                          child: _buildMobileFileInfo(scheme, s),
+                          child: _buildMobileFileInfo(
+                            scheme,
+                            s,
+                            maxWidth: math.max(0.0, safeWidth - zoomWidth - 28),
+                          ),
                         ),
                         // 逻辑块框选提示条（用具箱点按「循环」后出现，引导用户手指框选）
                         if (_isLogicBoxSelecting)
                           Positioned(
                             top: mobileToolbarInset,
-                            left: 8,
-                            right: 8,
+                            left: mobileSafe.left + 8,
+                            right: mobileSafe.right + 8,
                             child: Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 12,
@@ -4884,34 +4956,29 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                               ),
                             ),
                           ),
-                        // 工具箱弹出层（点击顶部"+"按钮展开）
+                        // Preserve the selected editor while hiding its window.
+                        if (_selectedNode != null ||
+                            _selectedLogicBlockId != null)
+                          Positioned(
+                            top: mobileToolbarInset,
+                            bottom: 12 + mobileSafeBottom,
+                            left: mobileSafe.left + 8,
+                            right: mobileSafe.right + 8,
+                            child: _buildMobilePropertiesWindow(scheme, s),
+                          ),
                         if (_mobileToolboxOpen)
                           Positioned.fill(
                             child: _buildMobileToolboxSheet(scheme, s),
                           ),
-                        // 属性编辑卡片：停靠右侧的窄卡片，避免整屏宽底部长条的"横屏样式"。
-                        // 宽度再收窄一档（330→300 / 0.78→0.72），菜单栏不至于过宽。
-                        if (_mobilePropsShown)
-                          Positioned(
-                            top: mobileToolbarInset,
-                            bottom: 12 + mobileSafeBottom,
-                            right: 8,
-                            width: math.min(
-                              _isLandscape ? 300.0 : 296.0,
-                              MediaQuery.of(context).size.width *
-                                  (_isLandscape ? 0.40 : 0.72),
-                            ),
-                            child: _buildMobilePropertiesSheet(scheme, s),
-                          ),
                       ],
                     );
                   }
-                  // 横屏/桌面模式：原有的水平并排布局
-                  const dividerW = 6.0;
+                  // Keep one panel host mounted when docking, floating or hiding.
+                  // Narrow desktop windows overlay the panel rather than shrinking
+                  // both the canvas and parameter forms below usable widths.
+                  const dividerW = 12.0;
                   final maxW = cons.maxWidth;
                   final splitW = math.max(0.0, maxW - dividerW);
-                  // 拖动分割线只重建两个 SizedBox 的宽度；画布与右面板作为 child
-                  // 传入（Element 复用），不随拖动重建。
                   return ValueListenableBuilder<double>(
                     valueListenable: _canvasFractionNotifier,
                     builder: (context, fraction, _) {
@@ -4922,61 +4989,226 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         elementsExternal: _elementsExternal,
                         propertiesExternal: _propertiesExternal,
                       );
-                      final panelInSidebar = layout.sidebarVisible;
-                      final canvasW = layout.canvasWidth(
-                        maxWidth: maxW,
-                        canvasFraction: fraction,
-                        dividerWidth: dividerW,
+                      final canDock = maxW >= 720;
+                      final docked = layout.sidebarVisible && canDock;
+                      final compact = _panelMinimized && !_panelDetached;
+                      final maxPanelW = math.min(
+                        620.0,
+                        math.max(320.0, splitW - 360),
                       );
-                      final rightW = layout.sidebarWidth(
-                        maxWidth: maxW,
-                        canvasFraction: fraction,
-                        dividerWidth: dividerW,
+                      // Leave the canvas tool rail reachable beside floating windows.
+                      final floatMaxW = math.max(0.0, maxW - 92);
+                      final dockWidth = compact
+                          ? 52.0
+                          : canDock
+                          ? (splitW * (1 - fraction))
+                                .clamp(320.0, maxPanelW)
+                                .toDouble()
+                          : _panelFloatWidth
+                                .clamp(math.min(320.0, floatMaxW), floatMaxW)
+                                .toDouble();
+                      final canvasW = docked
+                          ? maxW - dockWidth - dividerW
+                          : maxW;
+                      final panelW = _panelDetached
+                          ? _panelFloatWidth
+                                .clamp(math.min(280.0, floatMaxW), floatMaxW)
+                                .toDouble()
+                          : dockWidth;
+                      final overlayTop = !canDock && !_panelDetached
+                          ? math.min(
+                              cons.maxHeight,
+                              MobileUi.contentTopOf(context) +
+                                  MediaQuery.paddingOf(context).top,
+                            )
+                          : 0.0;
+                      final panelH = _panelMinimized
+                          ? (compact ? 144.0 : _kFloatTitleH)
+                          : (_panelDetached
+                                ? math.min(_panelFloatHeight, cons.maxHeight)
+                                : cons.maxHeight - overlayTop);
+                      final floatPos = _clampFloatTo(
+                        _panelFloatPos ??
+                            Offset(math.max(0, maxW - panelW - 92), 24),
+                        Size(math.max(0, maxW - 76), cons.maxHeight),
+                        panelW,
+                        height: panelH,
                       );
-                      return Row(
+                      final hasPanel =
+                          !_panelExternal &&
+                          (layout.elementsVisible || layout.propertiesVisible);
+                      return Stack(
+                        key: _panelViewportKey,
                         children: [
-                          SizedBox(
+                          Positioned(
+                            left: 0,
+                            top: 0,
+                            bottom: 0,
                             width: canvasW,
-                            child: _buildCanvas(scheme, s),
+                            child: _buildCanvas(
+                              scheme,
+                              s,
+                              controlsRightInset:
+                                  !canDock &&
+                                      !_panelHidden &&
+                                      !_panelDetached &&
+                                      !_panelExternal &&
+                                      (layout.elementsVisible ||
+                                          layout.propertiesVisible)
+                                  ? dockWidth + 20
+                                  : 10,
+                            ),
                           ),
-                          if (panelInSidebar) ...[
-                            // 可拖动分割线
-                            MouseRegion(
-                              cursor: SystemMouseCursors.resizeColumn,
-                              child: GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onHorizontalDragUpdate: (d) {
-                                  if (splitW <= 0) return;
-                                  _canvasFraction =
-                                      ((_canvasFraction * splitW + d.delta.dx) /
-                                              splitW)
-                                          .clamp(0.15, 0.85);
+                          if (docked && !compact)
+                            Positioned(
+                              left: canvasW,
+                              top: 0,
+                              bottom: 0,
+                              width: dividerW,
+                              child: NodeEditorResizeHandle(
+                                key: const ValueKey('editor-sidebar-resize'),
+                                axis: Axis.horizontal,
+                                label: s.isZh
+                                    ? '拖动调整面板宽度；双击重置'
+                                    : 'Drag to resize panel; double-click to reset',
+                                onReset: () {
+                                  _canvasFraction = 0.6;
                                   _canvasFractionNotifier.value =
                                       _canvasFraction;
                                 },
-                                child: Container(
-                                  width: dividerW,
-                                  color: Colors.transparent,
-                                  child: Center(
-                                    child: Container(
-                                      width: 3,
-                                      height: 36,
-                                      decoration: BoxDecoration(
-                                        color: scheme.outlineVariant.withAlpha(
-                                          90,
+                                onDelta: (delta) {
+                                  if (splitW <= 0) return;
+                                  final currentWidth =
+                                      (splitW * (1 - _canvasFraction)).clamp(
+                                        320.0,
+                                        maxPanelW,
+                                      );
+                                  final width = (currentWidth - delta).clamp(
+                                    320.0,
+                                    maxPanelW,
+                                  );
+                                  _canvasFraction = 1 - width / splitW;
+                                  _canvasFractionNotifier.value =
+                                      _canvasFraction;
+                                },
+                              ),
+                            ),
+                          if (hasPanel)
+                            Positioned(
+                              key: const ValueKey('editor-panel-window'),
+                              left: _panelDetached
+                                  ? floatPos.dx
+                                  : maxW - panelW,
+                              top: _panelDetached ? floatPos.dy : overlayTop,
+                              width: panelW,
+                              height: math.min(
+                                panelH,
+                                cons.maxHeight - overlayTop,
+                              ),
+                              child: ExcludeFocus(
+                                excluding: _panelHidden,
+                                child: Visibility(
+                                  visible: !_panelHidden,
+                                  maintainState: true,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(20),
+                                      boxShadow: [
+                                        if (_panelDetached || !canDock)
+                                          BoxShadow(
+                                            color: scheme.shadow.withAlpha(55),
+                                            blurRadius: 28,
+                                            offset: const Offset(0, 10),
+                                          ),
+                                      ],
+                                    ),
+                                    child: Stack(
+                                      children: [
+                                        Positioned.fill(
+                                          child: _buildRightPanel(
+                                            scheme,
+                                            s,
+                                            compact: compact,
+                                          ),
                                         ),
-                                        borderRadius: BorderRadius.circular(2),
-                                      ),
+                                        if (_panelDetached && !_panelMinimized)
+                                          Positioned(
+                                            right: 0,
+                                            top: _kFloatTitleH,
+                                            bottom: 12,
+                                            width: 12,
+                                            child: NodeEditorResizeHandle(
+                                              key: const ValueKey(
+                                                'editor-floating-panel-resize',
+                                              ),
+                                              axis: Axis.horizontal,
+                                              label: s.isZh
+                                                  ? '调整浮窗宽度'
+                                                  : 'Resize floating panel',
+                                              onDelta: (delta) => setState(() {
+                                                _panelFloatWidth =
+                                                    (_panelFloatWidth.clamp(
+                                                              math.min(
+                                                                280.0,
+                                                                floatMaxW,
+                                                              ),
+                                                              floatMaxW,
+                                                            ) +
+                                                            delta)
+                                                        .clamp(
+                                                          math.min(
+                                                            280.0,
+                                                            floatMaxW,
+                                                          ),
+                                                          floatMaxW,
+                                                        )
+                                                        .toDouble();
+                                              }),
+                                            ),
+                                          ),
+                                        if (!canDock &&
+                                            !_panelDetached &&
+                                            !_panelMinimized)
+                                          Positioned(
+                                            left: 0,
+                                            top: _kFloatTitleH,
+                                            bottom: 12,
+                                            width: 12,
+                                            child: NodeEditorResizeHandle(
+                                              key: const ValueKey(
+                                                'editor-overlay-panel-resize',
+                                              ),
+                                              axis: Axis.horizontal,
+                                              label: s.isZh
+                                                  ? '调整面板宽度'
+                                                  : 'Resize panel',
+                                              onDelta: (delta) => setState(() {
+                                                _panelFloatWidth =
+                                                    (_panelFloatWidth.clamp(
+                                                              math.min(
+                                                                320.0,
+                                                                floatMaxW,
+                                                              ),
+                                                              floatMaxW,
+                                                            ) -
+                                                            delta)
+                                                        .clamp(
+                                                          math.min(
+                                                            320.0,
+                                                            floatMaxW,
+                                                          ),
+                                                          floatMaxW,
+                                                        )
+                                                        .toDouble();
+                                              }),
+                                            ),
+                                          ),
+                                      ],
                                     ),
                                   ),
                                 ),
                               ),
                             ),
-                            SizedBox(
-                              width: rightW,
-                              child: _buildRightPanel(scheme, s),
-                            ),
-                          ],
                         ],
                       );
                     },
@@ -5485,7 +5717,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     );
   }
 
-  Widget _buildCanvas(ColorScheme scheme, AppStrings s) {
+  Widget _buildCanvas(
+    ColorScheme scheme,
+    AppStrings s, {
+    double controlsRightInset = 10,
+  }) {
     final aiEnabled = context.read<AppState>().config.aiEnabled;
     // 世界框为固定超大平面（真无限画布）：节点拖动/新增永不触发世界框
     // 重算，画面不再因内容出界而整体跳变；可命中范围见 _worldExtent 注释。
@@ -5821,11 +6057,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               final miniFloat = _miniMapFloat;
               final miniMap = _buildMiniMap(scheme, s, viewSize);
               final zoomPill = _buildZoomPill(scheme, s);
-              const floatPanelW = _kFloatPanelW;
-              final floatPanelH = math.min(
-                _kFloatPanelH,
-                math.max(160.0, viewSize.height - 60),
-              );
               final floatAiW = math.min(
                 _kFloatAiW,
                 math.max(240.0, viewSize.width - 24),
@@ -5870,25 +6101,6 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                         math.max(0.0, viewSize.height - _kMiniMapH),
                       ),
                       child: miniMap,
-                    ),
-                  // 浮动小窗①：元素 / 属性面板（拖出后）。
-                  // 已外置到系统窗口时不再画：同一份面板不能同时出现在两处。
-                  if (_panelDetached &&
-                      !_panelHidden &&
-                      !_panelExternal &&
-                      !(_elementsExternal && _propertiesExternal))
-                    _floatingPanelBox(
-                      scheme: scheme,
-                      pos: _clampFloatTo(
-                        _panelFloatPos ?? const Offset(24, 64),
-                        viewSize,
-                        floatPanelW,
-                      ),
-                      width: floatPanelW,
-                      height: _panelMinimized ? _kFloatTitleH : floatPanelH,
-                      child: _panelMinimized
-                          ? _glassWrap(_panelTitleBar(scheme, s), scheme)
-                          : _buildRightPanel(scheme, s),
                     ),
                   // 浮动小窗②：AI 面板（拖出后）
                   if (_aiDetached && aiEnabled && !_aiExternal)
@@ -6207,9 +6419,13 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                   // 避免与底部/顶部控件重叠。桌面端仍保留右侧浮动控件。
                   if (!isMobilePlatform)
                     Positioned(
-                      right: 10,
-                      bottom: aiEnabled ? 60 : 10,
-                      child: _buildCanvasControls(scheme, s),
+                      right: controlsRightInset,
+                      top: 12,
+                      bottom: aiEnabled ? 60 : 12,
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: _buildCanvasControls(scheme, s),
+                      ),
                     ),
                   // 左侧中间 ">" 按钮：展开/收起 AI 侧边面板（仅桌面端内嵌抽屉；
                   // 移动端改为浮动按钮触发的底部弹层，见 _openAiSheet）
@@ -8194,9 +8410,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   /// 把浮动窗位置收进视口：纵向至少给标题栏留出可抓取的高度，
   /// 免得拖出可视区之后再也抓不回来。
-  Offset _clampFloatTo(Offset p, Size view, double width) => Offset(
+  Offset _clampFloatTo(
+    Offset p,
+    Size view,
+    double width, {
+    double height = _kFloatTitleH + 8,
+  }) => Offset(
     p.dx.clamp(0.0, math.max(0.0, view.width - width)),
-    p.dy.clamp(0.0, math.max(0.0, view.height - _kFloatTitleH - 8)),
+    p.dy.clamp(0.0, math.max(0.0, view.height - height)),
   );
 
   /// 浮动小窗外壳：定位 + 固定尺寸 + 投影。标题栏由内容自带。
@@ -8241,54 +8462,81 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   void _winDragUpdate(Offset delta, {required bool ai}) {
     _winDragAccum += delta;
     final alreadyDetached = ai ? _aiDetached : _panelDetached;
-    if (!alreadyDetached) {
-      // 24px 阈值：避免点标题栏按钮时手指抖一下就把面板甩出去
-      if (_winDragAccum.dx.abs() < 24 && _winDragAccum.dy.abs() < 24) return;
-      final bound = MediaQuery.of(context).size;
-      setState(() {
-        if (ai) {
+    if (!alreadyDetached && _winDragAccum.distance < 24) return;
+    final viewport =
+        _panelViewportKey.currentContext?.findRenderObject() as RenderBox?;
+    setState(() {
+      if (ai) {
+        if (!_aiDetached) {
           _aiDetached = true;
           _aiMinimized = false;
           _aiFloatPos ??= Offset(
-            math.max(0.0, bound.width - _kFloatAiW - 40),
+            math.max(0.0, MediaQuery.sizeOf(context).width - _kFloatAiW - 40),
             96,
           );
         } else {
-          _panelDetached = true;
-          _panelMinimized = false;
-          _panelFloatPos ??= const Offset(24, 64);
+          _aiFloatPos = (_aiFloatPos ?? Offset.zero) + delta;
         }
-      });
-      return;
-    }
-    setState(() {
-      if (ai) {
-        _aiFloatPos = (_aiFloatPos ?? Offset.zero) + delta;
+        return;
+      }
+      final viewportSize = viewport?.size ?? MediaQuery.sizeOf(context);
+      final view = isMobilePlatform
+          ? viewportSize
+          : Size(math.max(0, viewportSize.width - 76), viewportSize.height);
+      final maxW = math.max(0.0, view.width - 16);
+      final width = _panelFloatWidth
+          .clamp(math.min(280.0, maxW), maxW)
+          .toDouble();
+      final height = _panelMinimized
+          ? _kFloatTitleH
+          : math.min(_panelFloatHeight, view.height);
+      if (!_panelDetached) {
+        final pointer =
+            viewport?.globalToLocal(_winDragOrigin + _winDragAccum) ??
+            const Offset(40, 40);
+        _panelDetached = true;
+        _panelMinimized = false;
+        _panelFloatPos = _clampFloatTo(
+          pointer - Offset(width / 2, 24),
+          view,
+          width,
+          height: height,
+        );
       } else {
-        _panelFloatPos = (_panelFloatPos ?? Offset.zero) + delta;
+        final current = _clampFloatTo(
+          _panelFloatPos ?? const Offset(24, 24),
+          view,
+          width,
+          height: height,
+        );
+        _panelFloatPos = _clampFloatTo(
+          current + delta,
+          view,
+          width,
+          height: height,
+        );
       }
     });
   }
 
-  Widget _windowWinBtn(
+  Widget _panelAction(
     ColorScheme scheme,
     IconData icon,
     String tooltip,
     VoidCallback onTap,
-  ) {
-    return Tooltip(
-      message: tooltip,
-      waitDuration: const Duration(milliseconds: 300),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(4),
-          child: Icon(icon, size: 14, color: scheme.onSurfaceVariant),
-        ),
-      ),
-    );
-  }
+  ) => IconButton(
+    tooltip: tooltip,
+    onPressed: onTap,
+    icon: Icon(icon, size: 17),
+    style: IconButton.styleFrom(
+      foregroundColor: scheme.onSurfaceVariant,
+      minimumSize: const Size.square(44),
+      maximumSize: const Size.square(44),
+      padding: const EdgeInsets.all(10),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      shape: const CircleBorder(),
+    ),
+  );
 
   /// 内嵌小窗的统一标题栏：左侧图标 + 标题，右侧最小化 / 拖出吸附 / 隐藏。
   Widget _windowTitleBar(
@@ -8306,18 +8554,22 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     /// 拖出为**真正的系统窗口**（再往外一层）。为空时不渲染这个按钮
     /// （移动端没有多窗口，面板外置也只在桌面端可用）。
     VoidCallback? onExternal,
+    String? hideTooltip,
   }) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onPanStart: (_) => _winDragStart(),
+      onPanStart: (details) {
+        _winDragStart();
+        _winDragOrigin = details.globalPosition;
+      },
       onPanUpdate: (d) => onDrag(d.delta),
       child: Container(
-        height: 28,
-        margin: const EdgeInsets.fromLTRB(6, 4, 6, 0),
-        padding: const EdgeInsets.only(left: 8),
+        height: _kFloatTitleH,
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.only(left: 10),
         decoration: BoxDecoration(
-          color: scheme.primaryContainer.withAlpha(70),
-          borderRadius: BorderRadius.circular(8),
+          color: scheme.primaryContainer.withAlpha(35),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(color: scheme.outlineVariant.withAlpha(70)),
         ),
         child: Row(
@@ -8330,19 +8582,19 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                   color: scheme.onSurface,
                 ),
               ),
             ),
-            _windowWinBtn(
+            _panelAction(
               scheme,
               minimized ? Icons.expand_more : Icons.remove,
               minimized ? (zh ? '展开' : 'Expand') : (zh ? '最小化' : 'Minimize'),
               onMinimize,
             ),
-            _windowWinBtn(
+            _panelAction(
               scheme,
               detached ? Icons.close_fullscreen : Icons.open_in_new,
               detached
@@ -8351,13 +8603,18 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
               onToggleDetach,
             ),
             if (onExternal != null)
-              _windowWinBtn(
+              _panelAction(
                 scheme,
                 Icons.desktop_windows_outlined,
                 zh ? '拖出为独立系统窗口' : 'Open in system window',
                 onExternal,
               ),
-            _windowWinBtn(scheme, Icons.close, zh ? '隐藏' : 'Hide', onHide),
+            _panelAction(
+              scheme,
+              Icons.close,
+              hideTooltip ?? (zh ? '隐藏' : 'Hide'),
+              onHide,
+            ),
           ],
         ),
       ),
@@ -8376,17 +8633,9 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     onToggleDetach: () => setState(() {
       _panelDetached = !_panelDetached;
       _panelHidden = false;
-      if (!_panelDetached) {
-        _panelFloatPos = null;
-        _panelMinimized = false;
-      }
-    }),
-    onHide: () => setState(() {
-      _panelHidden = true;
-      _panelDetached = false;
-      _panelFloatPos = null;
       _panelMinimized = false;
     }),
+    onHide: () => setState(() => _panelHidden = true),
     onDrag: (d) => _winDragUpdate(d, ai: false),
   );
 
@@ -8420,7 +8669,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     onDrag: (d) => _winDragUpdate(d, ai: true),
   );
 
-  Widget _buildRightPanel(ColorScheme scheme, AppStrings s) {
+  Widget _buildRightPanel(
+    ColorScheme scheme,
+    AppStrings s, {
+    bool compact = false,
+  }) {
     final node = _selectedNode;
     final previewType = _previewedToolboxType;
     final showPreview = node == null && previewType != null;
@@ -8434,338 +8687,374 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     final showElements = panelLayout.elementsVisible;
     final showProperties = panelLayout.propertiesVisible;
     final showBoth = panelLayout.showDivider;
-
-    // Determine what to show in properties
     final logicBlock = _selectedLogicBlockId != null
         ? _logicBlocks.where((b) => b.id == _selectedLogicBlockId).firstOrNull
         : null;
-
-    final Widget inner = LayoutBuilder(
-      builder: (ctx, constraints) {
-        final totalH = constraints.maxHeight;
-        const dividerH = 10.0;
-        // 拖动分割线时只重建两个高度值（见下方 ValueListenableBuilder），
-        // 不再整页 setState 重建工具箱与属性编辑器。
-        return ValueListenableBuilder<double>(
-          valueListenable: _toolboxFractionNotifier,
-          builder: (ctx, fraction, _) {
-            final sections = panelLayout.sectionHeights(
-              maxHeight: totalH,
-              elementsFraction: fraction,
-              dividerHeight: dividerH,
-            );
-            final sectionHeight = math
-                .max(0.0, totalH - sections.divider)
+    final headerH = math.max(
+      44.0,
+      MediaQuery.textScalerOf(context).scale(14) + 24,
+    );
+    return NodeEditorPanelFrame(
+      key: _rightPanelKey,
+      collapsed: _panelMinimized,
+      headerHeight: compact ? 144 : _kFloatTitleH,
+      header: compact
+          ? _buildCompactPanelHandle(scheme, s)
+          : _panelTitleBar(scheme, s),
+      child: NodeEditorPanelViewport(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const dividerH = 12.0;
+            final minHeight =
+                (showElements ? headerH + (_toolboxExpanded ? 96 : 0) : 0) +
+                (showProperties ? headerH + (_editorExpanded ? 96 : 0) : 0) +
+                (showBoth && _toolboxExpanded && _editorExpanded
+                    ? dividerH
+                    : 0);
+            final totalH = math
+                .max(constraints.maxHeight, minHeight)
                 .toDouble();
-            return Column(
-              children: [
-                // ── 元素工具栏 ──
-                if (showElements)
-                  SizedBox(
-                    height: sections.elements,
-                    child: Column(
+            return SingleChildScrollView(
+              primary: false,
+              child: SizedBox(
+                height: totalH,
+                child: ValueListenableBuilder<double>(
+                  valueListenable: _toolboxFractionNotifier,
+                  builder: (context, fraction, _) {
+                    final sections = panelLayout.sectionHeights(
+                      maxHeight: totalH,
+                      elementsFraction: fraction,
+                      dividerHeight: dividerH,
+                      elementsExpanded: _toolboxExpanded,
+                      propertiesExpanded: _editorExpanded,
+                      headerHeight: headerH,
+                      minimumExpandedHeight: headerH + 96,
+                    );
+                    return Column(
                       children: [
-                        _buildCollapsibleHeader(
-                          scheme: scheme,
-                          icon: const Icon(Icons.widgets_outlined),
-                          title: s.isZh ? '元素' : 'Elements',
-                          expanded: _toolboxExpanded,
-                          onToggle: () => setState(
-                            () => _toolboxExpanded = !_toolboxExpanded,
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (!isMobilePlatform)
-                                IconButton(
-                                  tooltip: s.isZh
-                                      ? '元素独立窗口'
-                                      : 'Open elements window',
-                                  visualDensity: VisualDensity.compact,
-                                  constraints: const BoxConstraints.tightFor(
-                                    width: 24,
-                                    height: 24,
-                                  ),
-                                  padding: EdgeInsets.zero,
-                                  onPressed: () => _openExternalPanel(
-                                    DetachedPanel.elements,
-                                  ),
-                                  icon: const Icon(
-                                    Icons.desktop_windows_outlined,
-                                    size: 14,
-                                  ),
+                        if (showElements)
+                          SizedBox(
+                            height: sections.elements,
+                            child: NodeEditorPanelSection(
+                              key: const ValueKey('editor-elements-section'),
+                              headerHeight: headerH,
+                              expanded: _toolboxExpanded,
+                              header: _buildCollapsibleHeader(
+                                scheme: scheme,
+                                icon: const Icon(Icons.widgets_outlined),
+                                title: s.isZh ? '元素' : 'Elements',
+                                expanded: _toolboxExpanded,
+                                onToggle: () => setState(
+                                  () => _toolboxExpanded = !_toolboxExpanded,
                                 ),
-                              Text(
-                                _showOnlyAvailable
-                                    ? '${_visibleNodeTypes().length}'
-                                    : '${_allNodeTypes.length}',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: scheme.outline,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              // 「显示可用」：按当前文件的媒体类型只留下接得上的节点
-                              //（视频文件 → 视频节点 + 提取音频后可用的音频节点）
-                              Tooltip(
-                                message: _showOnlyAvailable
-                                    ? (s.isZh ? '显示全部元素' : 'Show all elements')
-                                    : (s.isZh
-                                          ? '只显示当前文件可用的元素'
-                                          : 'Only show elements usable for this file'),
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(6),
-                                  onTap: () => setState(
-                                    () => _showOnlyAvailable =
-                                        !_showOnlyAvailable,
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(2),
-                                    child: Icon(
-                                      _showOnlyAvailable
-                                          ? Icons.filter_alt
-                                          : Icons.filter_alt_outlined,
-                                      size: 14,
-                                      color: _showOnlyAvailable
-                                          ? scheme.primary
-                                          : scheme.outline,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (_toolboxExpanded)
-                          Expanded(
-                            child: SingleChildScrollView(
-                              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-                              // 搜索框 + 内容都由 _buildToolboxBody 提供，移动端弹层共用同一份
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  _buildToolboxSearch(scheme, s, dense: true),
-                                  _buildToolboxBody(scheme, s, dense: true),
-                                ],
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-
-                // ── 可拖动分割线（元素 / 属性之间调整大小） ──
-                if (showBoth)
-                  MouseRegion(
-                    cursor: SystemMouseCursors.resizeRow,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onVerticalDragUpdate: (d) {
-                        if (sectionHeight <= 0) return;
-                        _toolboxFraction =
-                            ((_toolboxFraction * sectionHeight + d.delta.dy) /
-                                    sectionHeight)
-                                .clamp(0.15, 0.85);
-                        _toolboxFractionNotifier.value = _toolboxFraction;
-                      },
-                      child: Container(
-                        height: sections.divider,
-                        color: Colors.transparent,
-                        child: Center(
-                          child: Container(
-                            width: 44,
-                            height: 4,
-                            decoration: BoxDecoration(
-                              color: scheme.primary.withAlpha(90),
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-
-                // ── 属性编辑器 ──
-                if (showProperties)
-                  SizedBox(
-                    height: sections.properties,
-                    child: Column(
-                      children: [
-                        _buildCollapsibleHeader(
-                          scheme: scheme,
-                          icon: logicBlock != null
-                              ? Icon(_logicTypeIcon(logicBlock.type))
-                              : node != null
-                              ? TablerIcon(_stepIcon(node.type))
-                              : (showPreview
-                                    ? TablerIcon(_stepIcon(previewType))
-                                    : const Icon(Icons.tune_outlined)),
-                          title: logicBlock != null
-                              ? logicBlock.label(s.isZh)
-                              : node != null
-                              ? (node.isGate && node.gate != null
-                                    ? _gatePropertyTitle(node, s)
-                                    : (s.isZh ? node.label : node.labelEn))
-                              : showPreview
-                              ? (s.isZh
-                                    ? PipelineNode(
-                                        id: '',
-                                        type: previewType,
-                                      ).label
-                                    : PipelineNode(
-                                        id: '',
-                                        type: previewType,
-                                      ).labelEn)
-                              : (s.isZh ? '属性' : 'Properties'),
-                          expanded: _editorExpanded,
-                          onToggle: () => setState(
-                            () => _editorExpanded = !_editorExpanded,
-                          ),
-                          trailing: !isMobilePlatform
-                              ? IconButton(
-                                  tooltip: s.isZh
-                                      ? '属性独立窗口'
-                                      : 'Open properties window',
-                                  visualDensity: VisualDensity.compact,
-                                  constraints: const BoxConstraints.tightFor(
-                                    width: 24,
-                                    height: 24,
-                                  ),
-                                  padding: EdgeInsets.zero,
-                                  onPressed: () => _openExternalPanel(
-                                    DetachedPanel.properties,
-                                  ),
-                                  icon: const Icon(
-                                    Icons.desktop_windows_outlined,
-                                    size: 14,
-                                  ),
-                                )
-                              : null,
-                        ),
-                        if (_editorExpanded)
-                          Expanded(
-                            child: logicBlock != null
-                                ? SingleChildScrollView(
-                                    padding: const EdgeInsets.all(4),
-                                    child: LogicBlockEditor(
-                                      key: ValueKey(logicBlock.id),
-                                      block: logicBlock,
-                                      childNodes: _nodes
-                                          .where(
-                                            (n) => logicBlock.childNodeIds
-                                                .contains(n.id),
-                                          )
-                                          .toList(),
-                                      onChanged: () {
-                                        setState(() {});
-                                        _markDirty();
-                                      },
-                                      isZh: s.isZh,
-                                    ),
-                                  )
-                                : node != null
-                                ? SingleChildScrollView(
-                                    padding: const EdgeInsets.all(4),
-                                    child: _buildStepEditor(node, s.isZh),
-                                  )
-                                : showPreview
-                                ? SingleChildScrollView(
-                                    padding: const EdgeInsets.all(4),
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 6,
-                                          ),
-                                          margin: const EdgeInsets.only(
-                                            bottom: 8,
-                                            left: 16,
-                                            right: 16,
-                                            top: 8,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: scheme.primaryContainer
-                                                .withAlpha(60),
-                                            borderRadius: BorderRadius.circular(
-                                              8,
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (!isMobilePlatform)
+                                      IconButton(
+                                        tooltip: s.isZh
+                                            ? '元素独立窗口'
+                                            : 'Open elements window',
+                                        visualDensity: VisualDensity.compact,
+                                        constraints:
+                                            const BoxConstraints.tightFor(
+                                              width: 24,
+                                              height: 24,
                                             ),
+                                        padding: EdgeInsets.zero,
+                                        onPressed: () => _openExternalPanel(
+                                          DetachedPanel.elements,
+                                        ),
+                                        icon: const Icon(
+                                          Icons.desktop_windows_outlined,
+                                          size: 14,
+                                        ),
+                                      ),
+                                    Text(
+                                      _showOnlyAvailable
+                                          ? '${_visibleNodeTypes().length}'
+                                          : '${_allNodeTypes.length}',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: scheme.outline,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    // 「显示可用」：按当前文件的媒体类型只留下接得上的节点
+                                    //（视频文件 → 视频节点 + 提取音频后可用的音频节点）
+                                    Tooltip(
+                                      message: _showOnlyAvailable
+                                          ? (s.isZh
+                                                ? '显示全部元素'
+                                                : 'Show all elements')
+                                          : (s.isZh
+                                                ? '只显示当前文件可用的元素'
+                                                : 'Only show elements usable for this file'),
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(6),
+                                        onTap: () => setState(
+                                          () => _showOnlyAvailable =
+                                              !_showOnlyAvailable,
+                                        ),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(2),
+                                          child: Icon(
+                                            _showOnlyAvailable
+                                                ? Icons.filter_alt
+                                                : Icons.filter_alt_outlined,
+                                            size: 14,
+                                            color: _showOnlyAvailable
+                                                ? scheme.primary
+                                                : scheme.outline,
                                           ),
-                                          child: Row(
-                                            children: [
-                                              Icon(
-                                                Icons.preview_outlined,
-                                                size: 14,
-                                                color: scheme.primary,
-                                              ),
-                                              const SizedBox(width: 6),
-                                              Text(
-                                                s.isZh
-                                                    ? '预览 · 双击添加到画布'
-                                                    : 'Preview · double-click to add',
-                                                style: TextStyle(
-                                                  fontSize: 11,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              child: SingleChildScrollView(
+                                padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                                // 搜索框 + 内容都由 _buildToolboxBody 提供，移动端弹层共用同一份
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _buildToolboxSearch(scheme, s, dense: true),
+                                    _buildToolboxBody(scheme, s, dense: true),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (sections.divider > 0)
+                          SizedBox(
+                            height: sections.divider,
+                            child: NodeEditorResizeHandle(
+                              key: const ValueKey('editor-sections-resize'),
+                              axis: Axis.vertical,
+                              label: s.isZh
+                                  ? '调整元素与属性的高度'
+                                  : 'Resize elements and properties',
+                              onReset: () {
+                                _toolboxFraction = 0.4;
+                                _toolboxFractionNotifier.value =
+                                    _toolboxFraction;
+                              },
+                              onDelta: (delta) {
+                                final usable = totalH - sections.divider;
+                                if (usable <= 0) return;
+                                _toolboxFraction =
+                                    (((usable * _toolboxFraction).clamp(
+                                                  headerH + 96,
+                                                  usable - headerH - 96,
+                                                ) +
+                                                delta) /
+                                            usable)
+                                        .clamp(0.0, 1.0);
+                                _toolboxFractionNotifier.value =
+                                    _toolboxFraction;
+                              },
+                            ),
+                          ),
+                        if (showProperties)
+                          SizedBox(
+                            height: sections.properties,
+                            child: NodeEditorPanelSection(
+                              key: const ValueKey('editor-properties-section'),
+                              headerHeight: headerH,
+                              expanded: _editorExpanded,
+                              header: _buildCollapsibleHeader(
+                                scheme: scheme,
+                                icon: logicBlock != null
+                                    ? Icon(_logicTypeIcon(logicBlock.type))
+                                    : node != null
+                                    ? TablerIcon(_stepIcon(node.type))
+                                    : (showPreview
+                                          ? TablerIcon(_stepIcon(previewType))
+                                          : const Icon(Icons.tune_outlined)),
+                                title: logicBlock != null
+                                    ? logicBlock.label(s.isZh)
+                                    : node != null
+                                    ? (node.isGate && node.gate != null
+                                          ? _gatePropertyTitle(node, s)
+                                          : (s.isZh
+                                                ? node.label
+                                                : node.labelEn))
+                                    : showPreview
+                                    ? (s.isZh
+                                          ? PipelineNode(
+                                              id: '',
+                                              type: previewType,
+                                            ).label
+                                          : PipelineNode(
+                                              id: '',
+                                              type: previewType,
+                                            ).labelEn)
+                                    : (s.isZh ? '属性' : 'Properties'),
+                                expanded: _editorExpanded,
+                                onToggle: () => setState(
+                                  () => _editorExpanded = !_editorExpanded,
+                                ),
+                                trailing: !isMobilePlatform
+                                    ? IconButton(
+                                        tooltip: s.isZh
+                                            ? '属性独立窗口'
+                                            : 'Open properties window',
+                                        visualDensity: VisualDensity.compact,
+                                        constraints:
+                                            const BoxConstraints.tightFor(
+                                              width: 24,
+                                              height: 24,
+                                            ),
+                                        padding: EdgeInsets.zero,
+                                        onPressed: () => _openExternalPanel(
+                                          DetachedPanel.properties,
+                                        ),
+                                        icon: const Icon(
+                                          Icons.desktop_windows_outlined,
+                                          size: 14,
+                                        ),
+                                      )
+                                    : null,
+                              ),
+                              child: logicBlock != null
+                                  ? SingleChildScrollView(
+                                      padding: const EdgeInsets.all(4),
+                                      child: LogicBlockEditor(
+                                        key: ValueKey(logicBlock.id),
+                                        block: logicBlock,
+                                        childNodes: _nodes
+                                            .where(
+                                              (n) => logicBlock.childNodeIds
+                                                  .contains(n.id),
+                                            )
+                                            .toList(),
+                                        onChanged: () {
+                                          setState(() {});
+                                          _markDirty();
+                                        },
+                                        isZh: s.isZh,
+                                      ),
+                                    )
+                                  : node != null
+                                  ? SingleChildScrollView(
+                                      padding: const EdgeInsets.all(4),
+                                      child: _buildStepEditor(node, s.isZh),
+                                    )
+                                  : showPreview
+                                  ? SingleChildScrollView(
+                                      padding: const EdgeInsets.all(4),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 6,
+                                            ),
+                                            margin: const EdgeInsets.only(
+                                              bottom: 8,
+                                              left: 16,
+                                              right: 16,
+                                              top: 8,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: scheme.primaryContainer
+                                                  .withAlpha(60),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.preview_outlined,
+                                                  size: 14,
                                                   color: scheme.primary,
                                                 ),
-                                              ),
-                                            ],
+                                                const SizedBox(width: 6),
+                                                Text(
+                                                  s.isZh
+                                                      ? '预览 · 双击添加到画布'
+                                                      : 'Preview · double-click to add',
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: scheme.primary,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
                                           ),
-                                        ),
-                                        _buildStepEditor(
-                                          PipelineNode(
-                                            id: '__preview__',
-                                            type: previewType,
+                                          _buildStepEditor(
+                                            PipelineNode(
+                                              id: '__preview__',
+                                              type: previewType,
+                                            ),
+                                            s.isZh,
                                           ),
-                                          s.isZh,
-                                        ),
-                                      ],
+                                        ],
+                                      ),
+                                    )
+                                  : Center(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.touch_app_outlined,
+                                            size: 32,
+                                            color: scheme.outline.withAlpha(80),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            s.isZh
+                                                ? '选择节点开始编辑'
+                                                : 'Select a node to edit',
+                                            style: TextStyle(
+                                              color: scheme.outline,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  )
-                                : Center(
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(
-                                          Icons.touch_app_outlined,
-                                          size: 32,
-                                          color: scheme.outline.withAlpha(80),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        Text(
-                                          s.isZh
-                                              ? '选择节点开始编辑'
-                                              : 'Select a node to edit',
-                                          style: TextStyle(
-                                            color: scheme.outline,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
+                            ),
                           ),
                       ],
-                    ),
-                  ),
-              ],
+                    );
+                  },
+                ),
+              ),
             );
           },
-        );
-      },
-    );
-
-    return _glassWrap(
-      Column(
-        children: [
-          // 自带标题栏：拖动可拖出成浮动小窗，右侧是最小化 / 吸附 / 隐藏
-          _panelTitleBar(scheme, s),
-          Expanded(child: inner),
-        ],
+        ),
       ),
-      scheme,
     );
   }
+
+  Widget _buildCompactPanelHandle(ColorScheme scheme, AppStrings s) => Column(
+    children: [
+      _panelAction(
+        scheme,
+        Icons.chevron_left,
+        s.isZh ? '展开元素 / 属性' : 'Expand elements / properties',
+        () => setState(() => _panelMinimized = false),
+      ),
+      _panelAction(
+        scheme,
+        Icons.open_in_new,
+        s.isZh ? '拖出为内嵌小窗' : 'Float out',
+        () => setState(() {
+          _panelDetached = true;
+          _panelMinimized = false;
+        }),
+      ),
+      _panelAction(
+        scheme,
+        Icons.close,
+        s.isZh ? '隐藏' : 'Hide',
+        () => setState(() => _panelHidden = true),
+      ),
+    ],
+  );
 
   Widget _buildCollapsibleHeader({
     required ColorScheme scheme,
@@ -8775,36 +9064,41 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     required VoidCallback onToggle,
     Widget? trailing,
   }) {
-    return InkWell(
-      onTap: onToggle,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          children: [
-            IconTheme.merge(
-              data: IconThemeData(size: 15, color: scheme.primary),
-              child: icon,
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                title,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: scheme.onSurface,
+    return Semantics(
+      expanded: expanded,
+      child: InkWell(
+        onTap: onToggle,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: Row(
+            children: [
+              IconTheme.merge(
+                data: IconThemeData(size: 15, color: scheme.primary),
+                child: icon,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
                 ),
               ),
-            ),
-            if (trailing != null) ...[trailing, const SizedBox(width: 6)],
-            AnimatedRotation(
-              turns: expanded ? 0.0 : 0.5,
-              duration: MediaQuery.disableAnimationsOf(context)
-                  ? Duration.zero
-                  : const Duration(milliseconds: 200),
-              child: Icon(Icons.expand_less, size: 16, color: scheme.outline),
-            ),
-          ],
+              if (trailing != null) ...[trailing, const SizedBox(width: 6)],
+              AnimatedRotation(
+                turns: expanded ? 0.0 : 0.5,
+                duration: MediaQuery.disableAnimationsOf(context)
+                    ? Duration.zero
+                    : const Duration(milliseconds: 200),
+                child: Icon(Icons.expand_less, size: 16, color: scheme.outline),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -8872,8 +9166,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   }) {
     final categories = [
       for (final category in NodePickerCategory.values)
-        if ((category != NodePickerCategory.container || widget.containerInfo != null) &&
-            (category != NodePickerCategory.plugin || context.read<AppState>().config.pluginsEnabled))
+        if ((category != NodePickerCategory.container ||
+                widget.containerInfo != null) &&
+            (category != NodePickerCategory.plugin ||
+                context.read<AppState>().config.pluginsEnabled))
           category,
     ];
     return Column(
@@ -8984,20 +9280,31 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     );
   }
 
-  Widget _buildPluginToolbox(ColorScheme scheme, AppStrings s, {required bool dense, Offset? atCanvas}) {
+  Widget _buildPluginToolbox(
+    ColorScheme scheme,
+    AppStrings s, {
+    required bool dense,
+    Offset? atCanvas,
+  }) {
     final state = context.read<AppState>();
     if (!state.config.pluginsEnabled) return const SizedBox.shrink();
     final query = _toolboxQuery.trim().toLowerCase();
-    final usable = <MediaType>{..._sourceMediaTypes(),
+    final usable = <MediaType>{
+      ..._sourceMediaTypes(),
       for (final node in _nodes) ?node.outputType,
     };
     final entries = PluginNodeCatalog.instance.entries.where((entry) {
       final definition = entry.definition;
-      if (query.isNotEmpty && !'${definition.name} ${definition.fun} ${entry.pluginId} ${definition.id}'
-          .toLowerCase().contains(query)) {
+      if (query.isNotEmpty &&
+          !'${definition.name} ${definition.fun} ${entry.pluginId} ${definition.id}'
+              .toLowerCase()
+              .contains(query)) {
         return false;
       }
-      return !_showOnlyAvailable || definition.inputTypes.any((name) => usable.any((kind) => kind.name == name));
+      return !_showOnlyAvailable ||
+          definition.inputTypes.any(
+            (name) => usable.any((kind) => kind.name == name),
+          );
     }).toList();
     String keyFor(String pluginId, String nodeId) => 'plugin:$pluginId/$nodeId';
     entries.sort((a, b) {
@@ -9005,49 +9312,81 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       final bk = keyFor(b.pluginId, b.definition.id);
       final af = state.config.favoriteNodeTypes.contains(ak);
       final bf = state.config.favoriteNodeTypes.contains(bk);
-      if (af != bf) { return af ? -1 : 1; }
-      return compareNodePickerEntries(a.definition.name, b.definition.name,
-        keyA: ak, keyB: bk, sort: _toolboxSort, usageCounts: state.config.nodeUsageCount);
+      if (af != bf) {
+        return af ? -1 : 1;
+      }
+      return compareNodePickerEntries(
+        a.definition.name,
+        b.definition.name,
+        keyA: ak,
+        keyB: bk,
+        sort: _toolboxSort,
+        usageCounts: state.config.nodeUsageCount,
+      );
     });
     if (entries.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Text(s.isZh ? '暂无已启用且匹配的插件节点，请先在插件页安装并启用。'
-          : 'No matching enabled plugin nodes. Install and enable a plugin first.'),
+        child: Text(
+          s.isZh
+              ? '暂无已启用且匹配的插件节点，请先在插件页安装并启用。'
+              : 'No matching enabled plugin nodes. Install and enable a plugin first.',
+        ),
       );
     }
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      for (final entry in entries) Padding(
-        padding: EdgeInsets.only(bottom: dense ? 4 : 6),
-        child: Tooltip(message: entry.definition.fun, child: InkWell(
-          key: ValueKey('node-picker-plugin-${entry.pluginId}/${entry.definition.id}'),
-          borderRadius: BorderRadius.circular(8),
-          onTap: () {
-            _addPluginNode(entry.pluginId, entry.definition.id, atCanvas ?? _canvasCenterCanvasPos());
-            if (atCanvas != null) Navigator.pop(context);
-          },
-          onLongPress: () => _togglePluginFavorite(entry.pluginId, entry.definition.id),
-          onSecondaryTap: () => _togglePluginFavorite(entry.pluginId, entry.definition.id),
-          child: _toolboxListRow(
-            label: entry.definition.name,
-            tag: "${entry.definition.inputTypes.join('/')} → ${entry.definition.outputType}",
-            icon: const TablerIcon(TablerGlyph.layersIntersect),
-            accent: scheme.secondaryContainer, scheme: scheme,
-            favorite: state.config.favoriteNodeTypes.contains(keyFor(entry.pluginId, entry.definition.id)),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final entry in entries)
+          Padding(
+            padding: EdgeInsets.only(bottom: dense ? 4 : 6),
+            child: Tooltip(
+              message: entry.definition.fun,
+              child: InkWell(
+                key: ValueKey(
+                  'node-picker-plugin-${entry.pluginId}/${entry.definition.id}',
+                ),
+                borderRadius: BorderRadius.circular(8),
+                onTap: () {
+                  _addPluginNode(
+                    entry.pluginId,
+                    entry.definition.id,
+                    atCanvas ?? _canvasCenterCanvasPos(),
+                  );
+                  if (atCanvas != null) Navigator.pop(context);
+                },
+                onLongPress: () =>
+                    _togglePluginFavorite(entry.pluginId, entry.definition.id),
+                onSecondaryTap: () =>
+                    _togglePluginFavorite(entry.pluginId, entry.definition.id),
+                child: _toolboxListRow(
+                  label: entry.definition.name,
+                  tag:
+                      "${entry.definition.inputTypes.join('/')} → ${entry.definition.outputType}",
+                  icon: const TablerIcon(TablerGlyph.layersIntersect),
+                  accent: scheme.secondaryContainer,
+                  scheme: scheme,
+                  favorite: state.config.favoriteNodeTypes.contains(
+                    keyFor(entry.pluginId, entry.definition.id),
+                  ),
+                ),
+              ),
+            ),
           ),
-        )),
-      ),
-    ]);
+      ],
+    );
   }
 
   void _togglePluginFavorite(String pluginId, String nodeId) {
     final key = 'plugin:$pluginId/$nodeId';
     context.read<AppState>().updateConfig((config) {
-      if (!config.favoriteNodeTypes.remove(key)) config.favoriteNodeTypes.add(key);
+      if (!config.favoriteNodeTypes.remove(key))
+        config.favoriteNodeTypes.add(key);
       return config;
     });
     setState(() {});
   }
+
   /// 当前类别内筛选并排序；收藏单独置顶，保留原有预览与拖拽行为。
   ///
   /// 桌面右面板与移动端弹层原本各写一遍同样的分类列表 —— 加一个区块就得改两处，
@@ -10199,7 +10538,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           if (includeProperties) ...{
             'thumbPath': _thumbPath,
             if (node?.type == PipelineStepType.plugin) ...{
-              'pluginEditable': cfg.pluginsEnabled && node!.pluginCompatibilityIssue == null,
+              'pluginEditable':
+                  cfg.pluginsEnabled && node!.pluginCompatibilityIssue == null,
               'pluginIssue': node!.pluginUnavailableReason,
             },
             'outputName': resolvedExt == null
@@ -10273,8 +10613,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         out.add({
           'id': 'plugin:${entry.pluginId}/${entry.definition.id}',
           'kind': 'plugin',
-          'label': entry.definition.name, 'labelEn': entry.definition.name,
-          'tag': "${entry.definition.inputTypes.join('/')} → ${entry.definition.outputType}",
+          'label': entry.definition.name,
+          'labelEn': entry.definition.name,
+          'tag':
+              "${entry.definition.inputTypes.join('/')} → ${entry.definition.outputType}",
           'group': 'plugin',
         });
       }
@@ -10336,10 +10678,14 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
           if (idx < 0) return false;
           if (_nodes[idx].type == PipelineStepType.plugin) {
             final current = _nodes[idx];
-            final proposed = PipelineNode(id: current.id, type: current.type,
-              params: Map<String, dynamic>.from(params));
+            final proposed = PipelineNode(
+              id: current.id,
+              type: current.type,
+              params: Map<String, dynamic>.from(params),
+            );
             if (!_appState.config.pluginsEnabled ||
-                jsonEncode(proposed.pluginEnvelope) != jsonEncode(current.pluginEnvelope) ||
+                jsonEncode(proposed.pluginEnvelope) !=
+                    jsonEncode(current.pluginEnvelope) ||
                 proposed.pluginUnavailableReason != null) {
               return false;
             }
@@ -10485,10 +10831,16 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     if (typeId.startsWith('plugin:')) {
       final parts = typeId.substring(7).split('/');
       if (parts.length != 2) return false;
-      return _addPluginNode(parts[0], parts[1], Offset(
-        (args['x'] as num?)?.toDouble() ?? _spawnCenter.dx,
-        (args['y'] as num?)?.toDouble() ?? _spawnCenter.dy,
-      ), requestedId: args['nodeId'] as String?) ?? false;
+      return _addPluginNode(
+            parts[0],
+            parts[1],
+            Offset(
+              (args['x'] as num?)?.toDouble() ?? _spawnCenter.dx,
+              (args['y'] as num?)?.toDouble() ?? _spawnCenter.dy,
+            ),
+            requestedId: args['nodeId'] as String?,
+          ) ??
+          false;
     }
     PipelineStepType? type;
     for (final t in PipelineStepType.values) {
@@ -10497,7 +10849,10 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
         break;
       }
     }
-    if (type == null || type == PipelineStepType.unknown || type == PipelineStepType.plugin) return false;
+    if (type == null ||
+        type == PipelineStepType.unknown ||
+        type == PipelineStepType.plugin)
+      return false;
     final requestedId = args['nodeId'] as String?;
     final existing = _nodes.where((node) => node.id == requestedId).firstOrNull;
     if (existing != null) {
@@ -10779,148 +11134,89 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   // ── 画布浮动控件 ──
 
   Widget _buildCanvasControls(ColorScheme scheme, AppStrings s) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-      decoration: BoxDecoration(
-        color: scheme.surface.withAlpha(200),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: scheme.outlineVariant.withAlpha(80)),
-        boxShadow: [
-          BoxShadow(
-            color: scheme.shadow.withAlpha(20),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+    Widget divider() => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: SizedBox(
+        width: 28,
+        child: Divider(height: 1, color: scheme.outlineVariant.withAlpha(100)),
+      ),
+    );
+    return NodeEditorToolRail(
+      key: const ValueKey('editor-canvas-tool-rail'),
+      children: [
+        if (!_panelExternal && !(_elementsExternal && _propertiesExternal)) ...[
+          _controlBtn(
+            _panelHidden || _panelMinimized
+                ? Icons.view_sidebar_outlined
+                : Icons.view_sidebar_rounded,
+            _panelHidden || _panelMinimized
+                ? (s.isZh ? '展开元素 / 属性' : 'Expand elements / properties')
+                : (s.isZh ? '收起元素 / 属性' : 'Hide elements / properties'),
+            scheme,
+            () => setState(() {
+              if (_panelHidden || _panelMinimized) {
+                _panelHidden = false;
+                _panelMinimized = false;
+              } else {
+                _panelHidden = true;
+              }
+            }),
+            selected: !_panelHidden && !_panelMinimized,
           ),
+          divider(),
         ],
-      ),
-      child: ConstrainedBox(
-        // 移动端屏幕矮/横屏时，整列工具可能溢出被裁掉（"右侧小工具显示不全"），
-        // 用大量高约束 + 可滚动包裹，保证所有按钮始终可达。
-        // 移动端横屏可用高度更小，进一步下调系数，避免右侧工具列被裁掉。
-        constraints: BoxConstraints(
-          maxHeight:
-              MediaQuery.of(context).size.height *
-              (isMobilePlatform ? (_isLandscape ? 0.48 : 0.62) : 0.86),
+        _controlBtn(
+          Icons.auto_fix_high,
+          s.isZh ? '整理' : 'Arrange',
+          scheme,
+          _autoLayout,
         ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 移动端：返回按钮（舍弃顶部栏后以浮动按钮替代）
-              if (isMobilePlatform) ...[
-                _controlBtn(
-                  Icons.arrow_back,
-                  s.isZh ? '返回' : 'Back',
-                  scheme,
-                  () async {
-                    final nav = Navigator.of(context);
-                    if (await _onWillPop()) nav.pop();
-                  },
-                ),
-                const SizedBox(height: 2),
-                // AI 助手（按钮触发底部弹层，可预览节点编辑器状态）
-                if (context.read<AppState>().config.aiEnabled) ...[
-                  _controlBtn(
-                    Icons.smart_toy,
-                    s.isZh ? 'AI 助手' : 'AI Assistant',
-                    scheme,
-                    () => _openAiSheet(s),
-                    color: scheme.primary,
-                  ),
-                  const SizedBox(height: 2),
-                ],
-                // 横竖屏切换（移动端专属）
-                _controlBtn(
-                  _isLandscape
-                      ? Icons.phone_android_outlined
-                      : Icons.screen_rotation_alt_outlined,
-                  _isLandscape
-                      ? (s.isZh ? '切换到竖屏' : 'Switch to portrait')
-                      : (s.isZh ? '切换到横屏' : 'Switch to landscape'),
-                  scheme,
-                  _toggleOrientation,
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Divider(
-                    height: 1,
-                    color: scheme.outlineVariant.withAlpha(60),
-                  ),
-                ),
-              ],
-              // 放大缩小改在画布左下角浮动按钮；移动端右侧工具列不再重复（避免误触）。
-              _controlBtn(
-                Icons.auto_fix_high,
-                s.isZh ? '整理' : 'Arrange',
-                scheme,
-                _autoLayout,
-              ),
-              const SizedBox(height: 2),
-              _controlBtn(
-                Icons.my_location,
-                s.isZh ? '定位源' : 'Source',
-                scheme,
-                () => _goToSource(s),
-              ),
-              // 桌面端右侧工具栏补齐（与移动端顶部菜单栏能力对齐）：
-              // 原来只有「整理 + 定位源」，缺少移动端已有的缩放、探测、隐藏逻辑线。
-              // 撤销/重做**只保留画布上方工具栏那一处** —— 这里再放一份就是同一个
-              // 功能在 PC 上出现两个撤销按钮（用户反馈），故本列不再渲染。
-              if (!isMobilePlatform) ...[
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Divider(
-                    height: 1,
-                    color: scheme.outlineVariant.withAlpha(60),
-                  ),
-                ),
-                _controlBtn(
-                  Icons.zoom_out,
-                  s.isZh ? '缩小' : 'Zoom out',
-                  scheme,
-                  () => _zoomTo(_currentScale - 0.15),
-                ),
-                const SizedBox(height: 2),
-                _controlBtn(
-                  Icons.zoom_in,
-                  s.isZh ? '放大' : 'Zoom in',
-                  scheme,
-                  () => _zoomTo(_currentScale + 0.15),
-                ),
-                const SizedBox(height: 2),
-                _controlBtn(
-                  Icons.fit_screen_outlined,
-                  s.isZh ? '适应画布' : 'Fit',
-                  scheme,
-                  _zoomToFit,
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Divider(
-                    height: 1,
-                    color: scheme.outlineVariant.withAlpha(60),
-                  ),
-                ),
-                _controlBtn(
-                  Icons.search,
-                  s.isZh ? '探测模式' : 'Probe',
-                  scheme,
-                  () => setState(() => _probeMode = !_probeMode),
-                  color: _probeMode ? scheme.primary : null,
-                ),
-                const SizedBox(height: 2),
-                _controlBtn(
-                  Icons.route,
-                  s.isZh ? '隐藏逻辑线' : 'Hide logic',
-                  scheme,
-                  () => setState(() => _hideLogic = !_hideLogic),
-                  color: _hideLogic ? scheme.error : null,
-                ),
-              ],
-            ],
-          ),
+        const SizedBox(height: 2),
+        _controlBtn(
+          Icons.my_location,
+          s.isZh ? '定位源' : 'Source',
+          scheme,
+          () => _goToSource(s),
         ),
-      ),
+        divider(),
+        _controlBtn(
+          Icons.zoom_out,
+          s.isZh ? '缩小' : 'Zoom out',
+          scheme,
+          () => _zoomTo(_currentScale - 0.15),
+        ),
+        const SizedBox(height: 2),
+        _controlBtn(
+          Icons.zoom_in,
+          s.isZh ? '放大' : 'Zoom in',
+          scheme,
+          () => _zoomTo(_currentScale + 0.15),
+        ),
+        const SizedBox(height: 2),
+        _controlBtn(
+          Icons.fit_screen_outlined,
+          s.isZh ? '适应画布' : 'Fit',
+          scheme,
+          _zoomToFit,
+        ),
+        divider(),
+        _controlBtn(
+          Icons.search,
+          s.isZh ? '探测模式' : 'Probe',
+          scheme,
+          () => setState(() => _probeMode = !_probeMode),
+          selected: _probeMode,
+        ),
+        const SizedBox(height: 2),
+        _controlBtn(
+          Icons.route,
+          s.isZh ? '隐藏逻辑线' : 'Hide logic',
+          scheme,
+          () => setState(() => _hideLogic = !_hideLogic),
+          selected: _hideLogic,
+          color: scheme.error,
+        ),
+      ],
     );
   }
 
@@ -10930,25 +11226,38 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
     ColorScheme scheme,
     VoidCallback onTap, {
     Color? color,
-  }) {
-    // 移动端横屏：缩小按钮 padding 与图标，降低整列高度，防止溢出。
-    final compact = isMobilePlatform && _isLandscape;
-    return Tooltip(
+    bool selected = false,
+  }) => Semantics(
+    toggled: selected ? true : null,
+    child: Tooltip(
       message: tooltip,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: onTap,
-        child: Padding(
-          padding: EdgeInsets.all(compact ? 3 : 6),
-          child: Icon(
-            icon,
-            size: compact ? 14 : 18,
-            color: color ?? scheme.onSurfaceVariant,
+      waitDuration: const Duration(milliseconds: 250),
+      child: IconButton(
+        onPressed: onTap,
+        icon: Icon(icon, size: 20),
+        style: IconButton.styleFrom(
+          foregroundColor: selected
+              ? (color ?? scheme.primary)
+              : scheme.onSurfaceVariant,
+          backgroundColor: selected
+              ? (color ?? scheme.primary).withAlpha(24)
+              : Colors.transparent,
+          hoverColor: scheme.primary.withAlpha(20),
+          highlightColor: scheme.primary.withAlpha(30),
+          minimumSize: const Size.square(44),
+          maximumSize: const Size.square(44),
+          padding: const EdgeInsets.all(10),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
           ),
+          side: selected
+              ? BorderSide(color: (color ?? scheme.primary).withAlpha(45))
+              : BorderSide.none,
         ),
       ),
-    );
-  }
+    ),
+  );
 
   // ── 底栏 ──
 
@@ -11536,6 +11845,7 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       ),
     ];
     return LayoutBuilder(
+      key: const ValueKey('editor-mobile-toolbar'),
       builder: (context, constraints) => ConstrainedBox(
         constraints: BoxConstraints(maxWidth: constraints.maxWidth),
         child: SingleChildScrollView(
@@ -11583,20 +11893,23 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
   /// 历史上文件信息条错用了 editorToolbarScale（顶部工具栏的系数），于是用户把
   /// 「缩放条大小」调大后药丸长高、信息条不动，看起来就是
   /// 「节点文件描述偏移到上方去了」。
-  double _mobileZoomBarScale() {
+  double _mobileZoomBarScale(double availableWidth) {
     return math.min(
       context.read<AppState>().config.editorZoomScale.clamp(1.0, 1.6),
-      math.max(1.0, (MediaQuery.sizeOf(context).width - 106) / 156),
+      math.max(1.0, (availableWidth - 106) / 156),
     );
   }
 
   // ── 移动端专用：底部左侧缩放条 ──
 
-  Widget _buildMobileBottomLeftBar(ColorScheme scheme, AppStrings s) {
+  Widget _buildMobileBottomLeftBar(
+    ColorScheme scheme,
+    AppStrings s, {
+    required double scale,
+  }) {
     // 缩放条大小可在设置中调节（editorZoomScale），直接放大布局盒（不用
     // Transform.scale），点击区域与相邻元素的避让都按真实尺寸计算。
     // 默认比顶部工具栏小一档：40 高、按钮紧贴，不再是一条 48 高的大药丸。
-    final scale = _mobileZoomBarScale();
     final height = _kMobileZoomBarHeight * scale;
     final iconSize = _kMobileZoomBtnIcon * math.min(scale, 1.25);
     final btnBox = _kMobileZoomBtnBox * math.min(scale, 1.2);
@@ -11658,7 +11971,11 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   // ── 移动端专用：底部中央文件信息 ──
 
-  Widget _buildMobileFileInfo(ColorScheme scheme, AppStrings s) {
+  Widget _buildMobileFileInfo(
+    ColorScheme scheme,
+    AppStrings s, {
+    required double maxWidth,
+  }) {
     final v = widget.video;
     final nodesLabel = s.isZh ? '节点' : 'nodes';
     // 右下角的**淡文字**：只常驻最常看的「分辨率 · 时长 · 节点数」。
@@ -11672,9 +11989,8 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
       behavior: HitTestBehavior.opaque,
       onLongPress: () => _showMobileFileInfoSheet(s),
       child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.sizeOf(context).width * 0.62,
-        ),
+        key: const ValueKey('editor-mobile-file-info'),
+        constraints: BoxConstraints(maxWidth: maxWidth),
         child: withoutAppTextScale(
           context,
           Text(
@@ -11898,90 +12214,132 @@ class _PipelineEditorPageState extends State<PipelineEditorPage>
 
   // ── 移动端专用：属性编辑底部弹层 ──
 
+  Widget _buildMobilePropertiesWindow(ColorScheme scheme, AppStrings s) =>
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final maxW = math.max(0.0, constraints.maxWidth - 12);
+          final width = _panelFloatWidth
+              .clamp(math.min(280.0, maxW), maxW)
+              .toDouble();
+          final height = _panelMinimized
+              ? _kFloatTitleH
+              : (_panelDetached
+                    ? math.min(_panelFloatHeight, constraints.maxHeight)
+                    : constraints.maxHeight);
+          final pos = _clampFloatTo(
+            _panelFloatPos ?? Offset(constraints.maxWidth - width, 0),
+            constraints.biggest,
+            width,
+            height: height,
+          );
+          return Stack(
+            key: _panelViewportKey,
+            children: [
+              Positioned(
+                left: _panelDetached ? pos.dx : constraints.maxWidth - width,
+                top: _panelDetached ? pos.dy : 0,
+                width: width,
+                height: math.min(height, constraints.maxHeight),
+                child: ExcludeFocus(
+                  excluding: !_mobilePropsShown,
+                  child: Visibility(
+                    visible: _mobilePropsShown,
+                    maintainState: true,
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: _buildMobilePropertiesSheet(scheme, s),
+                        ),
+                        if (!_panelMinimized)
+                          Positioned(
+                            left: _panelDetached ? null : 0,
+                            right: _panelDetached ? 0 : null,
+                            top: _kFloatTitleH,
+                            bottom: 12,
+                            width: 24,
+                            child: NodeEditorResizeHandle(
+                              key: const ValueKey('editor-mobile-panel-resize'),
+                              axis: Axis.horizontal,
+                              label: s.isZh
+                                  ? '拖动调整属性宽度'
+                                  : 'Drag to resize properties',
+                              onDelta: (delta) => setState(() {
+                                _panelFloatWidth =
+                                    (_panelFloatWidth.clamp(
+                                              math.min(280.0, maxW),
+                                              maxW,
+                                            ) +
+                                            (_panelDetached ? delta : -delta))
+                                        .clamp(math.min(280.0, maxW), maxW)
+                                        .toDouble();
+                              }),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+
   Widget _buildMobilePropertiesSheet(ColorScheme scheme, AppStrings s) {
     final node = _selectedNode;
     final logicBlock = _selectedLogicBlockId != null
         ? _logicBlocks.where((b) => b.id == _selectedLogicBlockId).firstOrNull
         : null;
     if (node == null && logicBlock == null) return const SizedBox.shrink();
-
     final title = logicBlock != null
         ? logicBlock.label(s.isZh)
         : node!.isGate && node.gate != null
         ? _gatePropertyTitle(node, s)
         : (s.isZh ? node.label : node.labelEn);
-
-    // 右侧停靠窄卡片：填满 Positioned 给出的高度（top..bottom），内容单列滚动。
-    // chrome 全面收紧：内边距 12/10→8/6，头部图标/文字/按钮缩小一档，
-    // 分隔线上下间隙压缩 —— 修复「菜单栏过大、选项间隔太散」的观感。
-    return GlassPanel(
-      radius: 14,
-      blur: 12,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      child: Column(
-        mainAxisSize: MainAxisSize.max,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              IconTheme.merge(
-                data: IconThemeData(size: 15, color: scheme.primary),
-                child: logicBlock != null
-                    ? Icon(_logicTypeIcon(logicBlock.type))
-                    : TablerIcon(_stepIcon(node!.type)),
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurface,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              IconButton(
-                icon: Icon(Icons.close, size: 16, color: scheme.outline),
-                tooltip: s.isZh
-                    ? '收起（可从顶部菜单栏恢复）'
-                    : 'Collapse (restore from the top bar)',
-                // 只收起卡片、保留选中：顶部菜单栏会出现一枚图标把它调回来
-                // （改造前这里顺手清空了选中，卡片一关就再也调不出来）
-                onPressed: () => setState(() {
-                  _mobilePropsHiddenFor = node?.id ?? _selectedLogicBlockId;
-                }),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
-                visualDensity: VisualDensity.compact,
-              ),
-            ],
+    return NodeEditorPanelFrame(
+      key: _rightPanelKey,
+      collapsed: _panelMinimized,
+      header: _windowTitleBar(
+        scheme,
+        zh: s.isZh,
+        icon: Icons.tune_rounded,
+        title: title,
+        hideTooltip: s.isZh
+            ? '收起（可从顶部菜单栏恢复）'
+            : 'Collapse (restore from the top bar)',
+        detached: _panelDetached,
+        minimized: _panelMinimized,
+        onMinimize: () => setState(() => _panelMinimized = !_panelMinimized),
+        onToggleDetach: () => setState(() {
+          _panelDetached = !_panelDetached;
+          _panelMinimized = false;
+        }),
+        onHide: () => setState(() {
+          _mobilePropsHiddenFor = node?.id ?? _selectedLogicBlockId;
+        }),
+        onDrag: (delta) => _winDragUpdate(delta, ai: false),
+      ),
+      child: NodeEditorPanelViewport(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(2),
+            child: logicBlock != null
+                ? LogicBlockEditor(
+                    key: ValueKey(logicBlock.id),
+                    block: logicBlock,
+                    childNodes: _nodes
+                        .where((n) => logicBlock.childNodeIds.contains(n.id))
+                        .toList(),
+                    onChanged: () {
+                      setState(() {});
+                      _markDirty();
+                    },
+                    isZh: s.isZh,
+                  )
+                : _buildStepEditor(node!, s.isZh),
           ),
-          const SizedBox(height: 2),
-          Divider(height: 1, color: scheme.outlineVariant.withAlpha(60)),
-          const SizedBox(height: 4),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(2),
-              child: logicBlock != null
-                  ? LogicBlockEditor(
-                      key: ValueKey(logicBlock.id),
-                      block: logicBlock,
-                      childNodes: _nodes
-                          .where((n) => logicBlock.childNodeIds.contains(n.id))
-                          .toList(),
-                      onChanged: () {
-                        setState(() {});
-                        _markDirty();
-                      },
-                      isZh: s.isZh,
-                    )
-                  : _buildStepEditor(node!, s.isZh),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

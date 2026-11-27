@@ -1023,12 +1023,19 @@ class GraphExecutor {
           } on FormatException catch (error) {
             return fail(error.message);
           }
+          if (!isLast && definition.outputType != inputMedia.name) {
+            currentOutput = _tempPath(
+              inputPath, i, _pluginMediaExtension(definition.outputType), tmpSalt,
+            );
+          }
           calls.add(BackendCall(action: '_plugin', params: {
             'input': currentInput,
             'output': currentOutput,
             'plugin': PipelineNode.deepCopyMap(node.pluginEnvelope),
             'values': PipelineNode.deepCopyMap(values),
             'media_type': inputMedia.name,
+            'input_media_type': inputMedia.name,
+            'output_media_type': definition.outputType,
           }));
           break;
         case 'merged':
@@ -2062,6 +2069,14 @@ class GraphExecutor {
     return calls;
   }
 
+  // Containers for plugin steps that change the declared media type.
+  static String _pluginMediaExtension(String mediaType) => switch (mediaType) {
+    'audio' => 'wav',
+    'video' => 'mkv',
+    'image' => 'png',
+    _ => throw FormatException('Unsupported plugin output media type: $mediaType'),
+  };
+
   // ── 输出路径 ──
 
   static String resolveOutputPath(ExecutionPlan plan, VideoFile video, AppConfig config) {
@@ -2079,15 +2094,30 @@ class GraphExecutor {
     final hasSingleFrame = plan.steps.any((step) => step.action == 'frame' &&
         (step.nodes.first.params['extract_mode'] ?? 'single') == 'single');
     final finalMedia = plan.steps.isEmpty ? null : plan.steps.last.nodes.last.outputType;
-    // A still-image producer changes the container as well as the media type.
+    var declaredMedia = plan.startNode.outputType ?? video.fileMediaType;
+    var hasPluginImageConversion = false;
+    for (final step in plan.steps) {
+      final nextMedia = step.nodes.last.outputType ?? declaredMedia;
+      if (step.action == '_plugin' && nextMedia == MediaType.image &&
+          declaredMedia != MediaType.image) {
+        hasPluginImageConversion = true;
+      }
+      declaredMedia = nextMedia;
+    }
     // Retained video output settings must not turn a later image edit into MP4.
-    final hasImageOutput = (hasVisualization || hasSingleFrame) && finalMedia == MediaType.image;
+    final hasPluginStillOutput = hasPluginImageConversion && finalMedia == MediaType.image;
+    final hasImageOutput = (hasVisualization || hasSingleFrame ||
+        hasPluginStillOutput) && finalMedia == MediaType.image;
     if (format != 'keep' && !hasImageOutput) {
       ext = format;
     } else {
       ext = video.filename.split('.').last;
+      var currentMedia = plan.startNode.outputType ?? video.fileMediaType;
       for (final step in plan.steps) {
+        final nextMedia = step.nodes.last.outputType ?? currentMedia;
         ext = switch (step.action) {
+          '_plugin' when nextMedia != currentMedia =>
+            _pluginMediaExtension(nextMedia.name),
           'frame' when (step.nodes.first.params['extract_mode'] ?? 'single') == 'single' =>
             step.nodes.first.params['output_format'] as String? ?? 'png',
           'audio_convert' || 'extract_audio' => step.nodes.first.params['output_format'] as String? ?? 'm4a',
@@ -2099,6 +2129,7 @@ class GraphExecutor {
             AudioVisualization.normalizeFormat(step.nodes.first.params['output_format']),
           _ => ext,
         };
+        currentMedia = nextMedia;
       }
     }
 
@@ -2110,7 +2141,8 @@ class GraphExecutor {
     final fn = namingMode == 'keep' ? '$defaultBase.$ext'
         : namingMode == 'suffix' ? '$base$namingValue.$ext'
         : custom.isEmpty ? '$defaultBase.$ext'
-        : hasVisualization ? AudioVisualization.withExtension(custom, ext)
+        : (hasVisualization || hasPluginStillOutput)
+            ? AudioVisualization.withExtension(custom, ext)
         : '$namingValue.$ext';
 
     var dir = (outputDir != null && outputDir.isNotEmpty) ? outputDir
@@ -2123,7 +2155,8 @@ class GraphExecutor {
 
     var out = '$dir$fn';
     if (out == video.filepath) out = '$dir${base}_processed.$ext';
-    return hasVisualization ? AudioVisualization.uniqueOutput(out, const []) : out;
+    return (hasVisualization || hasPluginStillOutput)
+        ? AudioVisualization.uniqueOutput(out, const []) : out;
   }
 
   // ── 调试描述 ──

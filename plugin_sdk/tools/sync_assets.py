@@ -9,11 +9,16 @@ ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT.parent / "ffmpegpp_gui" / "assets" / "plugin_sdk"
 FILES = [
     "README.md", "LICENSE", "include/ffmpegpp_plugin.h",
+    "include/ffmpegpp_json.h", "include/ffmpegpp_ffmpeg.h",
     "schema/manifest.schema.json", "schema/theme.schema.json", "schema/ai-config.schema.json",
     "tools/build_plugin.py", "tools/self_test.mjs",
     "examples/audio-gain/manifest.json", "examples/audio-gain/plugin.c",
     "examples/video-flip/manifest.json", "examples/video-flip/plugin.c",
     "examples/theme-ai/manifest.json",
+    "examples/media-toolkit/README.md", "examples/media-toolkit/manifest.json",
+    "examples/media-toolkit/build.json", "examples/media-toolkit/selftest.json",
+    "examples/media-toolkit/plugin.cpp", "examples/media-toolkit/filters.c",
+    "examples/media-toolkit/filters.h",
 ]
 
 

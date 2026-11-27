@@ -167,19 +167,20 @@ class FramePreview {
       final group = 'ffmpegpp_${prefix}_${digest}_';
       final key =
           '$group${(timeSeconds * 1000).round().toString().padLeft(12, '0')}.jpg';
-      if (_inFlight[key] case final pending?) {
-        span?.record(
-          'frame.preview.coalesce',
-          details: {'active': _active, 'queued': _queue.length},
-        );
-        return await pending;
-      }
       final target = File(
         '${Directory.systemTemp.path}${Platform.pathSeparator}$key',
       );
       if (await target.exists()) {
         span?.record('frame.preview.cache.hit');
         return target.path;
+      }
+      // Check after the async cache lookup so concurrent misses share one job.
+      if (_inFlight[key] case final pending?) {
+        span?.record(
+          'frame.preview.coalesce',
+          details: {'active': _active, 'queued': _queue.length},
+        );
+        return await pending;
       }
 
       final completer = Completer<String?>();

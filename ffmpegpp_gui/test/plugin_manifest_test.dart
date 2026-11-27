@@ -89,6 +89,35 @@ void main() {
       );
     });
 
+    test('optional author and relative package icon round trip', () {
+      final json = manifestJson();
+      (json['Basic_info'] as Map)['Author'] = 'Example Studio';
+      (json['Basic_info'] as Map)['Icon'] = 'assets/plugin-icon.png';
+      final manifest = PluginManifest.fromJson(json);
+      expect(manifest.basicInfo.author, 'Example Studio');
+      expect(manifest.basicInfo.iconPath, 'assets/plugin-icon.png');
+      expect(
+        PluginManifest.fromJson(manifest.toJson()).basicInfo.toJson(),
+        manifest.basicInfo.toJson(),
+      );
+
+      for (final path in [
+        '../icon.png',
+        '/icon.png',
+        r'assets\icon.png',
+        'icon.svg',
+        'assets/icon.png\u0000',
+      ]) {
+        final invalid = manifestJson();
+        (invalid['Basic_info'] as Map)['Icon'] = path;
+        expect(
+          () => PluginManifest.fromJson(invalid),
+          throwsFormatException,
+          reason: path,
+        );
+      }
+    });
+
     test('data-only manifests do not invent undeclared nodes', () {
       final json = manifestJson()
         ..remove('module')

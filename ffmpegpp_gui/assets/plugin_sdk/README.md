@@ -8,7 +8,7 @@ Start at the [WebAssembly developer guide](https://webassembly.org/getting-start
 
 For WASI SDK set WASI_SDK_PATH to the extracted directory. For Emscripten run its documented emsdk installation/activation steps, then set EMSDK or pass its upstream/bin/clang executable. This SDK intentionally calls clang directly with --target=wasm32 -nostdlib: ordinary WASI executables, Emscripten JS glue, browser APIs, _start and _initialize are not part of FFmpeg++ Plugin ABI v1.
 
-Python 3.9+ is needed for packaging. Node.js is optional and is only used by --self-test; it is not a runtime dependency of FFmpeg++.
+Python 3.9+ is needed for packaging. Node.js is required when a build runs WebAssembly self-tests (explicitly or through an example's selftest.json); it is not needed for compilation-only builds and is never a runtime dependency of FFmpeg++.
 
 ## Compile, test and package
 
@@ -40,11 +40,50 @@ python3 tools/build_plugin.py --example examples/video-flip --output dist/video-
 
 The script's core flags are --target=wasm32 -nostdlib -fno-builtin with --no-entry, --export-memory, a bounded memory maximum and no automatic initializer export. Every business export is void(void). Only ffmpegpp.request_read and ffmpegpp.response_write imports are allowed. See include/ffmpegpp_plugin.h and schema/manifest.schema.json. Schema validation in an editor is useful; the application's stricter semantic validation is authoritative.
 
+### Bounded JSON and FFmpeg-plan helpers
+
+`include/ffmpegpp_json.h` provides bounded views over the caller-owned JSON buffer (`fpp_json_doc`, `fpp_json_value`): `fpp_json_parse`/`root`, object and dotted-path lookup, array accessors, and typed `i32`, `i64`, number, bool and UTF-8 string getters. Strings decode into a caller-owned buffer whose capacity includes the final NUL; invalid UTF-8 and embedded NUL are rejected. `fpp_host_capabilities_init` reads the request's host object; `fpp_host_supports_operation`, `fpp_host_supports_ffmpeg_option` and `fpp_host_supports_ffmpeg_filter` check the advertised lists.
+
+`include/ffmpegpp_ffmpeg.h` writes the exact `ffmpeg.execute` JSON result into a caller-owned buffer. Initialize a plan, attach parsed host capabilities, then append argument strings or option/value pairs. `fpp_ffmpeg_plan_add_filter` is a convenience for simple video `-vf`; use `fpp_ffmpeg_plan_add_option` for audio `-af` or `-filter_complex` graphs. `fpp_ffmpeg_plan_write`/`end` return the JSON length, and `fpp_ffmpeg_plan_respond` writes it through the ABI. The helper bounds the caller buffer and argument count and offers capability prechecks; the backend remains authoritative for the complete filter grammar, UTF-8 capability byte limits and final validation. These plan APIs do not accept input/output paths; the host binds the single node-chain input and output. Keep filter construction and business behavior in your plugin source.
+
+### C/C++ source files and self-tests
+
+The builder accepts `.c`, `.cc`, `.cpp` and `.cxx` sources. C++ uses C++17 in freestanding mode without the C++ standard library, exceptions or RTTI; write plugin business logic in the WASM guest, not a native DLL/SO. Select sources with repeatable `--source <relative-path>` flags; if none are supplied, `build.json`'s `sources` list is used, falling back to `plugin.c` when no source list is configured. Explicit `--source` values override the configuration file. Source paths are relative to the selected example directory.
+
+An example may include `selftest.json`; when present, the builder automatically selects and runs it. `--test-cases <json-path>` selects a different suite. The JSON may be a `cases` array or an object containing that array (up to 1 MiB, 1–1024 cases). A single-call case contains `name`, `entry`, `request` and expected `response` (`expected_response` is also accepted). A sequence case uses `name` and a `steps` array of 1–128 calls; each step has those call fields and may inherit `entry` from its case. Supply each continuation request explicitly: every call, including each sequence step, creates a fresh WebAssembly instance. Metadata is always checked independently against the manifest, even with a custom suite.
+
+`--self-test` enables the ABI smoke test for examples without a case file. Node.js is required whenever a test suite runs, but not for compilation-only builds. `--fixtures <path>` saves the tested case set with `api_version` and `plugin_id` from the manifest for native runtime tests.
+
+From the SDK directory, compile and test the bundled multi-node media example (the `build.json` and `selftest.json` are discovered automatically):
+
+~~~sh
+python3 tools/build_plugin.py --example examples/media-toolkit --output dist/media-toolkit.fppplugin --emit-wasm dist/media-toolkit.wasm --self-test --fixtures dist/media-toolkit-selftest.json
+~~~
+
+Repeat `--source plugin.cpp --source filters.c` to override the example's configured sources, or pass `--test-cases path/to/cases.json` to select an external JSON case file. See `examples/media-toolkit/` for `video_tone`, `audio_normalize` and `audio_waveform`.
+
+### Plugin identity and icon
+
+`Basic_info.Author` is an optional display name (up to 120 characters). `Basic_info.Icon` is an optional relative path to a package-owned PNG, JPEG, WebP or GIF image. Add that image inside the example directory; the builder includes it in the `.fppplugin` archive and rejects unsafe paths, symlinks, invalid image signatures, and files larger than 512 KiB. Keep artwork compact and square for the best result in the plugin manager. Example:
+
+~~~json
+{
+  "Basic_info": {
+    "Name": "My plugin",
+    "Version": "1.0.0",
+    "IsPreview": false,
+    "Summary": "A short description.",
+    "Author": "Example Studio",
+    "Icon": "assets/plugin-icon.png"
+  }
+}
+~~~
+
 ## Import and run
 
 1. In FFmpeg++, enable Settings → Experimental features → Plugins.
 2. Open Plugins from the desktop sidebar or mobile bottom navigation, and import dist/audio-gain.fppplugin.
-3. Review the summary and preview stability warning, then enable the plugin. The example requests no file/network permissions.
+3. Read the summary, the first-enable risk warning and, where applicable, the preview stability warning, then enable the plugin. The example requests no file/network permissions.
 4. Open the node editor, add Audio Gain, and connect an audio Start → Audio Gain → Output. Set Gain (dB) to -6, select an output file, and run through the normal task queue.
 5. The WASM result is {"operation":"audio.volume","decibels":-6}; the host validates it and translates it to the existing audio processing mechanism. The plugin never receives a source/output path or arbitrary FFmpeg/shell access.
 
@@ -70,8 +109,23 @@ Host I/O limits: 128 KiB content per request before Base64 encoding, 2 MiB per w
 
 Treat plugin data as untrusted. Keep credentials out of packages, declare only necessary capabilities, and handle host I/O rejection. Use the application runtime tests in addition to the Node smoke test before publishing.
 
-## SDK source tests
+## SDK source tests and embedded assets
 
-From a repository checkout: python3 -m unittest discover -s plugin_sdk/tests -p 'test_*.py' -v. The Flutter SDK-export test lives in plugin_sdk/tests/sdk_export_test.dart and is run from ffmpegpp_gui. A downloaded SDK omits repository-only tests and asset synchronization tools.
+From the repository root, run the Python tests:
+
+~~~sh
+python3 -m unittest discover -s plugin_sdk/tests -p 'test_*.py' -v
+~~~
+
+After changing reviewed SDK sources, update the source list in `tools/sync_assets.py` when needed, then regenerate and verify the Flutter assets from the repository root:
+
+~~~sh
+python3 plugin_sdk/tools/sync_assets.py
+python3 plugin_sdk/tools/sync_assets.py --check
+~~~
+
+The synchronizer copies the listed files byte for byte, flattens `/` to `__` for Flutter asset names, and generates `ffmpegpp_gui/assets/plugin_sdk/files.json` with the original SDK paths for ZIP export. Include new headers, example source files, build configurations and self-test suites in the list before synchronization. Edit the SDK sources rather than their generated asset copies.
+
+From `ffmpegpp_gui`, verify the actual ZIP export with `flutter test --no-pub --reporter expanded ../plugin_sdk/tests/sdk_export_test.dart`. A downloaded SDK omits repository-only tests and asset synchronization tools; its bundled examples still compile and run their Node self-tests.
 
 The SDK sources use the repository's MIT license; see LICENSE.

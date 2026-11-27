@@ -1,0 +1,147 @@
+{
+  "format_version": 1,
+  "id": "org.ffmpegpp.examples.media-toolkit",
+  "api_version": 1,
+  "app_version": ">=6.0.0-beta2 <7.0.0",
+  "Basic_info": {
+    "Name": "Media Toolkit",
+    "Version": "1.0.0",
+    "IsPreview": true,
+    "Summary": "Three freestanding C/C++ nodes that build controlled FFmpeg filter plans inside the plugin."
+  },
+  "module": "plugin.wasm",
+  "Node_info": [
+    {
+      "id": "video_tone",
+      "name": "Video Tone",
+      "fun": "Adjust brightness, contrast and saturation; optionally make grayscale video.",
+      "IsLogic": true,
+      "IO": {
+        "inputs": 1,
+        "outputs": 1
+      },
+      "input_types": [
+        "video"
+      ],
+      "output_type": "video",
+      "schema_version": 1,
+      "fields": [
+        {
+          "key": "brightness",
+          "label": "Brightness",
+          "type": "number",
+          "default": 0,
+          "min": -1,
+          "max": 1
+        },
+        {
+          "key": "contrast",
+          "label": "Contrast",
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 2
+        },
+        {
+          "key": "saturation",
+          "label": "Saturation",
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 3
+        },
+        {
+          "key": "grayscale",
+          "label": "Grayscale",
+          "type": "boolean",
+          "default": false
+        }
+      ]
+    },
+    {
+      "id": "audio_normalize",
+      "name": "Audio Normalize",
+      "fun": "Select a loudnorm loudness target for podcast, broadcast or streaming audio.",
+      "IsLogic": true,
+      "IO": {
+        "inputs": 1,
+        "outputs": 1
+      },
+      "input_types": [
+        "audio"
+      ],
+      "output_type": "audio",
+      "schema_version": 1,
+      "fields": [
+        {
+          "key": "profile",
+          "label": "Loudness target",
+          "type": "select",
+          "default": "podcast",
+          "options": [
+            "podcast",
+            "broadcast",
+            "streaming"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "audio_waveform",
+      "name": "Audio Waveform",
+      "fun": "Render audio into one PNG waveform image with a bounded size and palette.",
+      "IsLogic": true,
+      "IO": {
+        "inputs": 1,
+        "outputs": 1
+      },
+      "input_types": [
+        "audio"
+      ],
+      "output_type": "image",
+      "schema_version": 1,
+      "fields": [
+        {
+          "key": "width",
+          "label": "Image width",
+          "type": "integer",
+          "default": 1280,
+          "min": 64,
+          "max": 4096
+        },
+        {
+          "key": "height",
+          "label": "Image height",
+          "type": "integer",
+          "default": 720,
+          "min": 64,
+          "max": 2160
+        },
+        {
+          "key": "color",
+          "label": "Waveform color",
+          "type": "select",
+          "default": "cyan",
+          "options": [
+            "cyan",
+            "white",
+            "orange"
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": {
+    "files": {
+      "read": false,
+      "write": false
+    },
+    "network": []
+  },
+  "limits": {
+    "memory_mb": 16,
+    "time_ms": 1000,
+    "fuel": 1000000
+  },
+  "dependencies": []
+}

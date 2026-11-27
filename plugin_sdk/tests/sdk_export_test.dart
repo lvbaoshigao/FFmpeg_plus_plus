@@ -11,32 +11,34 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test(
-    'SDK manifests pass actual host models and contributions',
-    () async {
-      for (final example in ['audio-gain', 'video-flip', 'theme-ai']) {
-        final source = File('../plugin_sdk/examples/$example/manifest.json');
-        final manifest = PluginManifest.fromJson(
-          jsonDecode(await source.readAsString()) as Map<String, dynamic>,
-        );
-        manifest.validateCompatibility('6.0.0-beta2');
-        final config = AppConfig();
-        for (final theme in manifest.themes) {
-          final preset = PluginThemePreset.fromJson(theme);
-          expect(preset.preview(config), isNotEmpty);
-        }
-        for (final data in manifest.aiConfigs) {
-          final catalog = PluginAiCatalog.fromJson(data);
-          final plan = catalog.preview(config);
-          expect(plan.newProfileCount, 1);
-          expect(plan.mergedProfileCount, 0);
-          final applied = plan.applyTo(config);
-          expect(applied.aiProfiles.last.enabled, isFalse);
-          expect(applied.aiProfiles.last.apiKey, isEmpty);
-        }
+  test('SDK manifests pass actual host models and contributions', () async {
+    for (final example in [
+      'audio-gain',
+      'video-flip',
+      'theme-ai',
+      'media-toolkit',
+    ]) {
+      final source = File('../plugin_sdk/examples/$example/manifest.json');
+      final manifest = PluginManifest.fromJson(
+        jsonDecode(await source.readAsString()) as Map<String, dynamic>,
+      );
+      manifest.validateCompatibility('6.0.0-beta2');
+      final config = AppConfig();
+      for (final theme in manifest.themes) {
+        final preset = PluginThemePreset.fromJson(theme);
+        expect(preset.preview(config), isNotEmpty);
       }
-    },
-  );
+      for (final data in manifest.aiConfigs) {
+        final catalog = PluginAiCatalog.fromJson(data);
+        final plan = catalog.preview(config);
+        expect(plan.newProfileCount, 1);
+        expect(plan.mergedProfileCount, 0);
+        final applied = plan.applyTo(config);
+        expect(applied.aiProfiles.last.enabled, isFalse);
+        expect(applied.aiProfiles.last.apiKey, isEmpty);
+      }
+    }
+  });
 
   test('SDK ZIP exports every source asset byte for byte', () async {
     final zipBytes = await PluginSdk.createArchive();
@@ -58,6 +60,22 @@ void main() {
       );
     }
     expect(archive.findFile('include/ffmpegpp_plugin.h'), isNotNull);
+    expect(archive.findFile('include/ffmpegpp_json.h'), isNotNull);
+    expect(archive.findFile('include/ffmpegpp_ffmpeg.h'), isNotNull);
+    for (final name in [
+      'plugin.cpp',
+      'filters.c',
+      'filters.h',
+      'build.json',
+      'selftest.json',
+      'manifest.json',
+    ]) {
+      expect(
+        archive.findFile('examples/media-toolkit/$name'),
+        isNotNull,
+        reason: name,
+      );
+    }
     expect(archive.findFile('examples/audio-gain/plugin.c'), isNotNull);
     expect(archive.findFile('examples/video-flip/plugin.c'), isNotNull);
     expect(archive.findFile('tools/build_plugin.py'), isNotNull);
