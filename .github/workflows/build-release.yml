@@ -63,7 +63,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: server_cpp/build_win
-          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v3-${{ steps.msvc.outputs.compiler-fingerprint }}-${{ hashFiles('server_cpp/CMakeLists.txt', 'build/windows/setup_msvc.ps1', 'build/windows/build_backend.ps1') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cpp-v3-${{ steps.msvc.outputs.compiler-fingerprint }}-${{ hashFiles('server_cpp/CMakeLists.txt', 'server_cpp/runtime/CMakeLists.txt', 'build/windows/setup_msvc.ps1', 'build/windows/build_backend.ps1') }}
 
       - name: Build C++ backend (ffmpegpp.dll)
         shell: pwsh

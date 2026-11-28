@@ -48,6 +48,15 @@ include("${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake")
 add_library(ffmpegpp_wamr_runtime STATIC ${WAMR_RUNTIME_LIB_SOURCE})
 set_target_properties(ffmpegpp_wamr_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(ffmpegpp_wamr_runtime PUBLIC "${WAMR_ROOT_DIR}/core/iwasm/include")
+# WAMR is embedded as a static library. Suppress MSVC DLL import/export
+# decoration for both API headers and propagate this to host consumers;
+# otherwise wasm_export.h makes them request __imp_wasm_runtime_* symbols.
+if(MSVC)
+  target_compile_definitions(ffmpegpp_wamr_runtime PUBLIC
+    WASM_RUNTIME_API_EXTERN=
+    WASM_API_EXTERN=
+  )
+endif()
 if(WIN32)
   target_link_libraries(ffmpegpp_wamr_runtime PUBLIC ntdll)
   if(MINGW)
