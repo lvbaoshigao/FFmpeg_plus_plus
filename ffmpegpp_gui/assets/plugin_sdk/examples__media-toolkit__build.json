@@ -1,0 +1,6 @@
+{
+  "sources": [
+    "plugin.cpp",
+    "filters.c"
+  ]
+}

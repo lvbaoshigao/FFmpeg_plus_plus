@@ -146,12 +146,38 @@ void main() {
 
       expect(find.byTooltip('元素独立窗口'), findsOneWidget);
       expect(find.byTooltip('属性独立窗口'), findsOneWidget);
+      final viewer = find.byType(InteractiveViewer);
+      final canvasState = tester.state(viewer);
+      final originalWidth = tester.getSize(viewer).width;
+      final properties = find.byKey(
+        const ValueKey('editor-properties-section'),
+      );
+      final originalPropertiesHeight = tester.getSize(properties).height;
+      final frame = find.byKey(const ValueKey('editor-panel-window'));
+      final fullCanvasWidth =
+          originalWidth +
+          tester.getSize(frame).width +
+          tester
+              .getSize(find.byKey(const ValueKey('editor-sidebar-resize')))
+              .width;
+      final query = find.byKey(const ValueKey('node-picker-query'));
+      await tester.enterText(query, 'crop');
+      await tester.pump();
       // The combined Elements / Properties titlebar must not offer a merged system window.
       expect(find.byTooltip('拖出为独立系统窗口'), findsNothing);
 
       await tester.tap(find.byTooltip('元素独立窗口'));
       await tester.pump();
       expect(openedPanels, [DetachedPanel.elements]);
+      expect(tester.getSize(viewer).width, closeTo(originalWidth, 0.01));
+      expect(
+        tester.getSize(properties).height,
+        greaterThan(originalPropertiesHeight),
+      );
+      expect(
+        find.byKey(const ValueKey('editor-elements-section')),
+        findsNothing,
+      );
       expect(find.byTooltip('元素独立窗口'), findsNothing);
       expect(find.byTooltip('属性独立窗口'), findsOneWidget);
 
@@ -160,6 +186,24 @@ void main() {
       expect(openedPanels, [DetachedPanel.elements, DetachedPanel.properties]);
       expect(find.byTooltip('元素独立窗口'), findsNothing);
       expect(find.byTooltip('属性独立窗口'), findsNothing);
+      expect(frame, findsNothing);
+      expect(tester.getSize(viewer).width, closeTo(fullCanvasWidth, 0.01));
+      expect(tester.state(viewer), same(canvasState));
+
+      MultiWindowService.delegate!.onPanelWindowGone(DetachedPanel.properties);
+      await tester.pump();
+      expect(find.byTooltip('属性独立窗口'), findsOneWidget);
+      expect(find.byTooltip('元素独立窗口'), findsNothing);
+      expect(tester.getSize(viewer).width, closeTo(originalWidth, 0.01));
+      MultiWindowService.delegate!.onPanelWindowGone(DetachedPanel.elements);
+      await tester.pump();
+      expect(find.byTooltip('元素独立窗口'), findsOneWidget);
+      expect(tester.widget<TextField>(query).controller!.text, 'crop');
+      expect(
+        tester.getSize(properties).height,
+        closeTo(originalPropertiesHeight, 0.01),
+      );
+      expect(tester.state(viewer), same(canvasState));
       expect(tester.takeException(), isNull);
 
       await tester.pumpWidget(const SizedBox.shrink());

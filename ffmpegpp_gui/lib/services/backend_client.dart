@@ -226,6 +226,29 @@ class BackendClient {
     );
   }
 
+  /// Executes a validated plugin plan using the ordinary task worker.
+  Future<Map<String, dynamic>> pluginFfmpeg(
+    String taskId, {
+    required String input,
+    required String output,
+    required List<String> arguments,
+    required String inputType,
+    required String outputType,
+  }) => _runTracked(
+    taskId,
+    () => _traceRequest(
+      'plugin_ffmpeg',
+      () => _process.requestWithId(taskId, 'plugin_ffmpeg', {
+        'input': input,
+        'output': output,
+        'arguments': arguments,
+        'input_type': inputType,
+        'output_type': outputType,
+      }),
+      requestFields: 5,
+    ),
+  );
+
   /// 字幕烧录
   Future<Map<String, dynamic>> subtitle(
     String taskId, {

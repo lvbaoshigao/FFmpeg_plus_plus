@@ -72,6 +72,11 @@ Uint8List _package(Map<String, dynamic> manifest) {
       ArchiveFile('plugin.wasm', 8, [0, 97, 115, 109, 1, 0, 0, 0]),
     );
   }
+  final icon = (manifest['Basic_info'] as Map)['Icon'];
+  if (icon is String) {
+    const pngHeader = [137, 80, 78, 71, 13, 10, 26, 10];
+    archive.addFile(ArchiveFile(icon, pngHeader.length, pngHeader));
+  }
   return Uint8List.fromList(ZipEncoder().encode(archive));
 }
 
@@ -183,6 +188,52 @@ void main() {
       manager.invoke(_id, 'Node_execute', unknown),
       throwsFormatException,
     );
+  });
+
+  test('optional author and package icon are validated and exposed', () async {
+    final manifest = _manifest();
+    final basic = Map<String, dynamic>.from(manifest['Basic_info'] as Map)
+      ..['Author'] = 'Example Studio'
+      ..['Icon'] = 'assets/icon.png';
+    manifest['Basic_info'] = basic;
+    runtime.metadata = manifest;
+    await manager.installPackage(_package(manifest));
+    await manager.setFeatureEnabled(true);
+    await manager.setEnabled(_id, true);
+
+    expect(manager.plugin(_id)!.manifest.basicInfo.author, 'Example Studio');
+    expect(manager.plugin(_id)!.manifest.basicInfo.iconPath, 'assets/icon.png');
+    expect(await manager.iconBytes(_id), [137, 80, 78, 71, 13, 10, 26, 10]);
+  });
+
+  test('node toggles persist and gate catalog and execution', () async {
+    await manager.installPackage(_package(_manifest()));
+    await manager.setFeatureEnabled(true);
+    await manager.setEnabled(_id, true);
+
+    await manager.setNodeEnabled(_id, 'volume', false);
+    expect(manager.plugin(_id)!.isNodeEnabled('volume'), isFalse);
+    expect(catalog.lookup(_id, 'volume'), isNull);
+    await expectLater(
+      manager.invoke(_id, 'Node_execute', _request()),
+      throwsA(_code('node_disabled')),
+    );
+
+    manager.dispose();
+    manager = PluginManager(
+      root: root,
+      runtime: runtime,
+      appVersion: '6.0.0-beta2',
+      catalog: catalog,
+    );
+    await manager.initialize();
+    expect(manager.plugin(_id)!.isNodeEnabled('volume'), isFalse);
+    await manager.setFeatureEnabled(true);
+    expect(catalog.lookup(_id, 'volume'), isNull);
+
+    await manager.setNodeEnabled(_id, 'volume', true);
+    expect(manager.plugin(_id)!.isNodeEnabled('volume'), isTrue);
+    expect(catalog.lookup(_id, 'volume'), isNotNull);
   });
 
   test(

@@ -472,18 +472,23 @@ void main() {
         (width: 900.0, scale: 1.5, compact: false),
         (width: 599.0, scale: 1.0, compact: true),
       ]) {
-        // The docked elements/properties panel leaves 60% for the canvas. Measure
-        // that pane, rather than treating the 2000dp viewport as toolbar space.
-        final currentWidth = tester.getSize(canvasBar()).width;
-        geometry.value = (
-          // Avoid fractional panel allocation rounding just below the boundary.
-          width:
-              geometry.value.width +
-              (scenario.width - currentWidth + (scenario.compact ? 0 : 0.001)) /
-                  0.6,
-          textScale: scenario.scale,
-        );
-        await _layout(tester);
+        // Sidebar minimums and maximums make the canvas fraction depend on the
+        // local pane width. Re-measure after resizing instead of assuming 60%.
+        final targetWidth = scenario.width + (scenario.compact ? 0 : 0.001);
+        for (var attempt = 0; attempt < 8; attempt++) {
+          final currentWidth = tester.getSize(canvasBar()).width;
+          final fraction = currentWidth / geometry.value.width;
+          geometry.value = (
+            width:
+                geometry.value.width + (targetWidth - currentWidth) / fraction,
+            textScale: scenario.scale,
+          );
+          await _layout(tester);
+          if ((tester.getSize(canvasBar()).width - targetWidth).abs() <
+              0.0001) {
+            break;
+          }
+        }
         expect(
           tester.getSize(canvasBar()).width,
           closeTo(scenario.width, 0.01),

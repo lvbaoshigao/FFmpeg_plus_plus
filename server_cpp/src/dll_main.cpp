@@ -17,6 +17,7 @@
 #include "installer.h"
 #include "message_queues.h"
 #include "plugin_runtime.h"
+#include "plugin_ffmpeg.h"
 #include <set>
 #include <mutex>
 #include <vector>
@@ -243,7 +244,9 @@ static void workerLoop() {
                 TaskIdScope& operator=(const TaskIdScope&) = delete;
             } taskScope(reqId);
 
-            if (action == "transcode") {
+            if (action == "plugin_ffmpeg") {
+                handlePluginFFmpeg(req, isCancelled);
+            } else if (action == "transcode") {
                 handleTranscode(req, isCancelled);
             } else if (action == "subtitle") {
                 handleSubtitle(req, isCancelled);

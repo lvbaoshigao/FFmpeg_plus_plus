@@ -1,9 +1,11 @@
 import 'dart:io';
 
-import 'package:ffmpegpp_gui/models/quick_config.dart';
+import 'package:ffmpegpp_gui/models/models.dart';
 import 'package:ffmpegpp_gui/pages/quick_config_page.dart';
 import 'package:ffmpegpp_gui/platform/app_platform.dart';
 import 'package:ffmpegpp_gui/providers/app_state.dart';
+import 'package:ffmpegpp_gui/services/quick_config_pipeline.dart';
+import 'package:ffmpegpp_gui/theme/app_theme.dart';
 import 'package:ffmpegpp_gui/widgets/font_picker.dart';
 import 'package:ffmpegpp_gui/widgets/step_editors/image_crop_dialog.dart';
 import 'package:ffmpegpp_gui/widgets/step_editors/video_crop_step_editor.dart';
@@ -28,6 +30,7 @@ Future<void> _pumpHost(
   Widget child, {
   Size size = const Size(1000, 800),
   FakeViewPadding padding = const FakeViewPadding(),
+  ThemeData? theme,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
@@ -36,11 +39,13 @@ Future<void> _pumpHost(
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
     MaterialApp(
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        dialogTheme: _dialogTheme,
-      ),
+      theme:
+          theme ??
+          ThemeData(
+            useMaterial3: true,
+            brightness: Brightness.dark,
+            dialogTheme: _dialogTheme,
+          ),
       home: Scaffold(body: child),
     ),
   );
@@ -127,6 +132,7 @@ void main() {
           ),
         ),
         size: size,
+        padding: const FakeViewPadding(top: 24, bottom: 16),
       );
       await tester.pumpAndSettle();
 
@@ -134,10 +140,116 @@ void main() {
       final rect = tester.getRect(find.byWidget(_dialogMaterial(tester)));
       expect(rect.left, greaterThanOrEqualTo(16));
       expect(rect.right, lessThanOrEqualTo(size.width - 16));
+      expect(rect.top, greaterThanOrEqualTo(24));
+      expect(rect.bottom, lessThanOrEqualTo(size.height - 16));
       if (size.width > 760) expect(rect.width, greaterThan(560));
+
+      tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+      await tester.pumpAndSettle();
+      _expectThemedSurface(_dialogMaterial(tester));
+      expect(
+        tester.getRect(find.byWidget(_dialogMaterial(tester))).bottom,
+        lessThanOrEqualTo(size.height - 280 - 16),
+      );
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets(
+    'quick config follows glass and solid theme changes without losing edits',
+    (tester) async {
+      final app = AppState();
+      addTearDown(app.dispose);
+      final node = createQuickConfigNode(
+        PipelineStepType.audioVolume,
+        MediaType.audio,
+      )..params['volume_db'] = -6.0;
+      final page = ChangeNotifierProvider.value(
+        value: app,
+        child: QuickConfigPage(
+          config: QuickConfig(
+            id: 'theme-switch',
+            fileType: QuickFileType.audio,
+            nodes: [node],
+          ),
+          isZh: false,
+          onSave: (_) async {},
+        ),
+      );
+      const asymmetricShape = RoundedRectangleBorder(
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(6),
+          topRight: Radius.circular(36),
+          bottomLeft: Radius.circular(18),
+        ),
+        side: BorderSide(color: Colors.orange, width: 3),
+      );
+      final customTheme = ThemeData(
+        dialogTheme: _dialogTheme.copyWith(
+          shape: asymmetricShape,
+          elevation: 12,
+          surfaceTintColor: Colors.blue,
+        ),
+      );
+      final themes = [
+        (AppTheme.dark(), true),
+        (AppTheme.light(), true),
+        (AppTheme.dark(glassEffect: 'blur'), true),
+        (AppTheme.light(glassEffect: 'none'), false),
+        (customTheme, false),
+        (ThemeData(), false),
+      ];
+      State? wizardState;
+      for (final (theme, blurred) in themes) {
+        await _pumpHost(tester, page, theme: theme);
+        await tester.pumpAndSettle();
+        final material = _dialogMaterial(tester);
+        if (theme.dialogTheme.shape != null) {
+          expect(material.shape, theme.dialogTheme.shape);
+        }
+        expect(
+          material.color,
+          theme.dialogTheme.backgroundColor ??
+              theme.colorScheme.surfaceContainerHigh,
+        );
+        expect(material.clipBehavior, Clip.antiAlias);
+        if (theme.dialogTheme.elevation != null) {
+          expect(material.elevation, theme.dialogTheme.elevation);
+        }
+        if (theme.dialogTheme.surfaceTintColor != null) {
+          expect(material.surfaceTintColor, theme.dialogTheme.surfaceTintColor);
+        }
+        final backdrop = find
+            .descendant(
+              of: find.byType(Dialog),
+              matching: find.byType(BackdropFilter),
+            )
+            .first;
+        expect(tester.widget<BackdropFilter>(backdrop).enabled, blurred);
+        expect(
+          find.ancestor(of: backdrop, matching: find.byType(ClipRRect)),
+          findsNothing,
+          reason: 'The glass backdrop must share the themed dialog outline.',
+        );
+        if (wizardState == null) {
+          await tester.tap(find.byKey(ValueKey('quick_node_${node.id}')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.widgetWithText(ChoiceChip, '-10 dB'));
+          await tester.pumpAndSettle();
+          wizardState = tester.state(find.byType(QuickConfigPage));
+        }
+        expect(tester.state(find.byType(QuickConfigPage)), same(wizardState));
+        expect(
+          tester
+              .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '-10 dB'))
+              .selected,
+          isTrue,
+        );
+        expect(tester.takeException(), isNull);
+      }
+      expect(node.params['volume_db'], -6.0);
+    },
+  );
 
   for (final (mobile, size) in [
     (false, const Size(390, 844)),

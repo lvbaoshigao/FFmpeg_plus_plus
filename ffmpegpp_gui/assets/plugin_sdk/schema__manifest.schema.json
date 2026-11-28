@@ -52,6 +52,19 @@
         "Summary": {
           "type": "string",
           "maxLength": 4096
+        },
+        "Author": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "pattern": "^.*\\S.*$"
+        },
+        "Icon": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240,
+          "description": "Relative package path to a PNG, JPEG, WebP or GIF icon (up to 512 KiB).",
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:]).+\\.(?:[pP][nN][gG]|[jJ][pP][eE]?[gG]|[wW][eE][bB][pP]|[gG][iI][fF])$"
         }
       }
     },

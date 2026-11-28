@@ -18,15 +18,22 @@ class InstalledPlugin {
   final PluginManifest manifest;
   final bool enabled;
   final Set<String> grantedPermissions;
+  final Set<String> enabledNodeIds;
   final bool hasRollback;
   final String? lastError;
   InstalledPlugin({
     required this.manifest,
     this.enabled = false,
     Set<String> grantedPermissions = const {},
+    Set<String>? enabledNodeIds,
     this.hasRollback = false,
     this.lastError,
-  }) : grantedPermissions = Set.unmodifiable(grantedPermissions);
+  }) : grantedPermissions = Set.unmodifiable(grantedPermissions),
+       enabledNodeIds = Set.unmodifiable(
+         enabledNodeIds ?? manifest.nodes.map((node) => node.id).toSet(),
+       );
+
+  bool isNodeEnabled(String nodeId) => enabledNodeIds.contains(nodeId);
 }
 
 class PluginPackageInspection {
@@ -105,6 +112,17 @@ class PluginManager extends ChangeNotifier {
     return null;
   }
 
+  Future<Uint8List?> iconBytes(String id) async {
+    final record = _records[id];
+    final path = record == null ? null : _manifest(record).basicInfo.iconPath;
+    if (record == null || path == null) return null;
+    return _storage.readPackageFile(
+      record.version,
+      path,
+      maxBytes: pluginMaxIconBytes,
+    );
+  }
+
   Future<void> initialize() => _mutate(() async {
     if (_initialized) return;
     await _storage.initialize();
@@ -113,6 +131,13 @@ class PluginManager extends ChangeNotifier {
     for (final record in records) {
       final manifest = _manifest(record);
       _validateContributions(manifest);
+      final declaredNodeIds = manifest.nodes.map((node) => node.id).toSet();
+      if (!declaredNodeIds.containsAll(record.disabledNodeIds)) {
+        throw const PluginException(
+          'Stored node settings do not match the installed manifest.',
+          code: 'invalid_storage',
+        );
+      }
       await _storage.validateVersion(record.version);
       if (record.previousVersion != null) {
         final previous = PluginManifest.fromJson(
@@ -319,6 +344,46 @@ class PluginManager extends ChangeNotifier {
     });
   }
 
+  Future<void> setNodeEnabled(String pluginId, String nodeId, bool enabled) {
+    final suspended = _suspend({pluginId});
+    _publish();
+    return _mutate(() async {
+      try {
+        _requireInitialized();
+        final record = _record(pluginId);
+        final manifest = _manifest(record);
+        if (!manifest.nodes.any((node) => node.id == nodeId)) {
+          throw const PluginException(
+            'The node is not declared by this plugin.',
+            code: 'undeclared_node',
+          );
+        }
+        final disabled = Set<String>.of(record.disabledNodeIds);
+        final wasEnabled = !disabled.contains(nodeId);
+        if (wasEnabled == enabled) {
+          _resume(suspended);
+          return;
+        }
+        if (enabled) {
+          disabled.remove(nodeId);
+        } else {
+          disabled.add(nodeId);
+        }
+        final next = Map<String, PluginStoredRecord>.of(_records);
+        next[pluginId] = _copy(
+          record,
+          enabled: record.enabled,
+          disabledNodeIds: disabled,
+        );
+        await _commit(next);
+        _resume(suspended);
+      } catch (_) {
+        _resume(suspended);
+        rethrow;
+      }
+    });
+  }
+
   /// Metadata inspection grants no capabilities and cannot issue continuations.
   Future<void> selfCheck(String id) async {
     _requireInitialized();
@@ -427,6 +492,7 @@ class PluginManager extends ChangeNotifier {
       );
     }
     final epoch = _epochs[pluginId] ?? 0;
+    String? invocationNodeId;
     void checkActive() {
       _requireFeature();
       _checkEpoch(pluginId, epoch);
@@ -437,6 +503,14 @@ class PluginManager extends ChangeNotifier {
         throw const PluginException(
           'Plugin invocation was cancelled.',
           code: 'cancelled',
+        );
+      }
+      if (invocationNodeId != null &&
+          _records[pluginId]?.disabledNodeIds.contains(invocationNodeId) ==
+              true) {
+        throw const PluginException(
+          'The selected plugin node is disabled.',
+          code: 'node_disabled',
         );
       }
       _validateDependencies(pluginId, _records, requireVerified: true);
@@ -456,6 +530,13 @@ class PluginManager extends ChangeNotifier {
         throw const PluginException(
           'The plugin node was not declared.',
           code: 'undeclared_node',
+        );
+      }
+      invocationNodeId = nodeId as String;
+      if (record.disabledNodeIds.contains(invocationNodeId)) {
+        throw const PluginException(
+          'The selected plugin node is disabled.',
+          code: 'node_disabled',
         );
       }
       if (entry == 'Node_execute') {
@@ -546,6 +627,55 @@ class PluginManager extends ChangeNotifier {
         throw const PluginException(
           'The declared module is missing or is not a WASM32 binary.',
           code: 'invalid_module',
+        );
+      }
+    }
+    final iconPath = manifest.basicInfo.iconPath;
+    if (iconPath != null) {
+      final bytes = contents.files[iconPath];
+      if (bytes == null || bytes.isEmpty || bytes.length > pluginMaxIconBytes) {
+        throw const PluginException(
+          'The declared plugin icon is missing or exceeds 512 KiB.',
+          code: 'invalid_icon',
+        );
+      }
+      final extension = iconPath
+          .substring(iconPath.lastIndexOf('.'))
+          .toLowerCase();
+      final isPng =
+          bytes.length >= 8 &&
+          pluginJsonEqual(bytes.sublist(0, 8), [
+            137,
+            80,
+            78,
+            71,
+            13,
+            10,
+            26,
+            10,
+          ]);
+      final isJpeg =
+          bytes.length >= 3 &&
+          pluginJsonEqual(bytes.sublist(0, 3), [255, 216, 255]);
+      final signature = bytes.length >= 6
+          ? String.fromCharCodes(bytes.take(6))
+          : '';
+      final isGif = signature == 'GIF87a' || signature == 'GIF89a';
+      final isWebp =
+          bytes.length >= 12 &&
+          pluginJsonEqual(bytes.sublist(0, 4), [82, 73, 70, 70]) &&
+          pluginJsonEqual(bytes.sublist(8, 12), [87, 69, 66, 80]);
+      final valid = switch (extension) {
+        '.png' => isPng,
+        '.jpg' || '.jpeg' => isJpeg,
+        '.gif' => isGif,
+        '.webp' => isWebp,
+        _ => false,
+      };
+      if (!valid) {
+        throw const PluginException(
+          'The declared plugin icon does not match its image format.',
+          code: 'invalid_icon',
         );
       }
     }
@@ -816,15 +946,20 @@ class PluginManager extends ChangeNotifier {
 
   void _publish() {
     _snapshot = List.unmodifiable(
-      _records.values.map(
-        (record) => InstalledPlugin(
-          manifest: _manifest(record),
+      _records.values.map((record) {
+        final manifest = _manifest(record);
+        return InstalledPlugin(
+          manifest: manifest,
           enabled: record.enabled,
           grantedPermissions: record.grantedPermissions,
+          enabledNodeIds: _enabledNodes(
+            record,
+            manifest,
+          ).map((node) => node.id).toSet(),
           hasRollback: record.previousVersion != null,
           lastError: record.lastError,
-        ),
-      ),
+        );
+      }),
     );
     final available = <PluginManifest>[];
     if (_featureEnabled && !_disposed) {
@@ -832,7 +967,8 @@ class PluginManager extends ChangeNotifier {
         if (!record.enabled || !_verified.contains(record.id)) continue;
         try {
           _validateDependencies(record.id, _records, requireVerified: true);
-          available.add(_manifest(record));
+          final manifest = _manifest(record);
+          available.add(manifest.withNodes(_enabledNodes(record, manifest)));
         } catch (_) {
           /* unavailable dependency */
         }
@@ -865,10 +1001,18 @@ class PluginManager extends ChangeNotifier {
       ));
   PluginManifest _manifest(PluginStoredRecord record) =>
       PluginManifest.fromJson(record.version.manifest);
+  List<PluginNodeDefinition> _enabledNodes(
+    PluginStoredRecord record,
+    PluginManifest manifest,
+  ) => manifest.nodes
+      .where((node) => !record.disabledNodeIds.contains(node.id))
+      .toList(growable: false);
+
   PluginStoredRecord _copy(
     PluginStoredRecord record, {
     required bool enabled,
     Set<String>? grantedPermissions,
+    Set<String>? disabledNodeIds,
     bool clearGrants = false,
     String? lastError,
   }) => PluginStoredRecord(
@@ -878,6 +1022,7 @@ class PluginManager extends ChangeNotifier {
     grantedPermissions: clearGrants
         ? const {}
         : grantedPermissions ?? record.grantedPermissions,
+    disabledNodeIds: disabledNodeIds ?? record.disabledNodeIds,
     lastError: lastError,
   );
   void _requireInitialized() {

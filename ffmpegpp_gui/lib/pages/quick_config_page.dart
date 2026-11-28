@@ -8,6 +8,7 @@ import '../providers/app_state.dart';
 import '../services/quick_config_pipeline.dart';
 import '../theme/app_strings.dart';
 import '../widgets/app_alert_dialog.dart';
+import '../widgets/liquid_glass_fallback.dart' show cachedGlassBlur;
 import '../widgets/step_editors/audio_compressor_step_editor.dart';
 import '../widgets/step_editors/audio_convert_step_editor.dart';
 import '../widgets/step_editors/audio_denoise_step_editor.dart';
@@ -256,6 +257,8 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
     final scheme = Theme.of(context).colorScheme;
+    final dialogSurface =
+        DialogTheme.of(context).backgroundColor ?? scheme.surfaceContainerHigh;
     final errors = [
       ...validateQuickConfigNodes(_config, isZh: _isZh),
       ...validateQuickConfigParameters(_config, isZh: _isZh),
@@ -271,9 +274,19 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
         availableHeight < 460 || media.textScaler.scale(14) >= 20;
 
     final header = Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 8, 6),
+      padding: const EdgeInsets.fromLTRB(20, 18, 12, 10),
       child: Row(
         children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: scheme.primaryContainer.withAlpha(150),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: scheme.primary.withAlpha(36)),
+            ),
+            child: Icon(Icons.auto_awesome, size: 22, color: scheme.primary),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -282,7 +295,10 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
                   _text('快捷配置向导', 'Quick configuration'),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleLarge,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.4,
+                  ),
                 ),
                 const SizedBox(height: 4),
                 Text(
@@ -308,12 +324,14 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
       ),
     );
     final stepLabel = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-      child: Text(
-        _editing
-            ? _text('2 · 配置处理节点', '2 · Configure nodes')
-            : _text('1 · 选择处理节点', '1 · Select nodes'),
-        style: TextStyle(color: scheme.primary, fontWeight: FontWeight.w600),
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          _stepBadge(1, _text('选择处理节点', 'Select nodes'), !_editing),
+          _stepBadge(2, _text('配置处理节点', 'Configure nodes'), _editing),
+        ],
       ),
     );
     final messages = <Widget>[
@@ -328,7 +346,13 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
           ? _buildDetails(scrollable: !compactViewport)
           : _buildSelection(scrollable: !compactViewport),
     );
-    final footer = Padding(
+    final footer = Container(
+      decoration: BoxDecoration(
+        color: scheme.surface.withAlpha(90),
+        border: Border(
+          top: BorderSide(color: scheme.outlineVariant.withAlpha(72)),
+        ),
+      ),
       padding: const EdgeInsets.all(12),
       child: Wrap(
         alignment: WrapAlignment.end,
@@ -362,8 +386,15 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
           OutlinedButton.icon(
             key: const ValueKey('quick_save'),
             onPressed: canSave ? _save : null,
-            icon: const Icon(Icons.save_outlined),
-            label: Text(_text('保存', 'Save')),
+            icon: _saving
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.save_outlined),
+            label: Text(
+              _saving ? _text('保存中…', 'Saving…') : _text('保存', 'Save'),
+            ),
           ),
           if (widget.onExecute != null)
             FilledButton.icon(
@@ -387,7 +418,6 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
                 const Divider(height: 1),
                 ...messages,
                 flow,
-                const Divider(height: 1),
                 footer,
               ],
             ),
@@ -400,7 +430,6 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
               const Divider(height: 1),
               ...messages,
               Expanded(child: flow),
-              const Divider(height: 1),
               footer,
             ],
           );
@@ -410,19 +439,76 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && !_saving) _requestClose();
       },
-      child: Dialog(
-        insetAnimationDuration: media.disableAnimations
-            ? Duration.zero
-            : const Duration(milliseconds: 100),
+      child: AppModalSurface(
         insetPadding: EdgeInsets.all(media.size.width < 600 ? 16 : 24),
         constraints: const BoxConstraints(maxWidth: 980),
-        clipBehavior: Clip.antiAlias,
-        child: SizedBox(
-          width: math.min(980.0, media.size.width - 16),
-          height: dialogHeight,
-          child: layout,
+        // The shared modal supplies the themed surface, border, and shape clip.
+        child: BackdropFilter(
+          filter: cachedGlassBlur(8),
+          enabled:
+              !media.highContrast &&
+              !media.disableAnimations &&
+              dialogSurface.a < 1,
+          child: SizedBox(
+            width: math.min(980.0, media.size.width - 16),
+            height: dialogHeight,
+            child: layout,
+          ),
         ),
       ),
+    );
+  }
+
+  Widget _stepBadge(int number, String label, bool active) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      selected: active,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: active
+              ? scheme.primaryContainer.withAlpha(140)
+              : scheme.surface.withAlpha(70),
+          borderRadius: BorderRadius.circular(99),
+          border: Border.all(
+            color: active
+                ? scheme.primary.withAlpha(60)
+                : scheme.outlineVariant.withAlpha(70),
+          ),
+        ),
+        child: Text(
+          '$number · $label',
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: active ? scheme.primary : scheme.onSurfaceVariant,
+            fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // One shared glass backdrop; inner layers only tint it to keep scrolling light.
+  Widget _surface({
+    required Widget child,
+    EdgeInsetsGeometry padding = const EdgeInsets.all(16),
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            scheme.surface.withAlpha(dark ? 110 : 165),
+            scheme.surfaceContainerHigh.withAlpha(dark ? 85 : 110),
+          ],
+        ),
+        border: Border.all(color: scheme.outlineVariant.withAlpha(90)),
+      ),
+      child: child,
     );
   }
 
@@ -516,132 +602,180 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
 
   Widget _buildCatalog() {
     final types = availableQuickNodeTypes(_config.fileType, nodes: _nodes);
-    return Column(
+    final scheme = Theme.of(context).colorScheme;
+    return _surface(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            _text('可用节点', 'Available nodes'),
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            _text(
+              '点击添加，可重复添加。不兼容的节点已自动隐藏。',
+              'Tap to add; repeat any node. Incompatible nodes are hidden.',
+            ),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 12),
+          if (types.isEmpty)
+            Text(
+              _text(
+                '请先修正右侧流程中的不兼容节点。',
+                'Resolve the incompatible nodes in the sequence first.',
+              ),
+            ),
+          for (final type in types)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: OutlinedButton(
+                key: ValueKey('quick_pick_${type.name}'),
+                onPressed: () => _add(type),
+                style: OutlinedButton.styleFrom(
+                  alignment: Alignment.centerLeft,
+                  backgroundColor: scheme.surface.withAlpha(65),
+                  side: BorderSide(color: scheme.outlineVariant.withAlpha(110)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.add_circle_outline, size: 18),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(_label(PipelineNode(id: '', type: type))),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChain() => _surface(
+    child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          _text('可用节点', 'Available nodes'),
+          _text('处理顺序（${_nodes.length}）', 'Sequence (${_nodes.length})'),
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: 6),
         Text(
           _text(
-            '点击添加，可重复添加。不兼容的节点已自动隐藏。',
-            'Tap to add; repeat any node. Incompatible nodes are hidden.',
+            '按列表从上到下串行执行。点击节点编辑参数。',
+            'Runs serially from top to bottom. Tap a node to edit its settings.',
           ),
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 12),
-        if (types.isEmpty)
-          Text(
-            _text(
-              '请先修正右侧流程中的不兼容节点。',
-              'Resolve the incompatible nodes in the sequence first.',
+        if (_nodes.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Column(
+              children: [
+                Icon(
+                  Icons.playlist_add_rounded,
+                  size: 32,
+                  color: Theme.of(context).colorScheme.primary.withAlpha(150),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  _text('添加第一个处理节点', 'Add your first processing node'),
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ),
           ),
-        for (final type in types)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: OutlinedButton(
-              key: ValueKey('quick_pick_${type.name}'),
-              onPressed: () => _add(type),
-              style: OutlinedButton.styleFrom(
-                alignment: Alignment.centerLeft,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 12,
-                ),
+        for (final (index, node) in _nodes.indexed)
+          Card(
+            margin: const EdgeInsets.only(bottom: 8),
+            elevation: 0,
+            color: Theme.of(context).colorScheme.surface.withAlpha(90),
+            surfaceTintColor: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(
+                color: node.id == _selectedId
+                    ? Theme.of(context).colorScheme.primary.withAlpha(100)
+                    : Theme.of(
+                        context,
+                      ).colorScheme.outlineVariant.withAlpha(80),
               ),
-              child: Row(
-                children: [
-                  const Icon(Icons.add_circle_outline, size: 18),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(_label(PipelineNode(id: '', type: type))),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                ListTile(
+                  key: ValueKey('quick_node_${node.id}'),
+                  leading: CircleAvatar(
+                    radius: 16,
+                    backgroundColor: Theme.of(
+                      context,
+                    ).colorScheme.primaryContainer.withAlpha(150),
+                    foregroundColor: Theme.of(
+                      context,
+                    ).colorScheme.onPrimaryContainer,
+                    child: Text('${index + 1}'),
                   ),
-                ],
-              ),
+                  title: Text(
+                    _label(node),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(node.mediaTag, maxLines: 1),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openNode(node),
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    IconButton(
+                      key: ValueKey('quick_up_${node.id}'),
+                      tooltip: _text('上移', 'Move up'),
+                      onPressed: index == 0 ? null : () => _move(index, -1),
+                      icon: const Icon(Icons.arrow_upward, size: 18),
+                    ),
+                    IconButton(
+                      key: ValueKey('quick_down_${node.id}'),
+                      tooltip: _text('下移', 'Move down'),
+                      onPressed: index == _nodes.length - 1
+                          ? null
+                          : () => _move(index, 1),
+                      icon: const Icon(Icons.arrow_downward, size: 18),
+                    ),
+                    IconButton(
+                      key: ValueKey('quick_remove_${node.id}'),
+                      tooltip: _text('移除', 'Remove'),
+                      onPressed: () => _remove(index),
+                      icon: const Icon(Icons.remove_circle_outline, size: 18),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
       ],
-    );
-  }
-
-  Widget _buildChain() => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Text(
-        _text('处理顺序（${_nodes.length}）', 'Sequence (${_nodes.length})'),
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
-      const SizedBox(height: 6),
-      Text(
-        _text(
-          '按列表从上到下串行执行。点击节点编辑参数。',
-          'Runs serially from top to bottom. Tap a node to edit its settings.',
-        ),
-        style: Theme.of(context).textTheme.bodySmall,
-      ),
-      const SizedBox(height: 12),
-      if (_nodes.isEmpty)
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 24),
-          child: Text(_text('添加第一个处理节点', 'Add your first processing node')),
-        ),
-      for (final (index, node) in _nodes.indexed)
-        Card(
-          margin: const EdgeInsets.only(bottom: 8),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              ListTile(
-                key: ValueKey('quick_node_${node.id}'),
-                leading: CircleAvatar(radius: 16, child: Text('${index + 1}')),
-                title: Text(
-                  _label(node),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(node.mediaTag, maxLines: 1),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _openNode(node),
-              ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  IconButton(
-                    key: ValueKey('quick_up_${node.id}'),
-                    tooltip: _text('上移', 'Move up'),
-                    onPressed: index == 0 ? null : () => _move(index, -1),
-                    icon: const Icon(Icons.arrow_upward, size: 18),
-                  ),
-                  IconButton(
-                    key: ValueKey('quick_down_${node.id}'),
-                    tooltip: _text('下移', 'Move down'),
-                    onPressed: index == _nodes.length - 1
-                        ? null
-                        : () => _move(index, 1),
-                    icon: const Icon(Icons.arrow_downward, size: 18),
-                  ),
-                  IconButton(
-                    key: ValueKey('quick_remove_${node.id}'),
-                    tooltip: _text('移除', 'Remove'),
-                    onPressed: () => _remove(index),
-                    icon: const Icon(Icons.remove_circle_outline, size: 18),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-    ],
+    ),
   );
 
   Widget _buildDetails({bool scrollable = true}) {
     final index = _nodes.indexWhere((node) => node.id == _selectedId);
     if (index < 0) return const SizedBox.shrink();
     final node = _nodes[index];
-    final editor = _buildNodeEditor(node);
+    final editor = _surface(
+      padding: EdgeInsets.zero,
+      child: _buildNodeEditor(node),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -676,6 +810,7 @@ class _QuickConfigPageState extends State<QuickConfigPage> {
           Expanded(
             child: SingleChildScrollView(
               key: ValueKey('quick_editor_${node.id}'),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               child: editor,
             ),
           )
