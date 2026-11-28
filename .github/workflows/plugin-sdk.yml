@@ -39,7 +39,7 @@ jobs:
       - name: Setup MSVC
         run: ./build/windows/setup_msvc.ps1
       - name: Build backend with static WAMR
-        run: ./build/windows/build_backend.ps1 -CMakeArguments @('-DFFMPEGPP_ENABLE_PLUGINS=ON', '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON')
+        run: ./build/windows/build_backend.ps1 -CMakeArguments @('-DFFMPEGPP_ENABLE_PLUGINS=ON', '-DFFMPEGPP_BUILD_TESTS=ON', '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON')
       - name: Report WAMR host compiler command
         if: always()
         run: |
@@ -58,6 +58,10 @@ jobs:
             throw "Embedded WAMR host still references DLL imports"
           }
           Write-Host "Backend links successfully and its WAMR host has no DLL import references"
+      - name: Test static WAMR without command-line API definitions
+        run: |
+          ctest --test-dir server_cpp/build_win -C Release -R "^wamr_static_link_test$" --output-on-failure --no-tests=error
+          if ($LASTEXITCODE -ne 0) { throw "Static WAMR link regression failed" }
 
   sdk-and-runtime:
     runs-on: ubuntu-24.04

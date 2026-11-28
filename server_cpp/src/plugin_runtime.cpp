@@ -27,7 +27,7 @@
 #define FFMPEGPP_ENABLE_PLUGINS 0
 #endif
 #if FFMPEGPP_ENABLE_PLUGINS
-#include "wasm_export.h"
+#include "wamr_static_api.h"
 #endif
 
 namespace ffmpegpp {
