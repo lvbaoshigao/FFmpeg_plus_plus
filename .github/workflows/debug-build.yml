@@ -6,7 +6,7 @@ name: Debug Build (Manual)
 # 用法：Actions → 「Debug Build (Manual)」→ Run workflow
 #   target   —— 要编译的平台（Windows / Linux x64 / Linux ARM64 / macOS / Android）
 #   version  —— 版本标签（用于产物命名，仅作标记；实际版本取自检出的 ref/仓库代码）
-#   ref      —— 要检出的 git 分支或 tag（默认 main）
+#   ref      —— 要检出的 git 分支或 tag（留空构建页面所选分支的本次提交）
 #
 # 每个平台用 `if` 判断 inputs.target，仅运行被选中的那个 job；
 # 产物一律上传为 artifact（artifact 保留期内可下载），不触碰 Release。
@@ -30,9 +30,9 @@ on:
         default: '6.0.0-beta2'
         type: string
       ref:
-        description: '要检出的 git 分支或 tag（默认 main）'
-        required: true
-        default: 'main'
+        description: '要检出的 git 分支或 tag（留空构建上方所选分支的本次提交）'
+        required: false
+        default: ''
         type: string
 
 env:
@@ -58,7 +58,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Report backend build source
+        shell: pwsh
+        env:
+          BACKEND_REQUESTED_REF: ${{ inputs.ref || github.sha }}
+          BACKEND_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          Write-Host "Workflow: $env:BACKEND_WORKFLOW_REF"
+          Write-Host "Requested source: $env:BACKEND_REQUESTED_REF"
+          git log -1 --format="Backend source: %H %s"
+          if ($LASTEXITCODE -ne 0) { throw "Cannot identify backend source commit" }
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -87,7 +98,17 @@ jobs:
 
       - name: Build C++ backend (ffmpegpp.dll)
         shell: pwsh
-        run: ./build/windows/build_backend.ps1
+        run: ./build/windows/build_backend.ps1 -CMakeArguments @('-DFFMPEGPP_ENABLE_PLUGINS=ON', '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON')
+
+      - name: Report failed backend compiler command
+        if: failure()
+        shell: pwsh
+        run: |
+          $database = "server_cpp/build_win/compile_commands.json"
+          if (Test-Path -LiteralPath $database) {
+            $commands = Get-Content -LiteralPath $database -Raw | ConvertFrom-Json
+            $commands | Where-Object { $_.file -like "*plugin_runtime.cpp" } | ForEach-Object { $_.command }
+          }
 
       - name: Build Flutter GUI
         run: |
@@ -146,7 +167,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Install dependencies
         run: |
@@ -237,7 +258,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Install dependencies
         run: |
@@ -369,7 +390,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -462,7 +483,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2

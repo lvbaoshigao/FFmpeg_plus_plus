@@ -40,6 +40,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Report backend build source
+        shell: pwsh
+        env:
+          BACKEND_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          Write-Host "Workflow: $env:BACKEND_WORKFLOW_REF"
+          git log -1 --format="Backend source: %H %s"
+          if ($LASTEXITCODE -ne 0) { throw "Cannot identify backend source commit" }
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -67,7 +76,17 @@ jobs:
 
       - name: Build C++ backend (ffmpegpp.dll)
         shell: pwsh
-        run: ./build/windows/build_backend.ps1
+        run: ./build/windows/build_backend.ps1 -CMakeArguments @('-DFFMPEGPP_ENABLE_PLUGINS=ON', '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON')
+
+      - name: Report failed backend compiler command
+        if: failure()
+        shell: pwsh
+        run: |
+          $database = "server_cpp/build_win/compile_commands.json"
+          if (Test-Path -LiteralPath $database) {
+            $commands = Get-Content -LiteralPath $database -Raw | ConvertFrom-Json
+            $commands | Where-Object { $_.file -like "*plugin_runtime.cpp" } | ForEach-Object { $_.command }
+          }
 
       - name: Build Flutter GUI
         run: |
